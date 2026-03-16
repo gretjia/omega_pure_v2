@@ -47,6 +47,28 @@ class FiniteWindowTopologicalAttention(nn.Module):
         self.qkv = nn.Linear(dim, dim * 3, bias=False)
         self.proj = nn.Linear(dim, dim)
         self.scale = (dim // num_heads) ** -0.5
+        
+        # 🛡️ The Topological Positional Bias Fix 🛡️
+        # A relative position bias table to restore the physical "Time Arrow" and spatial adjacency
+        # which would otherwise be lost in permutation-invariant self-attention.
+        self.relative_position_bias_table = nn.Parameter(
+            torch.zeros((2 * self.window_t - 1) * (2 * self.window_s - 1), num_heads)
+        )
+        
+        # Calculate relative position index for each token inside the window
+        coords_t = torch.arange(self.window_t)
+        coords_s = torch.arange(self.window_s)
+        coords = torch.stack(torch.meshgrid([coords_t, coords_s], indexing='ij'))  # 2, Wt, Ws
+        coords_flatten = torch.flatten(coords, 1)  # 2, Wt*Ws
+        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wt*Ws, Wt*Ws
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wt*Ws, Wt*Ws, 2
+        relative_coords[:, :, 0] += self.window_t - 1  # shift to start from 0
+        relative_coords[:, :, 1] += self.window_s - 1
+        relative_coords[:, :, 0] *= 2 * self.window_s - 1
+        relative_position_index = relative_coords.sum(-1)  # Wt*Ws, Wt*Ws
+        self.register_buffer("relative_position_index", relative_position_index)
+        
+        nn.init.trunc_normal_(self.relative_position_bias_table, std=.02)
 
     def forward(self, x_nd: torch.Tensor) -> torch.Tensor:
         """
@@ -76,6 +98,13 @@ class FiniteWindowTopologicalAttention(nn.Module):
         
         # 注意力严格限制在局域拓扑内，斩断无限上下文带来的拓扑撕裂与随机相关性
         attn = (q @ k.transpose(-2, -1)) * self.scale
+        
+        # 🛡️ Apply the Topological Positional Bias 🛡️
+        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
+            self.window_t * self.window_s, self.window_t * self.window_s, -1)  # Wt*Ws, Wt*Ws, nH
+        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wt*Ws, Wt*Ws
+        attn = attn + relative_position_bias.unsqueeze(0)
+        
         attn = attn.softmax(dim=-1)
         
         out = (attn @ v).transpose(1, 2).reshape(-1, self.window_t * self.window_s, D)

@@ -44,9 +44,24 @@ def dynamic_processor(macro_window, coarse_graining_factor):
             # Squeeze back to (pooled_seq_len, features)
             tensor = tensor.squeeze(0).squeeze(0)
             
-        # Return tuple format (features, target) or single dict based on trainer needs
-        # Assuming last column or next step is target. Yielding tensor for now.
-        return tensor
+        # 3. 🛡️ The Spatial Dimension Fix 🛡️
+        # The Mathematic Core expects [Time, Spatial, Features] for a single sample before batching.
+        # Since we process single-asset time series, Spatial = 1.
+        final_tensor = tensor.unsqueeze(1) # Shape becomes [Time, 1, Features]
+        
+        # Assume ETL columns: 0:price, 1:order_flow, 2:price_change, 3:srl_residual, 4:epiplexity
+        price_impact_2d = final_tensor[:, :, 2:3] # price_change
+        v_d = final_tensor[:, :, 1:2].abs() + 1e-8 # order_flow absolute as volume
+        sigma_d = torch.ones_like(price_impact_2d) # Dummy volatility if not in ETL
+        raw_features_2d = final_tensor[:, :, [0, 3, 4]] # price, srl_residual, epiplexity
+        
+        # Return a dictionary that matches the forward pass signature
+        return {
+            "price_impact_2d": price_impact_2d,
+            "raw_features_2d": raw_features_2d,
+            "sigma_d": sigma_d,
+            "v_d": v_d
+        }
         
     return process
 
