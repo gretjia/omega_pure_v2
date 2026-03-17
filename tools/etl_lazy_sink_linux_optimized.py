@@ -56,12 +56,12 @@ def process_file_in_batches(fpath, out_fpath, vol_threshold=50000, window_size=1
     # { 'symbol': { 'leftover_df': pd.DataFrame, 'bucket_history': list } }
     symbol_states = {}
     
-    # Increased default batch size to 300,000 for better throughput
-    batch_size = int(os.getenv("OMEGA_ETL_BATCH_SIZE", "300000"))
+    # Increased default batch size to match Windows (500,000)
+    batch_size = int(os.getenv("OMEGA_ETL_BATCH_SIZE", "500000"))
     
     for batch in pf.iter_batches(batch_size=batch_size):
-        # Enable multi-threaded conversion to pandas
-        df_chunk = batch.to_pandas(use_threads=True)
+        # Disable multi-threaded conversion as it causes a regression in this specific workload
+        df_chunk = batch.to_pandas(use_threads=False)
         if 'vol_tick' not in df_chunk.columns or 'price' not in df_chunk.columns or 'symbol' not in df_chunk.columns:
             continue
             
@@ -121,7 +121,8 @@ def process_file_in_batches(fpath, out_fpath, vol_threshold=50000, window_size=1
         del batch_windows
         del df_chunk
         del batch
-        gc.collect()
+        # Removed explicit gc.collect() as it creates massive per-batch overhead.
+        # Python's generational GC will handle cleanup efficiently enough.
 
     if writer is not None:
         writer.close()
