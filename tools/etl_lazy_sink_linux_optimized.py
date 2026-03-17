@@ -1,22 +1,33 @@
 """
-ETL Lazy Sink Pipeline for Omega Pure v2
-----------------------------------------
+ETL Lazy Sink Pipeline for Omega Pure v2 - Optimized for Linux1
+---------------------------------------------------------------
 Implements:
 1. Volume Clock (Turnover Clock): Buckets rows using cumulative volume.
 2. Max-Receptive-Field ETL: Outputs the maximum possible window (e.g. 160 rows).
 3. Ironclad Anti-OOM: Uses PyArrow iter_batches to stream without ANY global .collect().
+4. Performance Tuning: Increased threads and batch size for AMD AI Max 395.
 """
 
-import pyarrow.parquet as pq
-import pyarrow as pa
-import numpy as np
-import pandas as pd
 import os
+# Optimized for 64GB RAM limit and 32-core CPU
+os.environ.setdefault("OMP_NUM_THREADS", "8")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "8")
+os.environ.setdefault("MKL_NUM_THREADS", "8")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "8")
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "8")
+
+import fcntl
+import gc
 import glob
-from numba import jit
 import logging
 
-logging.basicConfig(level=logging.INFO)
+import pyarrow as pa
+import pyarrow.parquet as pq
+import numpy as np
+import pandas as pd
+from numba import jit
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 @jit(nopython=True)
 def compute_srl_epiplexity(prices, volumes):
@@ -34,6 +45,10 @@ def process_file_in_batches(fpath, out_fpath, vol_threshold=50000, window_size=1
     Reads L1 Base data using iter_batches to strictly avoid df.collect() OOMs.
     Generates Volume-Clocked Parquet shards of `window_size` per symbol.
     """
+    if os.path.exists(out_fpath):
+        logging.info(f"Skipping already processed file: {out_fpath}")
+        return
+
     pf = pq.ParquetFile(fpath)
     writer = None
     
@@ -41,8 +56,12 @@ def process_file_in_batches(fpath, out_fpath, vol_threshold=50000, window_size=1
     # { 'symbol': { 'leftover_df': pd.DataFrame, 'bucket_history': list } }
     symbol_states = {}
     
-    for batch in pf.iter_batches(batch_size=500000):
-        df_chunk = batch.to_pandas()
+    # Increased default batch size to 300,000 for better throughput
+    batch_size = int(os.getenv("OMEGA_ETL_BATCH_SIZE", "300000"))
+    
+    for batch in pf.iter_batches(batch_size=batch_size):
+        # Enable multi-threaded conversion to pandas
+        df_chunk = batch.to_pandas(use_threads=True)
         if 'vol_tick' not in df_chunk.columns or 'price' not in df_chunk.columns or 'symbol' not in df_chunk.columns:
             continue
             
@@ -97,14 +116,30 @@ def process_file_in_batches(fpath, out_fpath, vol_threshold=50000, window_size=1
             if writer is None:
                 writer = pq.ParquetWriter(out_fpath, res_table.schema, compression='snappy')
             writer.write_table(res_table)
-            
+            del res_table
+
+        del batch_windows
+        del df_chunk
+        del batch
+        gc.collect()
+
     if writer is not None:
         writer.close()
     logging.info(f"Finished processing -> {out_fpath}")
 
+def acquire_single_instance_lock():
+    lock_path = os.getenv("OMEGA_ETL_LOCKFILE", "/tmp/etl_lazy_sink_linux.lock")
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise SystemExit("Another etl_lazy_sink_linux.py instance is already running")
+    return lock_fd
+
 def main():
-    input_dir = '/omega_pool/parquet_data/latest_base_l1/host=linux1'  # Linux local path
-    output_dir = '/omega_pool/l1_volume_clock_v2' # Linux local output
+    lock_fd = acquire_single_instance_lock()
+    input_dir = '/omega_pool/parquet_data/latest_base_l1/host=linux1'
+    output_dir = '/omega_pool/l1_volume_clock_v2'
     os.makedirs(output_dir, exist_ok=True)
     
     input_files = glob.glob(os.path.join(input_dir, '**', '*.parquet'), recursive=True)
@@ -113,8 +148,9 @@ def main():
         
     for fpath in input_files:
         out_fpath = os.path.join(output_dir, os.path.basename(fpath))
-        # Updated with empirically derived constants (vol_threshold=50000, window_size=160)
         process_file_in_batches(fpath, out_fpath, vol_threshold=50000, window_size=160)
+
+    os.close(lock_fd)
 
 if __name__ == '__main__':
     main()
