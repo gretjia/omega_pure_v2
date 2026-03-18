@@ -1,0 +1,25 @@
+# OMEGA PURE 架构规范 — 由架构师联络官维护
+# 最后更新：2026-03-18
+# 更新来源：architect/directives/2026-03-18_v3_spatial_restoration.md
+
+version: v3
+tensor:
+  shape: [B, 160, 10, 7]
+  time_axis: 160        # Volume-Clock lags (ACF衰减上限)
+  spatial_axis: 10      # LOB 深度档位
+  feature_axis: 7       # [Bid_P, Bid_V, Ask_P, Ask_V, Close, SRL, Epi]
+
+physics:
+  delta: 0.5            # 平方根法则指数（永恒常数）
+  c_tse: 0.842          # TSE 实证常数（永恒常数）
+
+etl:
+  vol_threshold: 50000  # 容量时钟阈值（冷启动默认值）
+  window_size: 160      # 最大感受野
+  stride: 20            # 滑动窗口步长
+  adv_fraction: 0.02    # 动态阈值 = ADV × 此值
+
+training:
+  target_model: SpatioTemporal2DMAE
+  loss: "MDL (H_T + lambda_s * S_T)"
+  lambda_s: 0.001

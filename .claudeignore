@@ -1,0 +1,39 @@
+# Binary and large data files
+*.parquet
+*.tar
+*.pth
+*.7z
+*.zip
+*.gz
+*.bz2
+*.wds
+*.npy
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# Git internals
+.git/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Node/JS (if any)
+node_modules/
+
+# Logs
+*.log
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Do NOT exclude (critical context):
+# tools/        — ETL source code
+# handover/     — project handover docs
+# audit/        — disaster post-mortems
+# architect/    — architecture specs
