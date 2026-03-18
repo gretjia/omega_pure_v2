@@ -1,7 +1,7 @@
 ---
 name: node-health-check
 description: SSH到集群节点检查磁盘/内存/进程/网络连通性，输出结构化健康报告
-user_invocable: true
+user-invocable: true
 ---
 
 # Node Health Check

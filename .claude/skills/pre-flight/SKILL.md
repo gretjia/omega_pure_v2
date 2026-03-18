@@ -1,7 +1,7 @@
 ---
 name: pre-flight
 description: 部署前预检 — 检查目标节点依赖、路径、单实例锁、配额状态，输出GO/NO-GO
-user_invocable: true
+user-invocable: true
 ---
 
 # Pre-Flight Deployment Check

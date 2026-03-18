@@ -1,7 +1,7 @@
 ---
 name: axiom-audit
 description: 运行omega_axioms.py公理断言，检查物理常数、张量形状、数值稳定性
-user_invocable: true
+user-invocable: true
 ---
 
 # Axiom Audit
