@@ -1,5 +1,5 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-03-18 (Wednesday) - **STATUS: WORKFLOW AUTOMATION COMPLETE**
+Last Updated: 2026-03-18 (Wednesday) - **STATUS: REMOTE CLEANUP COMPLETE**
 
 ## 1. CURRENT STATUS: Workflow Automation Deployed
 
@@ -89,7 +89,7 @@ All 19 files audited for cross-file consistency:
 - Relative Capacity Clock (dynamic ADV-based threshold)
 - Ring Buffer with STRIDE=20
 - WebDataset `.tar` sharding
-- ~120 shards produced before halt
+- Linux1: 77 shards (2.1 GB), Windows1: 62 shards (14.9 GB) — verified intact 2026-03-18
 
 ## 3. EMPIRICAL CONSTANTS (frozen)
 - `delta`: 0.5 — Square Root Law exponent (Layer 1 eternal constant)
@@ -185,17 +185,80 @@ omega_pure_v2/
 - omega_epiplexity_plus_core.py — 95% 对齐，数学核心已封存不修改
 - architect/current_spec.yaml — 100% 对齐，无需修改
 
-## 8. NEXT STEPS
+## 8. SESSION 4: 双节点远程审计与清理 (2026-03-18)
+
+### V3 Shard 完整性验证
+- Linux1: 77 shards (`/omega_pool/wds_shards_v3/`), 解包验证 shape=(160,10,7), float32, 无 NaN/Inf — **PASS**
+- Windows1: 62 shards (`D:\Omega_frames\wds_shards_v3\`) — 目录完整存在
+- **判定：已生成 shards 可用，无需重新生成**（Session 3 的 5 个代码修复均不影响已输出的 shard 数据）
+
+### 空间回收结果
+
+#### Linux1 — 回收 ~316 GB
+
+| 删除项 | 路径 | 大小 |
+|--------|------|------|
+| V2 volume clock | `/omega_pool/l1_volume_clock_v2/` | 1.5 GB |
+| V1 omega_pure (整个旧 repo + base_matrix_shards) | `/home/zepher/omega_pure/` | 188 GB |
+| ETL 临时 framing | `/omega_pool/temp_framing/` | 27 GB |
+| 7z 恢复隔离区 | `/omega_pool/7z_recovery/` | 62 GB |
+| Gemini 时期 vNext 实验 (8个目录) | `/home/zepher/work/Omega_vNext*/` | 38 GB |
+| smoke 测试目录 (3个) | `/omega_pool/smoke_v64*` | 50 MB |
+| .whl / tarball / zip / binaries / logs | `/home/zepher/` 下散落文件 | ~0.6 GB |
+| __pycache__ | 多处 | <50 MB |
+
+磁盘状态变化:
+- `/omega_pool`: 96G → 6.5G used (1%)
+- `/home`: 306G → 80G used (3%)
+
+#### Windows1 — 回收 ~1+ TB
+
+| 删除项 | 路径 | 大小 |
+|--------|------|------|
+| stage2_full 实验 | `D:\Omega_frames\stage2_full_20260307_v643fix\` | 1.28 TB |
+| V2 volume clock | `D:\Omega_frames\l1_volume_clock_v2\` | 3.3 GB |
+| 旧版本 v50/v52/v61/v62 | `D:\Omega_frames\v50,v52,v61,v62_feature_l2\` | 286 GB |
+| ETL 临时 framing | `D:\tmp\framing\` | 128 GB |
+| stage2/stage3 实验残留 (10个) | `D:\Omega_frames\stage2_*/stage3_*` | ~16 GB |
+| _stage2 中间产物 (4个) | `D:\Omega_frames\_stage2_*` | 6.3 GB |
+| 空目录 (13个) | 各处 | 0 |
+| network_test exe / logs / bat | `D:\` 下散落文件 | <1 MB |
+
+磁盘状态变化:
+- D: 可用空间: ~0.1 TB → **1.14 TB**
+
+### 明确保留的数据
+
+| 路径 | 大小 | 原因 |
+|------|------|------|
+| `/omega_pool/parquet_data/` | 2.3 TB | 原始 parquet（不可再生） |
+| `/omega_pool/raw_7z_archives/` | 2.6 TB | 原始 7z 归档（不可再生） |
+| `/omega_pool/wds_shards_v3/` | 2.1 GB | V3 有效产出 |
+| `/home/zepher/data/` | 51 GB | 原始行情数据源 |
+| `D:\Omega_frames\latest_base_l1\` | 2.2 TB | 原始 L1 tick（不可再生） |
+| `D:\Omega_frames\wds_shards_v3\` | 14.9 GB | V3 有效产出 |
+| `D:\BaiduNetdiskDownload\` | 192 GB | 用户保留 |
+| `D:\work\Omega_vNext\` | ~75 GB | 用户保留 |
+| ollama / kernel-guardian / multiagent-oom / codex | 各 <5 GB | 用户保留 |
+
+### 用户讨论决策记录
+- `/home/zepher/data/` (51GB) → 保留（原始行情源，非中间产物）
+- `D:\Omega_frames\stage2_full_20260307_v643fix` (1.28TB) → 删除（V3 取代）
+- `D:\BaiduNetdiskDownload` + `D:\work\Omega_vNext` → 保留
+- ollama / kernel-guardian / multiagent-oom / codex → 全部保留
+
+## 9. NEXT STEPS
 1. ~~Complete Claude CLI environment restructuring~~ **DONE**
 2. ~~Run axiom audit~~ **DONE — PASSED**
 3. ~~Recursive audit of all files~~ **DONE — PASSED**
 4. ~~Workflow automation (hooks + skills + agents)~~ **DONE — AUDITED**
 5. ~~Agent manual (handover/agent_manuals.md)~~ **DONE**
 6. ~~架构师 Spec vs 代码递归审计~~ **DONE — 5 fixes applied**
-7. Restart Claude CLI, verify hooks + skills work in new session
-8. Re-evaluate V3 ETL strategy with architect
-9. If V3 proceeds: multi-process Topo-Forge rewrite for linux1 (break the single-threaded bottleneck)
-10. GCS sync (`gsutil -m rsync`) and Vertex AI HPO when sufficient data available
+7. ~~双节点远程审计与清理~~ **DONE — Linux1 回收 316GB, Windows1 回收 1+TB**
+8. Restart Claude CLI, verify hooks + skills work in new session
+9. Re-evaluate V3 ETL strategy with architect
+10. If V3 proceeds: multi-process Topo-Forge rewrite for linux1 (break the single-threaded bottleneck)
+11. GCS sync (`gsutil -m rsync`) and Vertex AI HPO when sufficient data available
 
 ## 8. CRITICAL RULES FOR NEXT AGENT
 1. **Read `CLAUDE.md` first** — it's auto-loaded but understand the rules

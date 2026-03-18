@@ -17,22 +17,24 @@ This document outlines the current hardware and network topology for the Omega P
 
 ### Worker Node: Windows Forge
 * **Hostname:** `windows1-w1`
-* **Specs:** 
-  * Processor: AMD AI Max 395 
-  * Memory: 128GB Unified Memory
-  * Storage (Internal): 4TB Samsung 990 Pro SSD
-  * Storage (External): 8TB USB4 SSD
-* **Data Payload:** External SSD contains all Level-2 tick data from 2023 to Jan 2026.
-* **Role:** High-performance data forge and deterministic computation.
-
-### Worker Node: Linux Forge
-* **Hostname:** `linux1-lx`
-* **Specs:** 
+* **Specs:**
   * Processor: AMD AI Max 395
   * Memory: 128GB Unified Memory
   * Storage (Internal): 4TB Samsung 990 Pro SSD
   * Storage (External): 8TB USB4 SSD
 * **Data Payload:** External SSD contains all Level-2 tick data from 2023 to Jan 2026.
+* **Disk Usage (2026-03-18):** D: 2.58TB used / 1.14TB free (after cleanup)
+* **Role:** High-performance data forge and deterministic computation.
+
+### Worker Node: Linux Forge
+* **Hostname:** `linux1-lx`
+* **Specs:**
+  * Processor: AMD AI Max 395
+  * Memory: 128GB Unified Memory
+  * Storage (Internal): 4TB Samsung 990 Pro SSD
+  * Storage (External): 8TB USB4 SSD
+* **Data Payload:** External SSD contains all Level-2 tick data from 2023 to Jan 2026.
+* **Disk Usage (2026-03-18):** /omega_pool 6.5G/2.5T (1%), /home 80G/3.6T (3%) — after cleanup
 * **Role:** High-performance data forge and deterministic computation.
 
 ---

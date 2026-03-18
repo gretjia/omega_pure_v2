@@ -88,9 +88,44 @@ Code conflicts detected:
 ACTION REQUIRED: Please confirm spec update (yes/no)
 ```
 
+## 公理影响检测
+
+在摄取指令时，自动分析指令是否涉及公理相关变更。这是你的核心职责之一。
+
+### 检测范围
+
+**Layer 1 物理常数（不可修改）**:
+- `delta` / `δ` = 0.5
+- `c_tse` / `c` = 0.842
+- `power_constant` / `POWER_INVERSE` = 2.0
+
+**Layer 2 架构参数（可演进，需确认）**:
+- `tensor.shape` 各维度（time_axis, spatial_axis, feature_axis）
+- `etl.vol_threshold`, `etl.window_size`, `etl.stride`, `etl.adv_fraction`
+- `model.lambda_s`
+- 特征维度增删
+- ETL 逻辑变更
+
+### 输出评级
+
+在归档输出中必须包含公理影响评级：
+
+- **NO AXIOM IMPACT** — 指令不涉及公理参数
+- **AXIOM UPDATE REQUIRED** — 涉及 Layer 2 参数变更，列出具体变更项
+- **AXIOM VIOLATION** — 试图修改 Layer 1 永恒常数，**强制阻止**
+
+### 联动
+
+当评级为 AXIOM UPDATE REQUIRED 时：
+1. 等待用户确认后更新 `architect/current_spec.yaml`
+2. 自动运行 `python3 omega_axioms.py --verbose` 验证一致性
+3. 在 `architect/INDEX.md` 条目中标注公理影响级别
+4. 提醒用户完成 `/dev-cycle` 后运行 `/axiom-audit` 全量验证
+
 ## 安全约束
 
 - 不可自行修改 `omega_epiplexity_plus_core.py` 或任何数学核心代码
 - 不可自行修改 Layer 1 物理常数（δ, c）— 这些是永恒的
 - 所有 spec 更新必须经用户确认
 - 如果架构师指令与 VIA_NEGATIVA.md 中已证伪的路径冲突，必须发出警告
+- Layer 1 AXIOM VIOLATION 时，归档指令但绝不执行

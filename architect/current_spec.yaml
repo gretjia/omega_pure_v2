@@ -1,25 +1,99 @@
 # OMEGA PURE 架构规范 — 由架构师联络官维护
 # 最后更新：2026-03-18
-# 更新来源：architect/directives/2026-03-18_v3_spatial_restoration.md
+# 更新来源：architect/directives/2026-03-18_v3_full_design_audit.md
+# 源文档：Google Docs id.1, id.2, id.3
 
 version: v3
+
+# ============================================================
+# 张量规范
+# ============================================================
 tensor:
   shape: [B, 160, 10, 7]
-  time_axis: 160        # Volume-Clock lags (ACF衰减上限)
-  spatial_axis: 10      # LOB 深度档位
-  feature_axis: 7       # [Bid_P, Bid_V, Ask_P, Ask_V, Close, SRL, Epi]
+  time_axis: 160        # Volume-Clock lags (ACF衰减上限, ~3天宏观建仓周期)
+  spatial_axis: 10      # LOB 深度档位 (10个价格层级, 每层含Bid+Ask配对, 绝不可拍扁为1D)
+  feature_axis: 7       # [Bid_P, Bid_V, Ask_P, Ask_V, Close, SRL_Residual, Epiplexity]
 
+# ============================================================
+# 物理常数 (Layer 1 — 永恒不可修改)
+# ============================================================
 physics:
-  delta: 0.5            # 平方根法则指数（永恒常数）
-  c_tse: 0.842          # TSE 实证常数（永恒常数）
+  delta: 0.5            # 平方根法则指数 (跨所有流动性资产的普适常数)
+  c_tse: 0.842          # TSE 实证常数 (全局平均预估无量纲系数)
+  # 以上两个常数由架构师从第一性原理锁定，AI只提供参考区间
 
+# ============================================================
+# ETL 管线参数
+# ============================================================
 etl:
-  vol_threshold: 50000  # 容量时钟阈值（冷启动默认值）
-  window_size: 160      # 最大感受野
-  stride: 20            # 滑动窗口步长
-  adv_fraction: 0.02    # 动态阈值 = ADV × 此值
+  vol_threshold: 50000  # 容量时钟阈值 (冷启动默认值)
+  window_size: 160      # 最大感受野 (ACF衰减上限)
+  stride: 20            # 环形缓冲区滑动步长 (平移不变性重叠采样)
+  adv_fraction: 0.02    # 动态阈值 = Rolling_ADV_20d × 此值
+  spatial_depth: 10     # 盘口空间深度
+  feature_dim: 7        # 特征通道数
+  shard_max_count: 5000 # 每个 .tar shard 最大样本数 (~1GB/shard)
+  output_format: webdataset_tar  # manifold_2d.npy + target.npy + meta.json
+  # 设计哲学: 容量时钟替代物理时钟，抹平大小盘异质性
+  # 每根 Bar 严格代表 "消耗了该标的 2% 日常流动性"
 
+# ============================================================
+# 训练参数
+# ============================================================
 training:
-  target_model: SpatioTemporal2DMAE
-  loss: "MDL (H_T + lambda_s * S_T)"
-  lambda_s: 0.001
+  target_model: SpatioTemporal2DMAE   # 基于 OmegaMathematicalCompressor
+  loss: "MDL (H_T + lambda_s * S_T)"  # Two-Part MDL 损失
+  lambda_s: 0.001                      # 压缩权重 (Epiplexity vs 预测残差)
+  masking_strategy: block_causal       # 块状因果掩码 (10-30 volume steps)
+  # 设计理由: 随机像素掩码会被线性插值作弊，必须挖去连续容量步长
+  # 逼迫网络跨越遥远上下文推演被遮蔽的物理量
+
+# ============================================================
+# HPO (Hyperparameter Optimization) 搜索空间
+# ============================================================
+hpo:
+  engine: google_vizier              # Bayesian optimization
+  phase2_gpu: "100x L4 (g2-standard-4)"
+  phase3_gpu: "8x A100"
+  search_space:
+    macro_window:                    # GPU端动态切片，不触发CPU重计算
+      type: qrandint
+      range: [40, 160]
+      step: 20
+    coarse_graining_factor:          # GPU端动态池化 (F.avg_pool2d)
+      type: choice
+      values: [1, 2, 4, 8]
+      # 1=显微镜(全分辨率), 8=望远镜(8x降采样)
+    window_size_t:                   # FWT 时间窗口大小
+      type: choice
+      values: [4, 8, 16, 32]
+    window_size_s:                   # FWT 空间窗口大小
+      type: choice
+      values: [4, 5, 10]
+  success_criterion: "FVU shows distinct sharp minimum at specific spatio-temporal scale"
+  # 设计哲学: ETL固化最大感受野(160), GPU端毫秒级切换窗口
+  # HPO引擎与CPU ETL完全解耦，避免云端I/O账单爆炸
+
+# ============================================================
+# 回测约束 (The Crucible — Phase 4)
+# ============================================================
+backtest:
+  execution_delay: "N+1 bar VWAP"    # 信号触发后只能在下一根Bar的VWAP成交
+  t_plus_1_exposure: true             # 强制T+1隔夜跳空风险暴露
+  exit_strategy: volume_clocked       # 基于容量时钟退场 (例如80 bars后强制平仓)
+  success_criterion: "asymmetry_payoff_ratio > 3.0"
+  # 设计理由: 容量时钟回测的Look-ahead Bias极其隐蔽
+  # 第160根Bar填满瞬间往往伴随扫盘Gap Up，假设当根Close买入是致命幻觉
+  # 叠加三大物理摩擦后 Payoff Ratio > 3.0 才是真正的量化圣杯
+
+# ============================================================
+# 模型架构层级
+# ============================================================
+model_architecture:
+  layer_1_physics: AxiomaticSRLInverter  # 非可学习，torch.no_grad()
+    # Q_hidden = (ΔP / (c × σ_D))^2 × V_D
+  layer_2_topology: FiniteWindowTopologicalAttention  # 原生2D窗口注意力
+    # 绝对禁止1D Flatten, O(1)寻址, 严格Space-bounded
+  layer_3_compression: EpiplexityBottleneck  # 信息瓶颈 (dim → dim/2 → dim/4)
+    # 两把奥卡姆剃刀: 架构级卡脖子 + L1 MDL裁决
+  layer_4_prediction: IntentDecoder  # 全局池化 → 标量意图预测
