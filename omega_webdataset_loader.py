@@ -48,8 +48,16 @@ def dynamic_processor(macro_window, coarse_graining_factor):
         # Features 1 and 3 are BidV and AskV
         v_d = (tensor[:, :, 1] + tensor[:, :, 3]).unsqueeze(-1) + 1e-8
         
-        # Dummy Volatility (to be derived from price_impact in core if needed)
-        sigma_d = torch.ones_like(price_impact_2d).unsqueeze(-1)
+        # Rolling volatility from price changes (window=20 bars)
+        # SRL formula I(Q) = c·σ_D·(Q/V_D)^0.5 requires real σ_D
+        vol_window = min(20, price_impact_2d.shape[0])
+        if vol_window >= 2:
+            sigma_d = price_impact_2d.unfold(0, vol_window, 1).std(dim=-1)
+            pad_len = price_impact_2d.shape[0] - sigma_d.shape[0]
+            sigma_d = F.pad(sigma_d, (0, 0, pad_len, 0), mode='replicate')
+        else:
+            sigma_d = torch.ones_like(price_impact_2d)
+        sigma_d = sigma_d.unsqueeze(-1).clamp(min=1e-8)
         
         # Raw features for Topological Attention: Close, SRL, Epiplexity
         # Features 4, 5, 6

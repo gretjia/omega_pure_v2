@@ -256,6 +256,33 @@ def assert_numerical_stability(tensor_data=None, verbose: bool = False) -> list:
     return errors
 
 
+def assert_tensor_shape(tensor_data, spec: dict, verbose: bool = False) -> list:
+    """验证实际张量形状是否匹配 spec"""
+    errors = []
+    tensor_spec = spec.get("tensor", {})
+    expected = (
+        int(tensor_spec.get("time_axis", 160)),
+        int(tensor_spec.get("spatial_axis", 10)),
+        int(tensor_spec.get("feature_axis", 7)),
+    )
+
+    try:
+        import numpy as np
+        arr = np.asarray(tensor_data)
+    except ImportError:
+        if verbose:
+            print("  [SKIP] NumPy not available for shape check")
+        return errors
+
+    actual = arr.shape[-3:] if arr.ndim >= 3 else arr.shape
+    if actual != expected:
+        errors.append(f"Tensor shape mismatch: expected {expected}, got {actual}")
+    elif verbose:
+        print(f"  [OK] Tensor shape {actual} matches spec")
+
+    return errors
+
+
 def assert_code_constants(verbose: bool = False) -> list:
     """验证代码中的物理常数未被篡改"""
     errors = []

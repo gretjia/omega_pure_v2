@@ -6,13 +6,17 @@ Transforms 2.2TB raw L1 Ticks into WebDataset .tar shards [160, 10, 7].
 """
 
 import os
+import sys
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import webdataset as wds
 from collections import deque
 import logging
-import sys
+
+# Single-instance file lock (CLAUDE.md #25 — Gemini disaster lesson)
+if sys.platform != "win32":
+    import fcntl
 
 # Optimized for 64GB RAM limit and 32-core CPU
 os.environ.setdefault("OMP_NUM_THREADS", "8")
@@ -86,7 +90,22 @@ class OmegaVolumeClockStateMachine:
             
         return spatial_matrix
 
+def _acquire_single_instance_lock():
+    """Acquire exclusive lock to prevent concurrent ETL instances (CLAUDE.md #25)"""
+    if sys.platform == "win32":
+        return None
+    lock_path = "/tmp/omega_etl_v3_topo_forge.lock"
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        logging.error("Another omega_etl_v3_topo_forge instance is already running. Exiting.")
+        sys.exit(1)
+    return lock_fd
+
+
 def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str, symbols: list = None):
+    lock_fd = _acquire_single_instance_lock()
     os.makedirs(output_tar_dir, exist_ok=True)
     abs_output_dir = os.path.abspath(output_tar_dir).replace("\\", "/")
     pattern = f"file:///{abs_output_dir}/omega_shard_%05d.tar"
@@ -172,28 +191,30 @@ def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str, symbols: list
             for fpath in all_parquet_files:
                 logging.info(f"  -> Processing file: {os.path.basename(fpath)}")
                 try:
-                    table = pq.read_table(fpath, filters=[('symbol', '==', symbol)])
-                    if table.num_rows == 0: continue
-                    records = table.to_pylist()
-                    for tick in records:
-                        tick_date = tick.get('date')
-                        if current_date is not None and tick_date != current_date:
-                            state_machine.update_daily_adv(daily_cum_vol)
-                            daily_cum_vol = 0.0
-                        current_date = tick_date
-                        daily_cum_vol += tick.get('vol_tick', 0.0)
-                        manifold_tensor = state_machine.push_tick(tick)
-                        if manifold_tensor is not None:
-                            target_tensor = np.array([0.0], dtype=np.float32)
-                            sink.write({
-                                "__key__": f"{symbol}_{global_sample_idx:09d}",
-                                "manifold_2d.npy": manifold_tensor,
-                                "target.npy": target_tensor,
-                                "meta.json": {"symbol": symbol, "timestamp": str(tick.get('time'))}
-                            })
-                            global_sample_idx += 1
-                            if global_sample_idx % 1000 == 0:
-                                logging.info(f"  -> Forged {global_sample_idx} topological manifolds...")
+                    parquet_file = pq.ParquetFile(fpath)
+                    for batch in parquet_file.iter_batches(batch_size=100000):
+                        records = batch.to_pylist()
+                        for tick in records:
+                            if tick.get('symbol') != symbol:
+                                continue
+                            tick_date = tick.get('date')
+                            if current_date is not None and tick_date != current_date:
+                                state_machine.update_daily_adv(daily_cum_vol)
+                                daily_cum_vol = 0.0
+                            current_date = tick_date
+                            daily_cum_vol += tick.get('vol_tick', 0.0)
+                            manifold_tensor = state_machine.push_tick(tick)
+                            if manifold_tensor is not None:
+                                target_tensor = np.array([0.0], dtype=np.float32)
+                                sink.write({
+                                    "__key__": f"{symbol}_{global_sample_idx:09d}",
+                                    "manifold_2d.npy": manifold_tensor,
+                                    "target.npy": target_tensor,
+                                    "meta.json": {"symbol": symbol, "timestamp": str(tick.get('time'))}
+                                })
+                                global_sample_idx += 1
+                                if global_sample_idx % 1000 == 0:
+                                    logging.info(f"  -> Forged {global_sample_idx} topological manifolds...")
                 except Exception as e:
                     logging.warning(f"Error processing {fpath}: {e}")
 

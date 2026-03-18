@@ -1,11 +1,11 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-03-18 (Wednesday) - **STATUS: CLAUDE CLI RESTRUCTURING COMPLETE**
+Last Updated: 2026-03-18 (Wednesday) - **STATUS: WORKFLOW AUTOMATION COMPLETE**
 
-## 1. CURRENT STATUS: Claude CLI Environment Ready
+## 1. CURRENT STATUS: Workflow Automation Deployed
 
 **All ETL and Topo-Forge processes remain HALTED.** Math core code is **frozen**.
 
-The Claude CLI environment restructuring is **complete**. All infrastructure files have been created, audited, committed, and pushed to `origin/main`.
+The Claude CLI environment restructuring and workflow automation are **complete**. Three-layer automation architecture (Hooks + Skills + Agents) deployed and audited.
 
 ### What happened before this session
 48-hour Gemini CLI disaster (full post-mortem: `audit/gemini_bitter_lessons.md`):
@@ -49,7 +49,25 @@ Complete Claude CLI architecture rebuild — 18 files, 2 commits:
 
 11. **`.claude/settings.local.json`** — Expanded permissions for SSH, git, pip, system diagnostics (not committed — global gitignore excludes it, stays local)
 
-### Recursive audit result
+### What was done in session 2 (2026-03-18, workflow automation)
+
+三层工作流自动化架构，9 个文件操作（7 创建 + 1 更新 + 1 目录）：
+
+12. **3 Hooks** (`.claude/hooks/`, `.claude/settings.json`):
+    - `block-destructive.sh` — PreToolUse: 拦截 `rm -rf`、`git push --force`、`git reset --hard`、物理常数修改
+    - `post-edit-axiom-check.sh` — PostToolUse: 编辑核心文件后自动运行 `omega_axioms.py`
+    - `stop-guard.sh` — Stop: 提醒未提交的核心文件变更（仅提醒，不阻止）
+
+13. **3 New Skills** (`.claude/skills/`):
+    - `/architect-ingest` — 架构师指令摄取 + 三级公理影响检测（NONE / UPDATE REQUIRED / VIOLATION）
+    - `/dev-cycle` — 八阶段开发周期自动编排（Plan→Audit→Fix→Code→Audit→Fix→Axiom→Summary）
+    - `/deploy-cycle` — 六阶段部署周期自动编排（Pre-flight→Axiom→Health→Deploy→Verify→Document）
+
+14. **Agent update** — `architect-liaison.md` 新增公理影响检测职责和三级评级输出
+
+15. **Agent manual** — `handover/agent_manuals.md` 新 agent 完整上手指南
+
+### Recursive audit result (session 1)
 All 19 files audited for cross-file consistency:
 - Physics constants aligned across CLAUDE.md ↔ omega_axioms.py ↔ current_spec.yaml ↔ core code
 - Tensor shape [B, 160, 10, 7] consistent everywhere
@@ -111,26 +129,31 @@ omega_pure_v2/
 ├── handover/
 │   ├── LATEST.md                      # ← YOU ARE HERE
 │   ├── README.md                      # Navigation guide
+│   ├── agent_manuals.md               # AI Agent 完整操作手册
 │   ├── HARDWARE_TOPOLOGY.md           # Nodes, IPs, SSH routes
 │   ├── ETL_ENGINEERING_LESSONS.md     # OOM, cgroup, Python traps
 │   ├── EXPERIMENTAL_DESIGN_AND_ROADMAP.md  # Constants derivation
 │   └── V3_SMOKE_TEST_PLAN.md         # V3 validation plan
 ├── tools/
 │   ├── omega_etl_v3_topo_forge.py     # V3 ETL (halted)
-│   ├── etl_lazy_sink_linux_optimized.py  # V2 ETL (deprecated, kept for reference)
-│   ├── etl_lazy_sink.py               # V2 ETL original
-│   ├── empirical_calibration.py       # Constants calibration
-│   ├── convert_to_webdataset.py       # WebDataset converter
-│   └── smoke_test_v2_shards.py        # V2 shard tester
+│   └── empirical_calibration.py       # Constants calibration
 ├── .claude/
+│   ├── settings.json                  # Project hooks config (committed)
 │   ├── settings.local.json            # Local permissions (not in git)
+│   ├── hooks/
+│   │   ├── block-destructive.sh       # PreToolUse: block dangerous commands
+│   │   ├── post-edit-axiom-check.sh   # PostToolUse: auto axiom check
+│   │   └── stop-guard.sh             # Stop: warn uncommitted core changes
 │   ├── skills/
-│   │   ├── node-health-check/SKILL.md # /node-health-check
+│   │   ├── architect-ingest/SKILL.md  # /architect-ingest (+ axiom impact)
+│   │   ├── dev-cycle/SKILL.md         # /dev-cycle (8-stage)
+│   │   ├── deploy-cycle/SKILL.md      # /deploy-cycle (6-stage)
+│   │   ├── axiom-audit/SKILL.md       # /axiom-audit
 │   │   ├── pre-flight/SKILL.md        # /pre-flight
-│   │   └── axiom-audit/SKILL.md       # /axiom-audit
+│   │   └── node-health-check/SKILL.md # /node-health-check
 │   └── agents/
 │       ├── recursive-auditor.md       # Math audit (opus, read-only)
-│       ├── architect-liaison.md       # Directive lifecycle (opus)
+│       ├── architect-liaison.md       # Directive lifecycle + axiom detection (opus)
 │       ├── infra-scout.md             # Cluster health (haiku)
 │       └── deployment-guard.md        # Deploy gate (sonnet)
 └── README.md                          # Project overview
@@ -144,14 +167,35 @@ omega_pure_v2/
 - SSH routes: `ssh linux1-lx`, `ssh windows1-w1`, `ssh zephrymac-studio`
 - Full topology: `handover/HARDWARE_TOPOLOGY.md`
 
-## 7. NEXT STEPS
+## 7. SESSION 3: 架构师 Spec vs 代码递归审计 (2026-03-18)
+
+来源：架构师 3 份 Google Docs（Doc id.1 数学验证 / Doc id.2 工程审计 / Doc id.3 修复意见）
+
+### 审计发现 & 修复状态
+
+| # | 严重度 | 问题 | 文件 | 状态 |
+|---|--------|------|------|------|
+| Fix 1 | CRITICAL | V3 ETL 缺失 fcntl.LOCK_EX 单实例锁 | omega_etl_v3_topo_forge.py | FIXED |
+| Fix 2 | CRITICAL | sigma_d 全 1 假值导致 SRL 反演失真 | omega_webdataset_loader.py | FIXED |
+| Fix 3 | MEDIUM | targeted 模式 pq.read_table() 全量加载 | omega_etl_v3_topo_forge.py | FIXED |
+| Fix 4 | MEDIUM | 4 个 V2 遗留文件与 V3 不兼容 | tools/ (4 files) | FIXED (git rm) |
+| Fix 5 | LOW | omega_axioms.py 缺少运行时张量形状验证 | omega_axioms.py | FIXED |
+
+### 已确认对齐的模块
+- omega_epiplexity_plus_core.py — 95% 对齐，数学核心已封存不修改
+- architect/current_spec.yaml — 100% 对齐，无需修改
+
+## 8. NEXT STEPS
 1. ~~Complete Claude CLI environment restructuring~~ **DONE**
 2. ~~Run axiom audit~~ **DONE — PASSED**
 3. ~~Recursive audit of all files~~ **DONE — PASSED**
-4. Restart Claude CLI, verify `/axiom-audit` skill works
-5. Re-evaluate V3 ETL strategy with architect
-6. If V3 proceeds: multi-process Topo-Forge rewrite for linux1 (break the single-threaded bottleneck)
-7. GCS sync (`gsutil -m rsync`) and Vertex AI HPO when sufficient data available
+4. ~~Workflow automation (hooks + skills + agents)~~ **DONE — AUDITED**
+5. ~~Agent manual (handover/agent_manuals.md)~~ **DONE**
+6. ~~架构师 Spec vs 代码递归审计~~ **DONE — 5 fixes applied**
+7. Restart Claude CLI, verify hooks + skills work in new session
+8. Re-evaluate V3 ETL strategy with architect
+9. If V3 proceeds: multi-process Topo-Forge rewrite for linux1 (break the single-threaded bottleneck)
+10. GCS sync (`gsutil -m rsync`) and Vertex AI HPO when sufficient data available
 
 ## 8. CRITICAL RULES FOR NEXT AGENT
 1. **Read `CLAUDE.md` first** — it's auto-loaded but understand the rules
