@@ -1,12 +1,18 @@
-# Handover Directory
+# Omega Pure Handover Knowledge Base
 
-This directory contains the critical handover state, ongoing architectural documentation, and historical post-mortems for the Omega Pure and Omega_vNext projects. 
+This directory contains the critical handover state, architectural documentation, and engineering post-mortems for the Omega Pure project.
 
-## Core Documents
-*   **[`LATEST.md`](./LATEST.md)**: The **SINGLE SOURCE OF TRUTH** for the current workspace state. Any new AI Agent or human operator MUST read this file first before taking any action. It contains the current phase, active blockers, and immediate next steps.
-*   **[`HARDWARE_TOPOLOGY.md`](./HARDWARE_TOPOLOGY.md)**: Canonical definition of the physical nodes (Mac, Linux1, Windows1, GCP) and their approved SSH routing paths.
-*   **[`EXPERIMENTAL_DESIGN_AND_ROADMAP.md`](./EXPERIMENTAL_DESIGN_AND_ROADMAP.md)**: Defines the mathematical and statistical experiments used to derive physical constants, explains the current data ETL process, and lays out the success criteria for the upcoming GCP HPO and backtesting phases.
-*   **[`V3_SMOKE_TEST_PLAN.md`](./V3_SMOKE_TEST_PLAN.md)**: The definitive, step-by-step checklist to validate the 188GB data against GCP, WebDataset, and Vertex AI GPU configurations before launching full-scale cloud operations.
+## 🔑 Core Documents (Must Read First)
+*   **[`LATEST.md`](./LATEST.md)**: **The Single Source of Truth.** Current project phase, active blockers, emergency status, and immediate next steps.
+*   **[`README.md`](../README.md)**: The high-level philosophy of V3 (Volume Clock, Spatial Restoration).
 
-## Engineering Lessons & Post-Mortems
-*   **[`ETL_ENGINEERING_LESSONS.md`](./ETL_ENGINEERING_LESSONS.md)**: A deep-dive post-mortem regarding the 2.2TB Volume Clock ETL pipeline. It details critical failures and solutions regarding Linux `cgroup` OOM deadlocks, systemd slice CPU throttling, and Python/Pandas performance anti-patterns. **Highly recommended reading for any Agent tasked with heavy data processing on the Linux node.**
+## 🛠️ Engineering & Infrastructure
+*   **[`HARDWARE_TOPOLOGY.md`](./HARDWARE_TOPOLOGY.md)**: Physical nodes (Mac, Linux1, Windows1, GCP) and approved routing.
+*   **[`ETL_ENGINEERING_LESSONS.md`](./ETL_ENGINEERING_LESSONS.md)**: Post-mortem on OOM deadlocks, CPU throttling, and Python performance anti-patterns encountered during the 2.2TB collapse.
+
+## 📊 Methodology & Proving Grounds
+*   **[`EXPERIMENTAL_DESIGN_AND_ROADMAP.md`](./EXPERIMENTAL_DESIGN_AND_ROADMAP.md)**: Mathematical derivation of physical constants (`vol_threshold`, `window_size`) and Phase 2-4 success criteria.
+*   **[`V3_SMOKE_TEST_PLAN.md`](./V3_SMOKE_TEST_PLAN.md)**: Checklist for validating high-density V3 shards against GCP Vertex AI configurations.
+
+## 🏛️ Legacy Archives
+*   *Note: Phase 1 (Wall-Clock) and Phase 2 (Flattened Volume-Clock) documentation are retained in Git history but are deprecated for current operations.*

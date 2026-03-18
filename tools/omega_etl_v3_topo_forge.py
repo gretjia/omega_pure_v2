@@ -86,53 +86,62 @@ class OmegaVolumeClockStateMachine:
             
         return spatial_matrix
 
-def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str, symbols: list):
+def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str, symbols: list = None):
     os.makedirs(output_tar_dir, exist_ok=True)
-    # Ensure forward slashes and file:// protocol for webdataset gopen compatibility
     abs_output_dir = os.path.abspath(output_tar_dir).replace("\\", "/")
     pattern = f"file:///{abs_output_dir}/omega_shard_%05d.tar"
     sink = wds.ShardWriter(pattern, maxcount=SHARD_MAX_COUNT)
     
     global_sample_idx = 0
     
-    for symbol in symbols:
-        logging.info(f"[FORGE] Processing Symbol: {symbol}...")
-        state_machine = OmegaVolumeClockStateMachine(symbol)
-        
-        # Initialize trackers for daily ADV calculation across files
-        current_date = None
-        daily_cum_vol = 0.0
-        
-        # We need to iterate through ALL parquet files in the base_dir
-        # and extract only the ticks for the current symbol.
-        all_parquet_files = []
+    # Discovery mode: If no symbols provided, scan filenames
+    if not symbols:
+        logging.info(f"No symbols provided. Scanning {raw_parquet_dir} for parquet files...")
+        all_files = []
         for root, dirs, files in os.walk(raw_parquet_dir):
             for f in files:
                 if f.endswith('.parquet'):
-                    all_parquet_files.append(os.path.join(root, f))
+                    all_files.append(os.path.join(root, f))
         
-        all_parquet_files.sort() # Sort by date (assuming name contains date)
-
-        for fpath in all_parquet_files:
-            logging.info(f"  -> Processing file: {os.path.basename(fpath)}")
-            try:
-                # Use standard read_table with filters for predicate pushdown
-                table = pq.read_table(fpath, filters=[('symbol', '==', symbol)])
-                if table.num_rows == 0:
-                    continue
-                
-                # Convert to pylist for processing
-                records = table.to_pylist()
+        # Extract unique symbols from filenames (assuming format: date_hash.parquet or similar)
+        # For our specific data, each file contains multiple symbols, so we actually
+        # should just iterate through each FILE once and process all symbols within it.
+        # Let's pivot to a file-centric iteration for the full-scale run.
+        
+        all_files.sort()
+        for fpath in all_files:
+            logging.info(f"[FORGE] Processing File: {os.path.basename(fpath)}...")
+            parquet_file = pq.ParquetFile(fpath)
+            
+            # Use a local cache of state machines for this file
+            file_symbol_states = {}
+            
+            # Since one file has many symbols, we iterate through the whole file in batches
+            for batch in parquet_file.iter_batches(batch_size=100000):
+                records = batch.to_pylist()
                 for tick in records:
+                    symbol = tick.get('symbol')
+                    if not symbol: continue
+                    
+                    if symbol not in file_symbol_states:
+                        file_symbol_states[symbol] = {
+                            'sm': OmegaVolumeClockStateMachine(symbol),
+                            'curr_date': None,
+                            'daily_vol': 0.0
+                        }
+                    
+                    ctx = file_symbol_states[symbol]
+                    sm = ctx['sm']
                     tick_date = tick.get('date')
-                    if current_date is not None and tick_date != current_date:
-                        state_machine.update_daily_adv(daily_cum_vol)
-                        daily_cum_vol = 0.0
                     
-                    current_date = tick_date
-                    daily_cum_vol += tick.get('vol_tick', 0.0)
+                    if ctx['curr_date'] is not None and tick_date != ctx['curr_date']:
+                        sm.update_daily_adv(ctx['daily_vol'])
+                        ctx['daily_vol'] = 0.0
                     
-                    manifold_tensor = state_machine.push_tick(tick)
+                    ctx['curr_date'] = tick_date
+                    ctx['daily_vol'] += tick.get('vol_tick', 0.0)
+                    
+                    manifold_tensor = sm.push_tick(tick)
                     if manifold_tensor is not None:
                         target_tensor = np.array([0.0], dtype=np.float32)
                         sink.write({
@@ -144,8 +153,49 @@ def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str, symbols: list
                         global_sample_idx += 1
                         if global_sample_idx % 1000 == 0:
                             logging.info(f"  -> Forged {global_sample_idx} topological manifolds...")
-            except Exception as e:
-                logging.warning(f"Error processing {fpath}: {e}")
+    else:
+        # Targeted symbol mode (Trial Run logic)
+        for symbol in symbols:
+            logging.info(f"[FORGE] Processing Targeted Symbol: {symbol}...")
+            # ... (rest of previous logic) ...
+            state_machine = OmegaVolumeClockStateMachine(symbol)
+            current_date = None
+            daily_cum_vol = 0.0
+            
+            all_parquet_files = []
+            for root, dirs, files in os.walk(raw_parquet_dir):
+                for f in files:
+                    if f.endswith('.parquet'):
+                        all_parquet_files.append(os.path.join(root, f))
+            all_parquet_files.sort()
+
+            for fpath in all_parquet_files:
+                logging.info(f"  -> Processing file: {os.path.basename(fpath)}")
+                try:
+                    table = pq.read_table(fpath, filters=[('symbol', '==', symbol)])
+                    if table.num_rows == 0: continue
+                    records = table.to_pylist()
+                    for tick in records:
+                        tick_date = tick.get('date')
+                        if current_date is not None and tick_date != current_date:
+                            state_machine.update_daily_adv(daily_cum_vol)
+                            daily_cum_vol = 0.0
+                        current_date = tick_date
+                        daily_cum_vol += tick.get('vol_tick', 0.0)
+                        manifold_tensor = state_machine.push_tick(tick)
+                        if manifold_tensor is not None:
+                            target_tensor = np.array([0.0], dtype=np.float32)
+                            sink.write({
+                                "__key__": f"{symbol}_{global_sample_idx:09d}",
+                                "manifold_2d.npy": manifold_tensor,
+                                "target.npy": target_tensor,
+                                "meta.json": {"symbol": symbol, "timestamp": str(tick.get('time'))}
+                            })
+                            global_sample_idx += 1
+                            if global_sample_idx % 1000 == 0:
+                                logging.info(f"  -> Forged {global_sample_idx} topological manifolds...")
+                except Exception as e:
+                    logging.warning(f"Error processing {fpath}: {e}")
 
     sink.close()
     logging.info(f"[FORGE] Complete. {global_sample_idx} Tensors Generated.")
