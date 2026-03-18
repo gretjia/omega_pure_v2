@@ -1,63 +1,62 @@
 """
-WebDataset Loader for Omega Pure v2
+WebDataset Loader for Omega Pure v3
 -----------------------------------
 Implements:
 1. GPU Slicing: Dynamically slices the 160-row window to `macro_window` during HPO.
 2. Dynamic Pooling: Uses F.avg_pool2d dynamically based on `coarse_graining_factor`.
-3. Stateless Event-Driven Loop compatibility: O(1) loading from tar shards.
+3. Spatial Awareness: Handles the restored [160, 10, 7] Topo-Forge matrix.
 """
 
 import webdataset as wds
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-
-def identity(x):
-    return x
+import numpy as np
 
 def dynamic_processor(macro_window, coarse_graining_factor):
     """
     Returns a WebDataset map function that implements dynamic slicing and pooling
-    per the Architect's instructions.
+    for the OMEGA V3 [Time, Spatial, Features] topology.
+    Shape: [160, 10, 7]
+    Features: 0:Bid_P, 1:Bid_V, 2:Ask_P, 3:Ask_V, 4:Close, 5:SRL_Res, 6:Epiplexity
     """
     def process(sample):
-        # sample contains the full 160xN receptive field matrix
-        matrix = sample["data.npy"]
-        tensor = torch.tensor(matrix, dtype=torch.float32)
+        # sample["manifold_2d.npy"] contains the [160, 10, 7] matrix
+        matrix = sample["manifold_2d.npy"]
+        tensor = torch.tensor(matrix, dtype=torch.float32) # Already [160, 10, 7]
         
         # 1. Max-Receptive-Field GPU Slicing
-        # Slice from the end (most recent steps) if macro_window < max field
         if macro_window < tensor.shape[0]:
-            tensor = tensor[-macro_window:, :]
+            tensor = tensor[-macro_window:, :, :]
             
-        # 2. Min-Resolution Dynamic Pooling
-        # Average pool over the sequence dimension (dim=0).
+        # 2. Min-Resolution Dynamic Pooling (Temporal only)
         if coarse_graining_factor > 1:
             # Reshape for avg_pool2d: (batch, channels, height, width)
-            # Treat as (1, 1, seq_len, features)
-            tensor = tensor.unsqueeze(0).unsqueeze(0)
-            
-            # Pool along the time dimension (stride=coarse_graining_factor)
+            # Treat features as channels: (1, 7, time, spatial)
+            tensor = tensor.permute(2, 0, 1).unsqueeze(0)
             kernel = (coarse_graining_factor, 1)
             tensor = F.avg_pool2d(tensor, kernel_size=kernel, stride=kernel)
+            # Restore to (pooled_time, spatial, features)
+            tensor = tensor.squeeze(0).permute(1, 2, 0)
             
-            # Squeeze back to (pooled_seq_len, features)
-            tensor = tensor.squeeze(0).squeeze(0)
-            
-        # 3. 🛡️ The Spatial Dimension Fix 🛡️
-        # The Mathematic Core expects [Time, Spatial, Features] for a single sample before batching.
-        # Since we process single-asset time series, Spatial = 1.
-        final_tensor = tensor.unsqueeze(1) # Shape becomes [Time, 1, Features]
+        # 3. Feature Extraction & Routing for Mathematic Core
+        # Price Impact (Top of book Bid1 price change)
+        # Feature 0 is Bid_P1
+        price_impact_2d = torch.diff(tensor[:, :, 0], dim=0, prepend=tensor[0:1, :, 0])
         
-        # Assume ETL columns: 0:price, 1:order_flow, 2:price_change, 3:srl_residual, 4:epiplexity
-        price_impact_2d = final_tensor[:, :, 2:3] # price_change
-        v_d = final_tensor[:, :, 1:2].abs() + 1e-8 # order_flow absolute as volume
-        sigma_d = torch.ones_like(price_impact_2d) # Dummy volatility if not in ETL
-        raw_features_2d = final_tensor[:, :, [0, 3, 4]] # price, srl_residual, epiplexity
+        # Volume (Sum of BidV and AskV across all depths as a proxy for liquidity density)
+        # Features 1 and 3 are BidV and AskV
+        v_d = (tensor[:, :, 1] + tensor[:, :, 3]).unsqueeze(-1) + 1e-8
         
-        # Return a dictionary that matches the forward pass signature
+        # Dummy Volatility (to be derived from price_impact in core if needed)
+        sigma_d = torch.ones_like(price_impact_2d).unsqueeze(-1)
+        
+        # Raw features for Topological Attention: Close, SRL, Epiplexity
+        # Features 4, 5, 6
+        raw_features_2d = tensor[:, :, [4, 5, 6]]
+        
         return {
-            "price_impact_2d": price_impact_2d,
+            "price_impact_2d": price_impact_2d.unsqueeze(-1),
             "raw_features_2d": raw_features_2d,
             "sigma_d": sigma_d,
             "v_d": v_d
@@ -66,13 +65,8 @@ def dynamic_processor(macro_window, coarse_graining_factor):
     return process
 
 def create_dataloader(wds_url, batch_size=256, macro_window=160, coarse_graining_factor=1, num_workers=4):
-    """
-    Creates a stateless O(1) WebDataset dataloader.
-    Absolutely no global .collect() or in-memory array loading.
-    """
     preprocess_fn = dynamic_processor(macro_window, coarse_graining_factor)
     
-    # The Ironclad Anti-OOM Architecture Datapipe
     dataset = (
         wds.WebDataset(wds_url, resampled=True)
         .shuffle(1000)
@@ -83,18 +77,9 @@ def create_dataloader(wds_url, batch_size=256, macro_window=160, coarse_graining
     
     loader = DataLoader(
         dataset,
-        batch_size=None, # wds.batched handles it
+        batch_size=None,
         num_workers=num_workers,
         prefetch_factor=2
     )
     
     return loader
-
-if __name__ == '__main__':
-    # Usage Example:
-    # url = "/data/wds_shards/shard-{000000..000100}.tar"
-    # hpo_loader = create_dataloader(url, macro_window=120, coarse_graining_factor=2)
-    # for batch in hpo_loader:
-    #     print(batch.shape) # e.g. [256, 60, 7]
-    #     break
-    pass

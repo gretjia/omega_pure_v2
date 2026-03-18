@@ -10,22 +10,22 @@ To construct a rigorous, end-to-end "Smoke Test" that validates the integrity of
 
 ## 3. The End-to-End Smoke Test Execution Plan
 
-### Step 3.1: The Chrono-Forge (Local Sharding to WebDataset)
-**Goal:** Convert the raw V3 Parquet output into streaming `.tar` shards.
-*   **Action:** Run a strictly bounded `tar` creation script locally on `omega-vm` or `mac-studio`.
+### Step 3.1: The Topo-Forge Trial Run (Local Sharding)
+**Goal:** Convert raw V3 Parquet for 3 diverse stocks into streaming `.tar` shards.
+*   **Stocks:** `000001.SZ` (High liquidity), `600519.SH` (Mega-cap), and a low-cap micro-ticker (to test Dynamic ADV).
+*   **Action:** Run `tools/omega_etl_v3_topo_forge.py` on these symbols.
 *   **Validation:** 
     *   Do the generated `.tar` files open correctly?
-    *   Do they contain the expected internal structure (`.cls`, `.data.npy`, etc.)?
     *   *Code:* We will write and execute a `test_wds_local.py` script that attempts to read a single `.tar` file using the exact `dynamic_processor` logic from `omega_webdataset_loader.py`.
-*   **Success Metric:** The local dataloader successfully yields a PyTorch tensor of shape `[Batch, 160, 20, 4]` without throwing schema or `npy` decoding errors.
+*   **Success Metric:** The local dataloader successfully yields a PyTorch tensor of shape `[Batch, 160, 10, 7]` without throwing schema or `npy` decoding errors.
 
 ### Step 3.2: GCP Ingestion & Integrity Check
 **Goal:** Safely move the WebDataset shards to Google Cloud Storage.
 *   **Action:** Upload the validated `.tar` shards to `gs://omega-pure-data/wds_shards_v3/`.
 *   **Validation:**
-    *   Perform a `gcloud storage ls` and check the total byte size to ensure no truncation occurred during upload.
-    *   *Code:* Execute a lightweight, single-node Vertex AI Custom Job (e.g., using an inexpensive `n1-standard-4` or `e2-standard-4` machine) that purely runs the `create_dataloader` function pointing to the `gs://` URI.
-*   **Success Metric:** The cloud job successfully downloads the stream and prints the tensor shapes to Cloud Logging without running out of memory.
+    *   Check total byte size.
+    *   *Code:* Execute a lightweight, single-node Vertex AI Custom Job that purely runs the `create_dataloader` function pointing to the `gs://` URI.
+*   **Success Metric:** The cloud job successfully downloads the stream and prints the tensor shape `[Batch, 160, 10, 7]` to Cloud Logging.
 
 ### Step 3.3: The "Mini-Forge" (Vertex AI GPU OOM Stress Test)
 **Goal:** Prove that the Iterable WebDataset prevents OOMs when scaled to a GPU instance, and that the tensor mapping aligns with the `FiniteWindowTopologicalAttention` core.

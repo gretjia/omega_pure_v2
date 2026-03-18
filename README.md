@@ -1,10 +1,37 @@
-# OMEGA PURE V2 (Epiplexity Plus)
+# OMEGA PURE V3: The Topological Volume-Clock Forge
 
-This project directory houses the **Epiplexity Plus** architecture, an axiomatic rewrite of the Omega mathematical core based on the principles of **Finite Window Theory** and **Two-Part MDL Loss**.
+This repository houses the **Omega Pure V3** architecture, a fundamental paradigm shift in high-frequency financial modeling. It moves beyond physical time ("Wall-Clock") to a pure **Volume-Clock (Turnover Clock)** topology, resolving the spatial-temporal tearing between high and low liquidity assets.
 
-## Distinctions from V1 (`omega_pure`)
-* **V1:** Utilized 2D Spatio-Temporal matrices but treated SRL and Epiplexity as external data features extracted via ETL (`omega_tensor_materializer.py`).
-* **V2:** Integrates SRL directly into the PyTorch network as a non-learnable physical inverter layer (`AxiomaticSRLInverter`), and forces the extraction of Epiplexity directly through the network's loss function (`compute_epiplexity_mdl_loss`) rather than pre-calculating it on disk.
+## 🏛️ Core Philosophy: The Volume Clock Genesis
+The clock on the wall is a human illusion; the tape is the only truth. In V3, we reject uniform time-based sampling (e.g., 1-minute bars) in favor of **Event-Based Sampling**.
 
-## Core Mathematics
-* `omega_epiplexity_plus_core.py`: The fundamental physical compressor module.
+*   **Relative Capacity Clock**: Every data point ("Bar") in our 2D matrix represents a fixed percentage of a stock's daily liquidity (typically 2% of Rolling ADV).
+*   **Geometric Equivalence**: By using a dynamic `vol_threshold`, a $100B mega-cap and a $1B micro-cap look **geometrically identical** to the neural network. Both occupy the same "Volume-Time" space.
+*   **Spatial Axis Restoration**: We preserve the full 10-level Limit Order Book (LOB) depth (Bid/Ask) at each volume step, enabling true Topological Data Analysis (TDA) of order-flow connectivity.
+
+## 🛠️ System Components
+
+### 1. The Topo-Forge (`tools/omega_etl_v3_topo_forge.py`)
+A heavy-duty, anti-OOM ETL engine that transforms TB-scale raw L1 Ticks into WebDataset `.tar` shards.
+*   **Dynamic Thresholding**: Computes `vol_threshold` per symbol based on rolling ADV.
+*   **Ring Buffer Slicing**: Uses a sliding window (`MACRO_WINDOW=160`, `STRIDE=20`) to capture continuous causal manifolds without tumbling-window truncation.
+*   **Ironclad Streaming**: Uses `pyarrow.parquet.iter_batches` for O(1) memory complexity.
+
+### 2. WebDataset Loader (`omega_webdataset_loader.py`)
+A stateless, event-driven dataloader designed for distributed training on GCP Vertex AI.
+*   **GPU Slicing**: Dynamically crops the 160-row window to an HPO-optimized `macro_window`.
+*   **Dynamic Pooling**: Implements temporal coarse-graining on-the-fly.
+*   **Shape**: Yields tensors of shape `[Batch, Time, Spatial(10 levels), Features(7)]`.
+
+### 3. Mathematic Core (`omega_epiplexity_plus_core.py`)
+The axiomatic engine implementing **Finite Window Topological Attention** and **Epiplexity MDL Loss**.
+
+## 📊 Experimental Constants (Data-Driven)
+*   **`vol_threshold`**: Derived as `Rolling_ADV / 50` (Targeting ~50 bars per trading day).
+*   **`window_size`**: Locked at `160`, found via Autocorrelation (ACF) decay analysis to be the maximum memory limit of micro-structural signals.
+
+## 🚀 Deployment Roadmap
+1.  **Phase 1: The Data Collapse**: TB-scale Parquet to 188GB WDS Shards.
+2.  **Phase 2: HPO Blitzkrieg**: 100x L4 GPU Bayesian search for optimal spatial-temporal scales.
+3.  **Phase 3: The Forge**: Full-scale MAE reconstruction training on 8x A100.
+4.  **Phase 4: The Crucible**: Event-study backtesting with Asymmetry Payoff Ratio > 3.0.
