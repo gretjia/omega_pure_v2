@@ -349,11 +349,8 @@ def run_loader_checks(shard_dir, result=None):
         result.record(20, "batch target", False, "skipped")
         return result
 
-    # Use braceexpand or direct file list
-    if len(shard_files) == 1:
-        wds_url = shard_files[0]
-    else:
-        wds_url = shard_pattern
+    # WebDataset needs actual file paths, not glob patterns
+    wds_url = shard_files if len(shard_files) > 1 else shard_files[0]
 
     try:
         loader = create_dataloader(wds_url, batch_size=4, macro_window=160,
@@ -418,10 +415,8 @@ def run_model_checks(shard_dir, result=None):
         result.record(23, "backward gradients", False, "skipped")
         return result
 
-    if len(shard_files) == 1:
-        wds_url = shard_files[0]
-    else:
-        wds_url = shard_pattern
+    # WebDataset needs actual file paths, not glob patterns
+    wds_url = shard_files if len(shard_files) > 1 else shard_files[0]
 
     try:
         loader = create_dataloader(wds_url, batch_size=4, macro_window=160,

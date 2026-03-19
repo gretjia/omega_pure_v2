@@ -131,12 +131,21 @@ class OmegaVolumeClockStateMachine:
                 self.daily_low = price
 
         if self.cum_vol >= self.vol_threshold:
+            vwap_den = sum(self.bar_ticks_vols)
+            if vwap_den <= 0:
+                # Phantom bar from carryover with zero-vol ticks — drain and skip
+                self.cum_vol -= self.vol_threshold
+                self.bar_ticks_prices = []
+                self.bar_ticks_vols = []
+                self.bar_first_price = 0.0
+                return None, None
+
             spatial_bar = self._collapse_fast(price)
             vwap_num = sum(p * v for p, v in zip(self.bar_ticks_prices, self.bar_ticks_vols))
-            vwap_den = sum(self.bar_ticks_vols)
-            bar_vwap = vwap_num / (vwap_den + 1e-8)
+            bar_vwap = vwap_num / vwap_den
 
-            self.cum_vol -= self.vol_threshold
+            # Cap carryover to prevent cascading phantom bars
+            self.cum_vol = min(self.cum_vol - self.vol_threshold, self.vol_threshold)
             self.bar_ticks_prices = []
             self.bar_ticks_vols = []
             self.bar_first_price = 0.0
@@ -225,7 +234,8 @@ def _safe_col_to_numpy(col, dtype=np.float64):
         arr = col.to_numpy(zero_copy_only=False)
     except Exception:
         arr = col.to_pandas().values
-    arr = np.asarray(arr, dtype=dtype)
+    # np.array() always makes a writable copy + casts dtype in one step
+    arr = np.array(arr, dtype=dtype)
     np.nan_to_num(arr, copy=False, nan=0.0)
     return arr
 
@@ -375,7 +385,7 @@ def _worker_etl(worker_id, target_symbols, all_files, shard_dir,
                     emissions = sm.add_bar_and_try_emit(spatial_bar, bar_vwap)
                     for manifold, target_val in emissions:
                         sink.write({
-                            "__key__": f"{symbol}_{sample_idx:09d}",
+                            "__key__": f"{symbol.replace('.', '_')}_{sample_idx:09d}",
                             "manifold_2d.npy": manifold,
                             "target.npy": np.array([target_val], dtype=np.float32),
                             "c_friction.npy": np.array([sm.c_friction], dtype=np.float32),
