@@ -326,10 +326,13 @@ omega_pure_v2/
 ### 全量 ETL 状态
 - **运行中**: linux1, 单 worker, 743 文件 × 5312 只 A 股
 - **启动时间**: 2026-03-19 19:55
-- **ETA**: ~45h (预计 2026-03-21 ~17:00 完成)
+- **最后检查**: 2026-03-19 22:46 — 40/743 文件 (5.4%), 513K samples, 121 shards, 8.8GB
+- **速度**: 263s/文件 (稳定)
+- **ETA**: ~50h (预计 **2026-03-22 周六凌晨** 完成)
+- **RAM**: 36GB/61GB (状态机 buffer 在增长，仍安全)
 - **进程**: PID 437460, systemd heavy-workload.slice
 - **输出**: `/omega_pool/wds_shards_v3_full/`
-- **监控**: `tail -f /home/zepher/omega_pure_v2/etl_full.log`
+- **监控**: `ssh linux1-lx "tail -5 /home/zepher/omega_pure_v2/etl_full.log && ps -p 437460 -o %cpu,%mem,etime --no-headers && free -h | head -2"`
 
 ## 11. CRITICAL RULES FOR NEXT AGENT
 1. **Read `CLAUDE.md` first** — it's auto-loaded but understand the rules
