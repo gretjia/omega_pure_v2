@@ -278,12 +278,12 @@ omega_pure_v2/
 
 ### omega_axioms.py 升级
 - YAML 解析器: 2 层 → **任意嵌套深度**
-- 检查项: 12 项 → **37 项** (覆盖全 spec)
+- 检查项: 12 项 → **39 项** (覆盖全 spec)
 - c 从 Layer 1 eternal → Layer 2 fallback
 - 三重独立审计通过: omega_axioms PASS + Codex PASS + Gemini PASS
 
 ### 三层审计体系建立
-- **Layer A**: `python3 omega_axioms.py --verbose` (37 项自检)
+- **Layer A**: `python3 omega_axioms.py --verbose` (39 项自检)
 - **Layer B**: `codex exec` (GPT 5.4 xhigh) — spec↔code recursive alignment
 - **Layer C**: `gemini -p` — 纯数学推理审计 (公式/量纲/梯度)
 - 已集成到 `/dev-cycle` (Stage 8) 和 `/axiom-audit` (三层结构)

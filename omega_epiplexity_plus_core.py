@@ -1,186 +1,209 @@
+"""
+OMEGA-TIB: Topological Information Bottleneck (Phase 0.5 Update)
+----------------------------------------------------------------
+Mathematical core: SRL Physics → FWT Topology → MDL Compression → Intent Prediction
+
+Changes from previous version:
+  - AxiomaticSRLInverter: accepts c_friction tensor (per-stock, id4 ruling)
+  - OmegaMathematicalCompressor: new forward(x_2d, c_friction) signature
+    extracts ΔP/V_D/σ_D from x_2d channels 7/8/9 (id6 ruling)
+  - Architecture renamed from SpatioTemporal2DMAE to Omega-TIB (id5 ruling)
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
 class AxiomaticSRLInverter(nn.Module):
     """
-    第一性原理模块一：严格普适的物理常数反演层 (SRL Axiom Decrypter)
-    文献支持: Strict universality of the square-root law...
-    公式: I(Q) = c * \sigma_D * (Q / V_D)^{0.5} 
-    我们不让模型浪费算力去学习量价关系，而是直接逆向解码出隐藏的主力 Metaorder 真实体积: 
-    Q_hidden = ( \Delta P / (c * \sigma_D) )^2 * V_D
-    """
-    def __init__(self, c_constant: float = 0.842):
-        super().__init__()
-        # c_constant 取自 TSE 普查文献的全局平均预估无量纲系数
-        self.c = c_constant
-        # 物理常数 delta = 0.5，逆运算即为平方 (2.0)。严禁设为可学习参数！
-        self.power_constant = 2.0 
+    Layer 1 Physics: Square Root Law inverse decrypter.
+    Q_hidden = sign(ΔP) × (|ΔP| / (c_i × σ_D))^2 × V_D
 
-    def forward(self, delta_p: torch.Tensor, sigma_d: torch.Tensor, v_d: torch.Tensor) -> torch.Tensor:
+    δ = 0.5 is eternal (POWER_INVERSE = 2.0). Never learnable.
+    c is per-stock (from a_share_c_registry.json), passed as c_friction tensor.
+    """
+    def __init__(self):
+        super().__init__()
+        self.power_constant = 2.0  # 1/δ = 1/0.5 = 2.0 (eternal, never modify)
+
+    def forward(self, delta_p: torch.Tensor, sigma_d: torch.Tensor,
+                v_d: torch.Tensor, c_friction: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            delta_p: [B, T] micro price impact
+            sigma_d: [B, T] macro 20-day rolling ATR
+            v_d: [B, T] macro 20-day rolling ADV
+            c_friction: [B, 1] per-stock friction coefficient
+        Returns:
+            q_hidden: [B, T] directed hidden metaorder volume
+        """
         eps = 1e-8
-        # 1. 剥离异方差与物理常数，提取无量纲化的冲击力度
-        dimensionless_impact = torch.abs(delta_p) / (self.c * sigma_d + eps)
-        
-        # 2. 严格执行平方物理反演，榨取绝对量能
+        # Broadcast c_friction [B, 1] to [B, T]
+        c = c_friction.expand_as(delta_p)
+        dimensionless_impact = torch.abs(delta_p) / (c * sigma_d + eps)
         q_magnitude = torch.pow(dimensionless_impact, self.power_constant) * (v_d + eps)
-        
-        # 3. 还原主力买卖意图的方向 (sign)
-        q_hidden_directed = torch.sign(delta_p) * q_magnitude
-        return q_hidden_directed
+        return torch.sign(delta_p) * q_magnitude
 
 
 class FiniteWindowTopologicalAttention(nn.Module):
     """
-    第一性原理模块二：有限窗口拓扑算子 (Finite Window Theory Engine)
-    文献支持: Epiplexity plus: Finite Window Theory
-    绝对禁止将 2D 拓扑展平为 1D 序列！
-    强制在原生多维流形上实施严格有界 (Space-bounded) 的局部窗口注意力，规避 Embedding Dilation。
+    Layer 2 Topology: Finite Window 2D attention on native manifold.
+    Absolutely NO 1D flattening. O(1) addressing per window.
     """
     def __init__(self, dim: int, window_size: tuple = (4, 4), num_heads: int = 4):
         super().__init__()
         self.dim = dim
         self.window_t, self.window_s = window_size
         self.num_heads = num_heads
-        
+
         self.qkv = nn.Linear(dim, dim * 3, bias=False)
         self.proj = nn.Linear(dim, dim)
         self.scale = (dim // num_heads) ** -0.5
-        
-        # 🛡️ The Topological Positional Bias Fix 🛡️
-        # A relative position bias table to restore the physical "Time Arrow" and spatial adjacency
-        # which would otherwise be lost in permutation-invariant self-attention.
+
         self.relative_position_bias_table = nn.Parameter(
             torch.zeros((2 * self.window_t - 1) * (2 * self.window_s - 1), num_heads)
         )
-        
-        # Calculate relative position index for each token inside the window
         coords_t = torch.arange(self.window_t)
         coords_s = torch.arange(self.window_s)
-        coords = torch.stack(torch.meshgrid([coords_t, coords_s], indexing='ij'))  # 2, Wt, Ws
-        coords_flatten = torch.flatten(coords, 1)  # 2, Wt*Ws
-        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wt*Ws, Wt*Ws
-        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wt*Ws, Wt*Ws, 2
-        relative_coords[:, :, 0] += self.window_t - 1  # shift to start from 0
+        coords = torch.stack(torch.meshgrid([coords_t, coords_s], indexing='ij'))
+        coords_flatten = torch.flatten(coords, 1)
+        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()
+        relative_coords[:, :, 0] += self.window_t - 1
         relative_coords[:, :, 1] += self.window_s - 1
         relative_coords[:, :, 0] *= 2 * self.window_s - 1
-        relative_position_index = relative_coords.sum(-1)  # Wt*Ws, Wt*Ws
+        relative_position_index = relative_coords.sum(-1)
         self.register_buffer("relative_position_index", relative_position_index)
-        
         nn.init.trunc_normal_(self.relative_position_bias_table, std=.02)
 
     def forward(self, x_nd: torch.Tensor) -> torch.Tensor:
-        """
-        x_nd: Shape (Batch, Time, Spatial, Features) - 原生2D网格拓扑
-        Spatial 可以是资产截面网络，也可以是订单簿深度网络。
-        """
         B, T, S, D = x_nd.shape
-        
-        # 强制实施 Space-bounded 空间掩蔽：将全局切分为局部 Finite Windows
+
         pad_t = (self.window_t - T % self.window_t) % self.window_t
         pad_s = (self.window_s - S % self.window_s) % self.window_s
         if pad_t > 0 or pad_s > 0:
             x_nd = F.pad(x_nd, (0, 0, 0, pad_s, 0, pad_t))
-            
+
         _, T_pad, S_pad, _ = x_nd.shape
-        
-        # 划分为不可逾越的物理视域窗口: [B, T_win, S_win, W_t, W_s, Dim]
-        x_win = x_nd.view(B, T_pad // self.window_t, self.window_t, 
+
+        x_win = x_nd.view(B, T_pad // self.window_t, self.window_t,
                           S_pad // self.window_s, self.window_s, D)
-                          
-        # 局部窗口折叠，严密维持拓扑相邻关系，寻址复杂度锁定为 O(1): [B * Num_Win, W_t * W_s, Dim]
-        x_win = x_win.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, self.window_t * self.window_s, D)
-        
-        # 局域拓扑内进行特征聚合 (Epiplexity Extraction)
+        x_win = x_win.permute(0, 1, 3, 2, 4, 5).contiguous().view(
+            -1, self.window_t * self.window_s, D)
+
         qkv = self.qkv(x_win).chunk(3, dim=-1)
-        q, k, v = map(lambda t: t.view(-1, self.window_t * self.window_s, self.num_heads, D // self.num_heads).transpose(1, 2), qkv)
-        
-        # 注意力严格限制在局域拓扑内，斩断无限上下文带来的拓扑撕裂与随机相关性
+        q, k, v = map(lambda t: t.view(
+            -1, self.window_t * self.window_s, self.num_heads,
+            D // self.num_heads).transpose(1, 2), qkv)
+
         attn = (q @ k.transpose(-2, -1)) * self.scale
-        
-        # 🛡️ Apply the Topological Positional Bias 🛡️
-        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
-            self.window_t * self.window_s, self.window_t * self.window_s, -1)  # Wt*Ws, Wt*Ws, nH
-        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wt*Ws, Wt*Ws
-        attn = attn + relative_position_bias.unsqueeze(0)
-        
+
+        rpb = self.relative_position_bias_table[
+            self.relative_position_index.view(-1)
+        ].view(self.window_t * self.window_s, self.window_t * self.window_s, -1)
+        rpb = rpb.permute(2, 0, 1).contiguous()
+        attn = attn + rpb.unsqueeze(0)
+
         attn = attn.softmax(dim=-1)
-        
-        out = (attn @ v).transpose(1, 2).reshape(-1, self.window_t * self.window_s, D)
+
+        out = (attn @ v).transpose(1, 2).reshape(
+            -1, self.window_t * self.window_s, D)
         out = self.proj(out)
-        
-        # 完美还原原生 2D 拓扑结构
-        out = out.view(B, T_pad // self.window_t, S_pad // self.window_s, self.window_t, self.window_s, D)
+
+        out = out.view(B, T_pad // self.window_t, S_pad // self.window_s,
+                       self.window_t, self.window_s, D)
         out = out.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, T_pad, S_pad, D)
-        
+
         if pad_t > 0 or pad_s > 0:
             out = out[:, :T, :S, :].contiguous()
-            
+
         return out
 
 
 class OmegaMathematicalCompressor(nn.Module):
     """
-    第一性原理模块三：完美数学压缩器核心 (The Perfect Mathematical Compressor)
-    组装 SRL 物理反演, Finite Window TDA 与 Epiplexity 提纯引擎
+    Omega-TIB: Topological Information Bottleneck.
+    SRL Physics → FWT Topology → Epiplexity Bottleneck → Intent Prediction.
+
+    Input: x_2d [B, T, S, 10] + c_friction [B, 1]
+    Output: (prediction [B, 1], z_core [B, T, S, hidden//4])
     """
-    def __init__(self, raw_feature_dim: int, hidden_dim: int, window_size: tuple = (4, 4)):
+    def __init__(self, hidden_dim: int = 64, window_size: tuple = (4, 4)):
         super().__init__()
         self.srl_inverter = AxiomaticSRLInverter()
-        
-        # 特征映射: 原始高阶特征 + 解码出的主力量能(1维)
-        self.input_proj = nn.Linear(raw_feature_dim + 1, hidden_dim)
+
+        # LOB features (ch 0-4) + q_metaorder (1) = 6 input dims
+        self.input_proj = nn.Linear(6, hidden_dim)
         self.tda_layer = FiniteWindowTopologicalAttention(hidden_dim, window_size)
-        
-        # Epiplexity 信息瓶颈层 (Bottleneck)
-        # 用极其有限的参数逼迫模型去“压缩”信息，榨取真实的结构化代码
+
         self.epiplexity_bottleneck = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.GELU(),
-            nn.Linear(hidden_dim // 2, hidden_dim // 4) 
+            nn.Linear(hidden_dim // 2, hidden_dim // 4)
         )
         self.intent_decoder = nn.Linear(hidden_dim // 4, 1)
 
-    def forward(self, price_impact_2d: torch.Tensor, raw_features_2d: torch.Tensor, 
-                sigma_d: torch.Tensor, v_d: torch.Tensor):
-        
-        # 1. 物理层解码：抛弃瞎猜，通过宇宙常数反向暴漏主力真实隐藏体积
-        with torch.no_grad(): # 停止梯度，SRL是确定的物理法则
-            q_metaorder_intent = self.srl_inverter(price_impact_2d, sigma_d, v_d).unsqueeze(-1)
-        
-        # 2. 拼接原生拓扑流形
-        native_manifold = torch.cat([raw_features_2d, q_metaorder_intent], dim=-1)
+    def forward(self, x_2d: torch.Tensor, c_friction: torch.Tensor):
+        """
+        Args:
+            x_2d: [B, T, S, 10] — 10-channel Omega-TIB tensor
+            c_friction: [B, 1] — per-stock friction coefficient
+        """
+        B, T, S, C = x_2d.shape
+
+        # Extract macro physical anchors from channels 7/8/9
+        # Use spatial depth 0 (broadcast-identical across all depths)
+        delta_p = x_2d[:, :, 0, 7]         # [B, T]
+        v_d_macro = x_2d[:, :, 0, 8]       # [B, T]
+        sigma_d_macro = x_2d[:, :, 0, 9]   # [B, T]
+
+        # 1. Physics layer: SRL inversion (non-learnable, torch.no_grad)
+        with torch.no_grad():
+            q_metaorder = self.srl_inverter(
+                delta_p, sigma_d_macro, v_d_macro, c_friction
+            )  # [B, T]
+        # Expand to [B, T, S, 1] for manifold concatenation
+        q_metaorder = q_metaorder.unsqueeze(-1).unsqueeze(-1).expand(B, T, S, 1)
+
+        # 2. Build native manifold: LOB features (ch 0-4) + q_metaorder
+        lob_features = x_2d[:, :, :, :5]  # [B, T, S, 5]
+        native_manifold = torch.cat([lob_features, q_metaorder], dim=-1)  # [B, T, S, 6]
         x = self.input_proj(native_manifold)
-        
-        # 3. 拓扑层压缩：穿透受限二维感知窗口，无损捕获局域连通性
+
+        # 3. Topology layer: finite window 2D attention
         structured_features = self.tda_layer(x)
-        
-        # 4. 认知层提纯：进入信息瓶颈
-        # z_core 即为主力行为的纯粹可压缩结构表示 (The Epiplexity Core)
+
+        # 4. Compression layer: information bottleneck
         z_core = self.epiplexity_bottleneck(structured_features)
-        
-        # 时空维度全局池化以得出宏观意图
+
+        # 5. Prediction layer: global pooling → scalar intent
         pooled_z = torch.mean(z_core, dim=[1, 2])
         main_force_prediction = self.intent_decoder(pooled_z)
-        
+
         return main_force_prediction, z_core
 
-def compute_epiplexity_mdl_loss(prediction: torch.Tensor, target: torch.Tensor, 
+
+def compute_epiplexity_mdl_loss(prediction: torch.Tensor, target: torch.Tensor,
                                 z_core: torch.Tensor, lambda_s: float = 1e-3):
     """
-    第一性原理模块四：Two-Part Minimum Description Length (MDL) 损失函数
-    Total_MDL = H_T (Time-bounded Entropy 预测残差) + S_T (Epiplexity 结构复杂度)
+    Two-Part MDL Loss: Total = H_T + λ_s × S_T
+    H_T = MSE(prediction, target) — time-bounded entropy (unpredictable noise)
+    S_T = ||z_core||₁ — structure description length (Epiplexity)
     """
-    # 1. H_T: 无法预测的随机市场噪音 (时间有界熵)
-    # 代表市场中布朗运动的随机摩擦部分
     h_t = F.mse_loss(prediction.squeeze(), target)
-    
-    # 2. S_T: 模型为了解释数据而提取的结构化信息复杂度 (Epiplexity)
-    # 我们使用内部提取拓扑特征 z_core 的 L1 稀疏范数来代理编码长度 |P|。
-    # 这一项会强烈逼迫模型摒弃高熵的随机假象，寻找具有最短描述长度(Shortest Description Length)的主力规则。
     s_t = torch.norm(z_core, p=1, dim=-1).mean()
-    
-    # 3. 压缩即智能：用最低的认知代价(S_T)，去瓦解最大的时空混沌(H_T)
     total_mdl = h_t + lambda_s * s_t
     return total_mdl, h_t, s_t
+
+
+def compute_fvu(predictions: torch.Tensor, targets: torch.Tensor) -> float:
+    """FVU = MSE / Var(target). Scale-invariant HPO metric (id5 ruling)."""
+    predictions = predictions.view(-1)
+    targets = targets.view(-1)
+    mse = F.mse_loss(predictions, targets).item()
+    target_var = torch.var(targets, unbiased=False).item()
+    if target_var < 1e-8:
+        return 1.0
+    return mse / target_var

@@ -241,7 +241,7 @@ for fpath in all_files:           # 552 files, 顺序
 │  │ 5. [LOW] 统一文档 Phase 编号                        │    │
 │  │ 6. [LOW] omega_axioms.py 覆盖范围扩展（可后续）     │    │
 │  └─────────────────────────────────────────────────────┘    │
-│  验收: Codex re-audit PASS (至少 A/B/C/D 通过)             │
+│  验收: omega_axioms.py PASS (39 checks) + Codex PASS (A-G)  │
 │  影响: 已有 139 shards 需要废弃重新生成                     │
 └─────────────────────────────────────────────────────────────┘
                               │

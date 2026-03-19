@@ -20,11 +20,11 @@ tensor:
 # Ch 2: Ask_P      — 卖价
 # Ch 3: Ask_V      — 卖量
 # Ch 4: Close      — 收盘价
-# Ch 5: SRL_Residual — SRL 残差 (来自上游 parquet, 需验证非零)
-# Ch 6: Epiplexity — 认知复杂度 (来自上游 parquet, 需验证非零)
+# Ch 5: reserved — 预留 (原始 parquet 无此字段, ETL 写 0.0, SRL 在模型内部计算)
+# Ch 6: reserved — 预留 (原始 parquet 无此字段, ETL 写 0.0, Epiplexity 是模型 z_core 输出)
 # Ch 7: delta_p    — 微观价格冲击 ΔP = last_tick.price - first_tick.price (per volume bar)
 # Ch 8: macro_v_d  — 宏观日均成交量 (20-day Rolling ADV, 广播到所有空间深度)
-# Ch 9: macro_sigma_d — 宏观日均波动率 (20-day Rolling ATR, 广播到所有空间深度)
+# Ch 9: macro_sigma_d — 宏观日均波动率 (20-day Rolling ATR = mean(high-low), 绝对价格单位, 广播到所有空间深度)
 
 # ============================================================
 # 物理常数
