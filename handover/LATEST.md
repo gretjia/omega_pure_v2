@@ -1,9 +1,9 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-03-19 (Thursday) - **STATUS: V3 PIPELINE PLAN COMPLETE — READY TO EXECUTE**
+Last Updated: 2026-03-19 (Thursday) - **STATUS: FULL ETL RUNNING — ETA 2026-03-21 ~17:00**
 
-## 1. CURRENT STATUS: Workflow Automation Deployed
+## 1. CURRENT STATUS: Full ETL In Progress
 
-**All ETL and Topo-Forge processes remain HALTED.** Math core code is **frozen**.
+**Full ETL running on linux1** (single worker, 743 files, 5312 A-shares, ~45h ETA). Math core code is **frozen**.
 
 The Claude CLI environment restructuring and workflow automation are **complete**. Three-layer automation architecture (Hooks + Skills + Agents) deployed and audited.
 
@@ -256,11 +256,11 @@ omega_pure_v2/
 6. ~~架构师 Spec vs 代码递归审计~~ **DONE — 5 fixes applied**
 7. ~~双节点远程审计与清理~~ **DONE — Linux1 回收 316GB, Windows1 回收 1+TB**
 8. ~~三层审计体系建立~~ **DONE — omega_axioms(37项) + Codex(6/6) + Gemini(6/6)**
-9. **NEXT**: V3 Pipeline 执行 — 见 `plan/v3_pipeline_plan.md`
-10. Phase 0.5: ETL 跨文件状态修复 + Omega-TIB 实现 + V_D 量纲修复
-11. Phase 0.6: SRL c 特异性标定（per-stock c_i）
-12. Phase 1A/1B: ETL 多核改造 + 全量重新生成
-13. Phase 2-6: 烟测 → train.py → HPO → 全量训练 → 回测
+9. ~~Phase 0.5/0.6/1A: ETL 多核改造 + batch 优化 + 烟测~~ **DONE — 21/23 PASS**
+10. **IN PROGRESS**: Phase 1B — 全量 ETL 单 worker 运行中 (linux1, ETA ~45h, started 19:55 2026-03-19)
+11. **NEXT**: Phase 2 — 端到端烟测（全量 shard 验证 + Loader + Model）
+12. Phase 3: train.py (Omega-TIB + VolumeBlockInputMasking + FVU)
+13. Phase 4-6: HPO → 全量训练 → 回测
 
 ## 9. SESSION 5: 三层审计体系 + V3 Pipeline Plan (2026-03-18~19)
 
@@ -293,7 +293,45 @@ omega_pure_v2/
 - Codex 审计 6/6 PASS
 - 完整 plan 存档于 `plan/v3_pipeline_plan.md`
 
-## 10. CRITICAL RULES FOR NEXT AGENT
+## 10. SESSION 6: ETL 多核改造 + 烟测 + 全量部署 (2026-03-19)
+
+### ETL 多核改造 (Phase 1A)
+- **batch 优化**: 350M `.as_py()` 调用/文件 → ~44 `to_numpy()` 调用/文件。762s → 235s/文件 (**3.2x 加速**)
+- **LOB 预构建**: `[n_rows, 10, 4]` numpy 数组批量提取，O(1) 切片替代逐行 40 次 `.as_py()`
+- **PyArrow 过滤**: `pc.is_in()` C 级过滤后再转 numpy，减少 92% 无效行
+- **Symbol 级并行**: `--workers N` 支持，round-robin 分区，独立 ShardWriter，自动 shard 合并重编号
+- **A 股过滤器**: `_is_a_share()` 排除 3054 个非 A 股代码（债券/ETF/基金/逆回购）
+
+### 烟测结果 (Phase 2 部分)
+- 30 只纯 A 股 × 50 个交易日 × 4 workers → **4349 samples / 4 shards**
+- 23 项检查: **21 PASS / 1 STOP (采样偏差) / 1 WARNING**
+- #17 (ch8/ch9 continuity) STOP 是 20-day rolling warmup 的采样偏差，后期样本验证值正确
+- **全链路验证通过**: ETL→WebDataset→Loader→Model forward→MDL Loss→Backward 梯度无 NaN
+
+### 关键 Bug 修复
+| Bug | 根因 | 修复 |
+|-----|------|------|
+| readonly numpy | `to_numpy()` 返回只读 view | `np.array()` 强制 copy |
+| WebDataset 键名分割 | `601166.SH` 的 `.` 被当扩展名 | `symbol.replace('.', '_')` |
+| VWAP=0 幽灵 bar | 大单 carryover + 零成交 ticks | `vwap_den<=0` 跳过 + carryover 封顶 |
+| null symbol → 'nan' | `to_pandas()` 将 null 转 NaN float | 显式 NaN guard |
+| loader prefetch_factor | PyTorch≥2.0 num_workers=0 冲突 | 条件设置 |
+
+### Bitter Lesson: Symbol 级并行在单节点上是死路
+- 12 workers: 580s/文件 (ETA 120h) — **比单 worker 还慢 2.5x**
+- 根因: 每个 worker 读全部文件 → 12× I/O 争抢同一 NVMe
+- 单 worker: 235s/文件 (ETA 45h) — CPU 2.5%, I/O <1%, 内存 29GB/61GB
+- **结论**: 当前架构最优解 = 单 worker + batch 优化。详见 `VIA_NEGATIVA.md`
+
+### 全量 ETL 状态
+- **运行中**: linux1, 单 worker, 743 文件 × 5312 只 A 股
+- **启动时间**: 2026-03-19 19:55
+- **ETA**: ~45h (预计 2026-03-21 ~17:00 完成)
+- **进程**: PID 437460, systemd heavy-workload.slice
+- **输出**: `/omega_pool/wds_shards_v3_full/`
+- **监控**: `tail -f /home/zepher/omega_pure_v2/etl_full.log`
+
+## 11. CRITICAL RULES FOR NEXT AGENT
 1. **Read `CLAUDE.md` first** — it's auto-loaded but understand the rules
 2. **Read `VIA_NEGATIVA.md`** — know what NOT to do before doing anything
 3. **Do not modify `omega_epiplexity_plus_core.py`** unless architect explicitly authorizes
