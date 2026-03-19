@@ -1,8 +1,9 @@
 """
-OMEGA-TIB V3: The Volume-Clocked Topo-Forge (Phase 1A — Performance Optimized)
--------------------------------------------------------------------------------
+OMEGA-TIB V3: The Volume-Clocked Topo-Forge (Multi-Core Edition)
+-----------------------------------------------------------------
 Single-pass streaming with bounded per-symbol buffers.
-Columnar batch processing (no to_pylist). Cross-file state continuity.
+Batch column extraction (to_numpy, no .as_py()). Cross-file state continuity.
+Symbol-level parallelism: each worker processes a subset of symbols across all files.
 
 Tensor: [160, 10, 10] — Time × Spatial × Features
 Target: Forward VWAP return in BP (H=20 bars, N+1 entry delay)
@@ -13,25 +14,30 @@ Performance design (Bitter Lessons compliance):
   - OMP_NUM_THREADS=1 (no oversubscription)
   - Must run via systemd-run --slice=heavy-workload.slice (#3)
   - fcntl single-instance lock (#6)
-  - Bounded memory: ~200 bars/symbol × 5000 symbols ≈ 400MB (#2)
-  - Columnar batch extraction (avoids to_pylist dict creation overhead)
+  - Bounded memory: ~344MB/worker × 12 workers = 4.1GB / 61GB = 6.7%
+  - Batch column extraction: 350M .as_py() → ~44 to_numpy() per batch
+  - PyArrow-level symbol filtering: 100K rows → ~8K rows per worker
 """
 
 import os
 import sys
 import json
 import time
+import glob
+import shutil
 import numpy as np
+import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import webdataset as wds
 from collections import deque
+from multiprocessing import Process, Queue
 import logging
 
 if sys.platform != "win32":
     import fcntl
 
 # Force thread count to 1 — prevents oversubscription (Bitter Lesson #4)
-# Use direct assignment, not setdefault, to override any inherited env
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -50,6 +56,11 @@ SHARD_MAX_COUNT = 5000
 PAYOFF_HORIZON = 20
 # Minimum bars needed before we can emit a window with valid target
 MIN_BUFFER_FOR_EMIT = MACRO_WINDOW + 1 + PAYOFF_HORIZON  # 181
+
+# LOB column names (pre-computed to avoid f-string overhead in loops)
+_LOB_COLUMNS = []
+for _lvl in range(1, SPATIAL_DEPTH + 1):
+    _LOB_COLUMNS.extend([f'bid_p{_lvl}', f'bid_v{_lvl}', f'ask_p{_lvl}', f'ask_v{_lvl}'])
 
 
 class OmegaVolumeClockStateMachine:
@@ -183,6 +194,10 @@ class OmegaVolumeClockStateMachine:
         return spatial_matrix
 
 
+# ==========================================
+# Helper Functions
+# ==========================================
+
 def _acquire_single_instance_lock():
     if sys.platform == "win32":
         return None
@@ -204,81 +219,130 @@ def _load_c_registry(path: str) -> dict:
     return {}
 
 
-def _extract_bid_ask_snapshot(batch, row_idx: int) -> np.ndarray:
-    """Extract [10, 4] LOB snapshot from a single row, using columnar access."""
-    snapshot = np.zeros((SPATIAL_DEPTH, 4), dtype=np.float32)
-    for i in range(SPATIAL_DEPTH):
-        level = i + 1
-        snapshot[i, 0] = batch.column(f'bid_p{level}')[row_idx].as_py() or 0.0
-        snapshot[i, 1] = batch.column(f'bid_v{level}')[row_idx].as_py() or 0.0
-        snapshot[i, 2] = batch.column(f'ask_p{level}')[row_idx].as_py() or 0.0
-        snapshot[i, 3] = batch.column(f'ask_v{level}')[row_idx].as_py() or 0.0
-    return snapshot
+def _safe_col_to_numpy(col, dtype=np.float64):
+    """Safely convert PyArrow column to numpy, handling nulls and type issues."""
+    try:
+        arr = col.to_numpy(zero_copy_only=False)
+    except Exception:
+        arr = col.to_pandas().values
+    arr = np.asarray(arr, dtype=dtype)
+    np.nan_to_num(arr, copy=False, nan=0.0)
+    return arr
 
 
-def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
-                        symbols: list = None, c_registry_path: str = None,
-                        batch_size: int = 100000, file_list_path: str = None):
+def _discover_symbols(all_files):
+    """Scan all files to discover unique symbols (column-only read, fast)."""
+    symbols = set()
+    for fpath in all_files:
+        pf = pq.ParquetFile(fpath)
+        for batch in pf.iter_batches(batch_size=500000, columns=['symbol']):
+            uniq = pc.unique(batch.column('symbol')).to_pylist()
+            symbols.update(s for s in uniq if s)
+    return sorted(symbols)
+
+
+def _merge_shards(output_dir, num_workers):
+    """Merge worker shard directories into a single numbered sequence."""
+    shard_idx = 0
+    for w in range(num_workers):
+        worker_dir = os.path.join(output_dir, f"worker_{w:02d}")
+        if not os.path.exists(worker_dir):
+            continue
+        worker_shards = sorted(glob.glob(os.path.join(worker_dir, "omega_shard_*.tar")))
+        for src in worker_shards:
+            dst = os.path.join(output_dir, f"omega_shard_{shard_idx:05d}.tar")
+            shutil.move(src, dst)
+            shard_idx += 1
+        # Remove empty worker dir
+        try:
+            os.rmdir(worker_dir)
+        except OSError:
+            pass
+    logging.info(f"[MERGE] {shard_idx} shards merged and renumbered")
+    return shard_idx
+
+
+# ==========================================
+# Worker ETL Process
+# ==========================================
+
+def _worker_etl(worker_id, target_symbols, all_files, shard_dir,
+                c_registry, c_default, batch_size, result_queue=None):
     """
-    Single-pass streaming ETL with bounded per-symbol buffers.
-    Cross-file state continuity. Columnar batch processing.
+    Single worker ETL process with batch column extraction.
+    Processes all files for a subset of symbols (or all symbols if target_symbols is None).
 
-    Args:
-        file_list_path: Optional path to a text file with one parquet path per line.
-                        Used for split dual-node execution. Overrides raw_parquet_dir scan.
+    Batch optimization: replaces 350M .as_py() calls with ~44 to_numpy() calls per batch.
+    PyArrow-level symbol filtering reduces effective rows from 100K to ~8K per worker.
     """
-    lock_fd = _acquire_single_instance_lock()
-    os.makedirs(output_tar_dir, exist_ok=True)
-    abs_output_dir = os.path.abspath(output_tar_dir).replace("\\", "/")
-    pattern = f"file:///{abs_output_dir}/omega_shard_%05d.tar"
+    os.makedirs(shard_dir, exist_ok=True)
+    abs_dir = os.path.abspath(shard_dir).replace("\\", "/")
+    pattern = f"file:///{abs_dir}/omega_shard_%05d.tar"
     sink = wds.ShardWriter(pattern, maxcount=SHARD_MAX_COUNT)
 
-    c_registry = _load_c_registry(c_registry_path)
-    c_default = c_registry.get('__GLOBAL_A_SHARE_C__', 0.842)
-    target_symbols = set(symbols) if symbols else None
+    # Pre-compute PyArrow filter array for symbol-level filtering
+    target_pa = pa.array(sorted(target_symbols)) if target_symbols else None
 
-    if file_list_path and os.path.exists(file_list_path):
-        with open(file_list_path) as f:
-            all_files = [line.strip() for line in f if line.strip()]
-        logging.info(f"[FORGE] Using file list: {file_list_path} ({len(all_files)} files)")
-    else:
-        all_files = []
-        for root, dirs, files in os.walk(raw_parquet_dir):
-            for f in files:
-                if f.endswith('.parquet'):
-                    all_files.append(os.path.join(root, f))
-    all_files.sort(key=lambda p: os.path.basename(p)[:8])  # chronological by date
-
-    # Cross-file state
     global_states = {}  # symbol → {sm, curr_date, daily_vol}
-    global_sample_idx = 0
+    sample_idx = 0
     total_ticks = 0
     start_time = time.time()
-
-    logging.info(f"[FORGE] {len(all_files)} files, batch_size={batch_size}, streaming mode")
 
     for file_idx, fpath in enumerate(all_files):
         file_start = time.time()
         parquet_file = pq.ParquetFile(fpath)
 
         for batch in parquet_file.iter_batches(batch_size=batch_size):
-            n_rows = batch.num_rows
-            # Columnar extraction (avoid to_pylist)
-            sym_col = batch.column('symbol')
-            price_col = batch.column('price')
-            vol_col = batch.column('vol_tick')
-            date_col = batch.column('date')
+            n_rows_raw = batch.num_rows
 
-            for row_idx in range(n_rows):
-                symbol = sym_col[row_idx].as_py()
+            # ========== PYARROW-LEVEL SYMBOL FILTER ==========
+            # Filter entire batch at C level before any numpy conversion.
+            # For 12 workers: 100K rows → ~8K rows (420/5000 symbols ≈ 8%)
+            if target_pa is not None:
+                sym_filter = pc.is_in(batch.column('symbol'), value_set=target_pa)
+                batch = batch.filter(sym_filter)
+
+            n_rows = batch.num_rows
+            if n_rows == 0:
+                total_ticks += n_rows_raw
+                continue
+
+            # ========== BATCH COLUMN EXTRACTION ==========
+            # Replaces 4 × n_rows .as_py() calls with 2 to_pandas() + 2 to_numpy()
+            sym_arr = batch.column('symbol').to_pandas().values     # object array
+            price_arr = _safe_col_to_numpy(batch.column('price'))   # float64
+            vol_arr = _safe_col_to_numpy(batch.column('vol_tick'))  # float64
+            date_arr = batch.column('date').to_pandas().values      # object array
+
+            # ========== LOB BATCH PRE-BUILD ==========
+            # Replaces up to 40 × n_triggered_rows .as_py() calls with
+            # 40 to_numpy() calls (4 cols × 10 levels), amortized over entire batch.
+            # For filtered batch (~8K rows): 8K × 10 × 4 × 4B = 1.3MB
+            lob_data = np.zeros((n_rows, SPATIAL_DEPTH, 4), dtype=np.float32)
+            for level_idx in range(SPATIAL_DEPTH):
+                level = level_idx + 1
+                lob_data[:, level_idx, 0] = _safe_col_to_numpy(
+                    batch.column(f'bid_p{level}'), dtype=np.float32)
+                lob_data[:, level_idx, 1] = _safe_col_to_numpy(
+                    batch.column(f'bid_v{level}'), dtype=np.float32)
+                lob_data[:, level_idx, 2] = _safe_col_to_numpy(
+                    batch.column(f'ask_p{level}'), dtype=np.float32)
+                lob_data[:, level_idx, 3] = _safe_col_to_numpy(
+                    batch.column(f'ask_v{level}'), dtype=np.float32)
+
+            # ========== TICK PROCESSING LOOP ==========
+            for idx in range(n_rows):
+                raw_sym = sym_arr[idx]
+                # Guard against null/NaN symbols: to_pandas() converts nulls to NaN (float)
+                if raw_sym is None or (isinstance(raw_sym, float) and np.isnan(raw_sym)):
+                    continue
+                symbol = str(raw_sym)
                 if not symbol:
                     continue
-                if target_symbols and symbol not in target_symbols:
-                    continue
 
-                price = price_col[row_idx].as_py() or 0.0
-                vol_tick = vol_col[row_idx].as_py() or 0.0
-                tick_date = date_col[row_idx].as_py()
+                price = float(price_arr[idx])
+                vol_tick = float(vol_arr[idx])
+                tick_date = date_arr[idx]
 
                 if symbol not in global_states:
                     c_i = c_registry.get(symbol, c_default)
@@ -299,75 +363,192 @@ def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
                 ctx['curr_date'] = tick_date
                 ctx['daily_vol'] += vol_tick
 
-                # Extract LOB snapshot only when volume threshold is close
-                # (optimization: avoid expensive snapshot for every tick)
+                # LOB snapshot: O(1) numpy slice from pre-built array
                 if sm.cum_vol + vol_tick >= sm.vol_threshold * 0.8:
-                    snapshot = _extract_bid_ask_snapshot(batch, row_idx)
+                    snapshot = lob_data[idx]  # [10, 4] — O(1) view
                 else:
-                    snapshot = sm.bar_last_tick if sm.bar_last_tick is not None else np.zeros((SPATIAL_DEPTH, 4), dtype=np.float32)
+                    snapshot = (sm.bar_last_tick if sm.bar_last_tick is not None
+                                else np.zeros((SPATIAL_DEPTH, 4), dtype=np.float32))
 
                 spatial_bar, bar_vwap = sm.push_tick_fast(price, vol_tick, snapshot)
                 if spatial_bar is not None:
                     emissions = sm.add_bar_and_try_emit(spatial_bar, bar_vwap)
                     for manifold, target_val in emissions:
                         sink.write({
-                            "__key__": f"{symbol}_{global_sample_idx:09d}",
+                            "__key__": f"{symbol}_{sample_idx:09d}",
                             "manifold_2d.npy": manifold,
                             "target.npy": np.array([target_val], dtype=np.float32),
                             "c_friction.npy": np.array([sm.c_friction], dtype=np.float32),
-                            "meta.json": {"symbol": symbol, "timestamp": str(global_sample_idx)}
+                            "meta.json": {"symbol": symbol, "timestamp": str(sample_idx)}
                         })
-                        global_sample_idx += 1
+                        sample_idx += 1
 
-            total_ticks += n_rows
+            total_ticks += n_rows_raw
 
+        # Progress logging
         file_elapsed = time.time() - file_start
-        total_elapsed = time.time() - start_time
         files_done = file_idx + 1
         files_remaining = len(all_files) - files_done
-        avg_per_file = total_elapsed / files_done
-        eta_seconds = avg_per_file * files_remaining
-        eta_hours = eta_seconds / 3600
 
         if files_done % 10 == 0 or files_done == 1:
+            total_elapsed = time.time() - start_time
+            avg_per_file = total_elapsed / files_done
+            eta_hours = (avg_per_file * files_remaining) / 3600
             logging.info(
-                f"[FORGE] {files_done}/{len(all_files)} files | "
-                f"{global_sample_idx} samples | {total_ticks/1e6:.1f}M ticks | "
+                f"[Worker {worker_id}] {files_done}/{len(all_files)} files | "
+                f"{sample_idx} samples | {total_ticks/1e6:.1f}M ticks | "
                 f"{file_elapsed:.1f}s/file | ETA: {eta_hours:.1f}h"
             )
 
-            # 15-hour warning threshold
             if eta_hours > 15.0 and files_done >= 5:
                 logging.warning(
-                    f"⚠️ ETA {eta_hours:.1f}h exceeds 15h threshold! "
-                    f"Consider adding second node or optimizing batch_size."
+                    f"⚠️ Worker {worker_id}: ETA {eta_hours:.1f}h exceeds 15h threshold! "
+                    f"Consider adding workers or second node."
                 )
 
-    # Flush final day
+    # Flush final day for all symbols
     for sym, ctx in global_states.items():
         ctx['sm'].update_daily_macro(ctx['daily_vol'])
 
     sink.close()
     total_time = time.time() - start_time
     logging.info(
-        f"[FORGE] Complete. {global_sample_idx} tensors | "
+        f"[Worker {worker_id}] Complete. {sample_idx} samples | "
         f"{len(global_states)} symbols | {total_ticks/1e6:.0f}M ticks | "
         f"{total_time/3600:.1f}h total"
     )
 
+    if result_queue is not None:
+        result_queue.put((worker_id, sample_idx, len(global_states), total_time))
+
+    return sample_idx, len(global_states), total_time
+
+
+# ==========================================
+# Main Pipeline
+# ==========================================
+
+def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
+                        symbols: list = None, c_registry_path: str = None,
+                        batch_size: int = 100000, file_list_path: str = None,
+                        workers: int = 1):
+    """
+    Single-pass streaming ETL with bounded per-symbol buffers.
+    Cross-file state continuity. Batch column extraction.
+    Symbol-level parallelism with --workers N.
+
+    Args:
+        raw_parquet_dir: Directory containing raw parquet files.
+        output_tar_dir: Output directory for WebDataset tar shards.
+        symbols: Optional list of target symbols to process.
+        c_registry_path: Path to a_share_c_registry.json.
+        batch_size: PyArrow batch size (default 100000).
+        file_list_path: Optional text file with parquet paths (for split execution).
+        workers: Number of parallel workers (1 = single-core, N = symbol-level parallel).
+    """
+    lock_fd = _acquire_single_instance_lock()
+    os.makedirs(output_tar_dir, exist_ok=True)
+
+    c_registry = _load_c_registry(c_registry_path)
+    c_default = c_registry.get('__GLOBAL_A_SHARE_C__', 0.842)
+    target_symbols = set(symbols) if symbols else None
+
+    # Gather file list
+    if file_list_path and os.path.exists(file_list_path):
+        with open(file_list_path) as f:
+            all_files = [line.strip() for line in f if line.strip()]
+        logging.info(f"[FORGE] Using file list: {file_list_path} ({len(all_files)} files)")
+    else:
+        all_files = []
+        for root, dirs, files in os.walk(raw_parquet_dir):
+            for f in files:
+                if f.endswith('.parquet'):
+                    all_files.append(os.path.join(root, f))
+    all_files.sort(key=lambda p: os.path.basename(p)[:8])  # chronological by date
+
+    logging.info(f"[FORGE] {len(all_files)} files, batch_size={batch_size}, workers={workers}")
+
+    if workers <= 1:
+        # ========== SINGLE-WORKER MODE ==========
+        # Batch-optimized but no parallelism. Writes directly to output_tar_dir.
+        _worker_etl(0, target_symbols, all_files, output_tar_dir,
+                     c_registry, c_default, batch_size)
+    else:
+        # ========== MULTI-WORKER MODE ==========
+        # 1. Discover all symbols
+        logging.info("[FORGE] Discovering symbols for partitioning...")
+        if target_symbols:
+            all_syms = sorted(target_symbols)
+        else:
+            all_syms = _discover_symbols(all_files)
+        logging.info(f"[FORGE] {len(all_syms)} symbols discovered, splitting across {workers} workers")
+
+        # 2. Round-robin split for even distribution
+        groups = [[] for _ in range(workers)]
+        for i, sym in enumerate(all_syms):
+            groups[i % workers].append(sym)
+
+        for w in range(workers):
+            logging.info(f"  Worker {w}: {len(groups[w])} symbols")
+
+        # 3. Launch worker processes
+        result_queue = Queue()
+        processes = []
+        for w in range(workers):
+            worker_dir = os.path.join(output_tar_dir, f"worker_{w:02d}")
+            p = Process(
+                target=_worker_etl,
+                args=(w, set(groups[w]), all_files, worker_dir,
+                      c_registry, c_default, batch_size, result_queue),
+                name=f"etl-worker-{w}"
+            )
+            p.start()
+            processes.append(p)
+            logging.info(f"[FORGE] Worker {w} started (PID {p.pid})")
+
+        # 4. Wait for all workers
+        for p in processes:
+            p.join()
+            if p.exitcode != 0:
+                logging.error(f"[FORGE] Worker {p.name} exited with code {p.exitcode}")
+
+        # 5. Collect results
+        results = []
+        while not result_queue.empty():
+            results.append(result_queue.get())
+
+        total_samples = sum(r[1] for r in results)
+        total_symbols = sum(r[2] for r in results)
+        max_time = max(r[3] for r in results) if results else 0
+        logging.info(
+            f"[FORGE] All {workers} workers done. "
+            f"{total_samples} total samples, {total_symbols} symbols, "
+            f"wall time: {max_time/3600:.1f}h"
+        )
+
+        # 6. Merge worker shards into single numbered sequence
+        _merge_shards(output_tar_dir, workers)
+
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Omega-TIB V3 Topo-Forge ETL")
-    parser.add_argument("--base_dir", type=str, required=True)
-    parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--symbols", type=str, nargs='+', help="Target symbols")
-    parser.add_argument("--c_registry", type=str, default=None)
+    parser = argparse.ArgumentParser(description="Omega-TIB V3 Topo-Forge ETL (Multi-Core)")
+    parser.add_argument("--base_dir", type=str, required=True,
+                        help="Directory containing raw parquet files")
+    parser.add_argument("--output_dir", type=str, required=True,
+                        help="Output directory for WebDataset tar shards")
+    parser.add_argument("--symbols", type=str, nargs='+',
+                        help="Target symbols (optional, processes all if omitted)")
+    parser.add_argument("--c_registry", type=str, default=None,
+                        help="Path to a_share_c_registry.json")
     parser.add_argument("--batch_size", type=int, default=100000,
                         help="PyArrow batch size (default 100000)")
     parser.add_argument("--file_list", type=str, default=None,
                         help="Path to text file with parquet paths (for split execution)")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Number of parallel workers (1=single-core, N=symbol-level parallel)")
     args = parser.parse_args()
 
     topo_forge_pipeline(args.base_dir, args.output_dir, args.symbols,
-                        args.c_registry, args.batch_size, args.file_list)
+                        args.c_registry, args.batch_size, args.file_list,
+                        args.workers)

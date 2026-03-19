@@ -67,11 +67,14 @@ def create_dataloader(wds_url, batch_size=256, macro_window=160,
         .batched(batch_size)
     )
 
-    loader = DataLoader(
-        dataset,
+    loader_kwargs = dict(
         batch_size=None,
         num_workers=num_workers,
-        prefetch_factor=2
     )
+    # prefetch_factor requires num_workers > 0 (PyTorch >= 2.0)
+    if num_workers > 0:
+        loader_kwargs["prefetch_factor"] = 2
+
+    loader = DataLoader(dataset, **loader_kwargs)
 
     return loader
