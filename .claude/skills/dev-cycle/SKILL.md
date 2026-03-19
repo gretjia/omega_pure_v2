@@ -1,6 +1,6 @@
 ---
 name: dev-cycle
-description: 完整开发周期 — Plan/Audit/Fix/Code/Audit/Fix/Axiom/Summary 八阶段自动编排
+description: 完整开发周期 — Plan/Audit/Fix/Code/Audit/Fix/Axiom/ExternalAudit/Summary 九阶段自动编排
 user-invocable: true
 ---
 
@@ -117,20 +117,46 @@ Verdict: PASS / FAIL
 
 **如果 FAIL → 回到 Stage 6 修复代码，然后重新运行公理检查**
 
-### Stage 8: SUMMARY
+### Stage 8: EXTERNAL AUDIT（独立交叉验证）
+
+使用外部 LLM 进行独立审计，防止 AI 自测自验 (Bitter Lesson #7)。
+
+1. **Codex recursive audit**（spec/代码一致性）:
+   ```bash
+   codex exec --full-auto "<审计 prompt，比对 spec vs 代码变更>"
+   ```
+   验证代码变更是否与 `architect/current_spec.yaml` 和 `architect/gdocs/` 对齐。
+
+2. **Gemini 数学推理审计**（仅在涉及数学核心/物理公式时）:
+   ```bash
+   cat <变更文件> | gemini -p "对以下代码进行纯数学推理审计..."
+   ```
+   验证公式推导、量纲一致性、梯度闭环。
+
+输出：
+```
+=== STAGE 8: EXTERNAL AUDIT ===
+Codex (GPT 5.4): PASS/FAIL
+Gemini (math): PASS/FAIL/SKIP (非数学变更跳过)
+```
+
+**如果任一 FAIL → 回到 Stage 6 修复，重新走 Stage 7-8**
+
+### Stage 9: SUMMARY
 
 输出变更摘要：
 ```
 === DEV CYCLE COMPLETE ===
 
 Task: <任务描述>
-Stages: PLAN ✓ → AUDIT ✓ → CODE ✓ → AUDIT ✓ → AXIOM ✓
+Stages: PLAN ✓ → AUDIT ✓ → CODE ✓ → AUDIT ✓ → AXIOM ✓ → EXTERNAL ✓
 
 Modified files:
   - <file1>: <变更描述>
   - <file2>: <变更描述>
 
-Axiom status: ALL PASSED
+Axiom status: ALL PASSED (37 checks)
+External audit: Codex PASS, Gemini PASS/SKIP
 
 Ready to commit? (yes/no)
 ```

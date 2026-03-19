@@ -1,26 +1,52 @@
 # OMEGA PURE 架构规范 — 由架构师联络官维护
 # 最后更新：2026-03-18
-# 更新来源：architect/directives/2026-03-18_v3_full_design_audit.md
-# 源文档：Google Docs id.1, id.2, id.3
+# 更新来源：architect/gdocs/id4, id5, id6 + Codex recursive audit
+# 源文档：Google Docs id.1~id.6 (archived at architect/gdocs/)
 
 version: v3
 
 # ============================================================
-# 张量规范
+# 张量规范 (updated per id6: V_D physics ruling)
 # ============================================================
 tensor:
-  shape: [B, 160, 10, 7]
+  shape: [B, 160, 10, 10]
   time_axis: 160        # Volume-Clock lags (ACF衰减上限, ~3天宏观建仓周期)
   spatial_axis: 10      # LOB 深度档位 (10个价格层级, 每层含Bid+Ask配对, 绝不可拍扁为1D)
-  feature_axis: 7       # [Bid_P, Bid_V, Ask_P, Ask_V, Close, SRL_Residual, Epiplexity]
+  feature_axis: 10      # 扩展自7→10, 通道定义见下
+
+# Feature Channel Contract (id6 hotfix):
+# Ch 0: Bid_P      — 买价 (静态盘口快照)
+# Ch 1: Bid_V      — 买量 (静态盘口, 供 TDA 提取阻力墙, 不参与 SRL 分母)
+# Ch 2: Ask_P      — 卖价
+# Ch 3: Ask_V      — 卖量
+# Ch 4: Close      — 收盘价
+# Ch 5: SRL_Residual — SRL 残差 (来自上游 parquet, 需验证非零)
+# Ch 6: Epiplexity — 认知复杂度 (来自上游 parquet, 需验证非零)
+# Ch 7: delta_p    — 微观价格冲击 ΔP = last_tick.price - first_tick.price (per volume bar)
+# Ch 8: macro_v_d  — 宏观日均成交量 (20-day Rolling ADV, 广播到所有空间深度)
+# Ch 9: macro_sigma_d — 宏观日均波动率 (20-day Rolling ATR, 广播到所有空间深度)
 
 # ============================================================
-# 物理常数 (Layer 1 — 永恒不可修改)
+# 物理常数
 # ============================================================
 physics:
-  delta: 0.5            # 平方根法则指数 (跨所有流动性资产的普适常数)
-  c_tse: 0.842          # TSE 实证常数 (全局平均预估无量纲系数)
-  # 以上两个常数由架构师从第一性原理锁定，AI只提供参考区间
+  delta: 0.5            # Layer 1 永恒常数: 平方根法则指数 (跨所有 LOB 市场不变)
+  c_default: 0.842      # Layer 2 回退值: TSE 全局中位数 (非永恒, 被 per-stock c_i 取代)
+  # δ=0.5 是宇宙拓扑常数，绝不可修改
+  # c 是生态摩擦系数，因市场/股票而异，必须通过实证标定
+  # A股 c_i 标定方案见 architect/gdocs/id4_srl_friction_calibration.md
+
+# ============================================================
+# SRL 特异性标定 (id4: per-stock calibration)
+# ============================================================
+srl_calibration:
+  method: "OLS without intercept: c_i = sum(X*Y) / sum(X^2)"
+  metaorder_proxy: "Directional Runs (bs_flag 同向游程)"
+  nondimensionalization: "Q_ratio = Q/V_D, I_ratio = ΔP/σ_D"
+  output: "a_share_c_registry.json"
+  physical_bounds: [0.05, 10.0]    # 异常值熔断
+  fallback: "global A-share median <c>"
+  prerequisite: "必须在 ETL 之前运行"
 
 # ============================================================
 # ETL 管线参数
@@ -31,22 +57,41 @@ etl:
   stride: 20            # 环形缓冲区滑动步长 (平移不变性重叠采样)
   adv_fraction: 0.02    # 动态阈值 = Rolling_ADV_20d × 此值
   spatial_depth: 10     # 盘口空间深度
-  feature_dim: 7        # 特征通道数
+  feature_dim: 10       # 特征通道数 (从7扩展到10, id6 hotfix)
   shard_max_count: 5000 # 每个 .tar shard 最大样本数 (~1GB/shard)
-  output_format: webdataset_tar  # manifold_2d.npy + target.npy + meta.json
+  output_format: webdataset_tar  # manifold_2d.npy + target.npy + c_friction (float) + meta.json
   # 设计哲学: 容量时钟替代物理时钟，抹平大小盘异质性
   # 每根 Bar 严格代表 "消耗了该标的 2% 日常流动性"
+  # ETL 必须维护跨文件的 symbol 状态连续性 (Codex audit fix)
 
 # ============================================================
-# 训练参数
+# Target 定义 (id5: 架构师裁决)
+# ============================================================
+target:
+  type: "forward_vwap_return"
+  entry: "VWAP of bar N+1 (forced delay after signal at bar N)"
+  exit: "VWAP of bar N+1+H"
+  payoff_horizon: 20    # H bars (HPO searchable: [10, 20, 40, 80])
+  unit: "basis_points"  # Y = (VWAP_exit - VWAP_entry) / VWAP_entry × 10000
+  # ETL 三步法: Tick→VolumeBar(VWAP)→shift计算→SlidingWindow绑定target
+  # 绝对封杀 Look-ahead Bias
+
+# ============================================================
+# 训练参数 (id5: Omega-TIB paradigm)
 # ============================================================
 training:
-  target_model: SpatioTemporal2DMAE   # 基于 OmegaMathematicalCompressor
+  target_model: Omega-TIB   # Topological Information Bottleneck (正名自 SpatioTemporal2DMAE)
   loss: "MDL (H_T + lambda_s * S_T)"  # Two-Part MDL 损失
-  lambda_s: 0.001                      # 压缩权重 (Epiplexity vs 预测残差)
-  masking_strategy: block_causal       # 块状因果掩码 (10-30 volume steps)
-  # 设计理由: 随机像素掩码会被线性插值作弊，必须挖去连续容量步长
-  # 逼迫网络跨越遥远上下文推演被遮蔽的物理量
+  lambda_s: 0.001            # 压缩权重 (Epiplexity vs 预测残差)
+  masking:
+    strategy: block_input    # 输入端 Block-wise Masking (非 MAE 输出重构)
+    min_bars: 10             # 最小遮蔽长度
+    max_bars: 30             # 最大遮蔽长度
+    probability: 0.5         # 训练时 50% 概率触发
+    keep_last: 5             # 保留最后 5 根 Bar 不遮蔽 (触警现状)
+    train_only: true         # 只在 model.train() 模式生效
+  # 串联位置: input_proj 之后、tda_layer 之前
+  # 目的: 斩断局部线性插值退路，逼迫跨期因果推理
 
 # ============================================================
 # HPO (Hyperparameter Optimization) 搜索空间
@@ -55,45 +100,48 @@ hpo:
   engine: google_vizier              # Bayesian optimization
   phase2_gpu: "100x L4 (g2-standard-4)"
   phase3_gpu: "8x A100"
+  metric: "FVU = MSE / Var(target)"  # 尺度无关 (Scale-invariant)
+  # FVU ≈ 1.0 = 等同瞎猜, FVU < 0.95 = 黄金拓扑窗口
   search_space:
-    macro_window:                    # GPU端动态切片，不触发CPU重计算
+    macro_window:
       type: qrandint
       range: [40, 160]
       step: 20
-    coarse_graining_factor:          # GPU端动态池化 (F.avg_pool2d)
+    coarse_graining_factor:
       type: choice
       values: [1, 2, 4, 8]
-      # 1=显微镜(全分辨率), 8=望远镜(8x降采样)
-    window_size_t:                   # FWT 时间窗口大小
+    window_size_t:
       type: choice
       values: [4, 8, 16, 32]
-    window_size_s:                   # FWT 空间窗口大小
+    window_size_s:
       type: choice
       values: [4, 5, 10]
-  success_criterion: "FVU shows distinct sharp minimum at specific spatio-temporal scale"
-  # 设计哲学: ETL固化最大感受野(160), GPU端毫秒级切换窗口
-  # HPO引擎与CPU ETL完全解耦，避免云端I/O账单爆炸
+    payoff_horizon:
+      type: choice
+      values: [10, 20, 40, 80]
+  success_criterion: "FVU shows distinct sharp minimum (< 0.95) at specific spatio-temporal scale"
 
 # ============================================================
-# 回测约束 (The Crucible — Phase 4)
+# 回测约束 (The Crucible)
 # ============================================================
 backtest:
   execution_delay: "N+1 bar VWAP"    # 信号触发后只能在下一根Bar的VWAP成交
   t_plus_1_exposure: true             # 强制T+1隔夜跳空风险暴露
-  exit_strategy: volume_clocked       # 基于容量时钟退场 (例如80 bars后强制平仓)
+  exit_strategy: volume_clocked       # 基于容量时钟退场 (payoff_horizon bars)
   success_criterion: "asymmetry_payoff_ratio > 3.0"
-  # 设计理由: 容量时钟回测的Look-ahead Bias极其隐蔽
-  # 第160根Bar填满瞬间往往伴随扫盘Gap Up，假设当根Close买入是致命幻觉
-  # 叠加三大物理摩擦后 Payoff Ratio > 3.0 才是真正的量化圣杯
 
 # ============================================================
-# 模型架构层级
+# 模型架构层级 (Omega-TIB)
 # ============================================================
 model_architecture:
-  layer_1_physics: AxiomaticSRLInverter  # 非可学习，torch.no_grad()
-    # Q_hidden = (ΔP / (c × σ_D))^2 × V_D
-  layer_2_topology: FiniteWindowTopologicalAttention  # 原生2D窗口注意力
-    # 绝对禁止1D Flatten, O(1)寻址, 严格Space-bounded
-  layer_3_compression: EpiplexityBottleneck  # 信息瓶颈 (dim → dim/2 → dim/4)
-    # 两把奥卡姆剃刀: 架构级卡脖子 + L1 MDL裁决
-  layer_4_prediction: IntentDecoder  # 全局池化 → 标量意图预测
+  name: Omega-TIB
+  layer_1_physics: AxiomaticSRLInverter
+    # 接受 c_friction (per-stock) 作为输入，不再硬编码 c
+    # 从 x_2d 通道 7(ΔP), 8(V_D), 9(σ_D) 提取物理量
+    # Q_hidden = sign(ΔP) × (|ΔP| / (c_i × σ_D))^2 × V_D
+  layer_2_topology: FiniteWindowTopologicalAttention
+    # 原生2D窗口注意力, 绝对禁止1D Flatten, O(1)寻址
+  layer_3_compression: EpiplexityBottleneck
+    # 信息瓶颈 (dim → dim/2 → dim/4) + L1 MDL裁决
+  layer_4_prediction: IntentDecoder
+    # 全局池化 → 标量意图预测

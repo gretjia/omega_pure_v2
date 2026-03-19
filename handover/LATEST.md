@@ -1,5 +1,5 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-03-18 (Wednesday) - **STATUS: REMOTE CLEANUP COMPLETE**
+Last Updated: 2026-03-19 (Thursday) - **STATUS: V3 PIPELINE PLAN COMPLETE — READY TO EXECUTE**
 
 ## 1. CURRENT STATUS: Workflow Automation Deployed
 
@@ -255,17 +255,52 @@ omega_pure_v2/
 5. ~~Agent manual (handover/agent_manuals.md)~~ **DONE**
 6. ~~架构师 Spec vs 代码递归审计~~ **DONE — 5 fixes applied**
 7. ~~双节点远程审计与清理~~ **DONE — Linux1 回收 316GB, Windows1 回收 1+TB**
-8. Restart Claude CLI, verify hooks + skills work in new session
-9. Re-evaluate V3 ETL strategy with architect
-10. If V3 proceeds: multi-process Topo-Forge rewrite for linux1 (break the single-threaded bottleneck)
-11. GCS sync (`gsutil -m rsync`) and Vertex AI HPO when sufficient data available
+8. ~~三层审计体系建立~~ **DONE — omega_axioms(37项) + Codex(6/6) + Gemini(6/6)**
+9. **NEXT**: V3 Pipeline 执行 — 见 `plan/v3_pipeline_plan.md`
+10. Phase 0.5: ETL 跨文件状态修复 + Omega-TIB 实现 + V_D 量纲修复
+11. Phase 0.6: SRL c 特异性标定（per-stock c_i）
+12. Phase 1A/1B: ETL 多核改造 + 全量重新生成
+13. Phase 2-6: 烟测 → train.py → HPO → 全量训练 → 回测
 
-## 8. CRITICAL RULES FOR NEXT AGENT
+## 9. SESSION 5: 三层审计体系 + V3 Pipeline Plan (2026-03-18~19)
+
+### 架构师新指令摄取 (3 份 Google Docs)
+- id.4: SRL c 特异性标定 — c 从 Layer 1 永恒降级为 Layer 2 per-stock
+- id.5: MAE vs Intent Prediction 裁决 — 正名 Omega-TIB, Target = N+1 VWAP forward return
+- id.6: V_D 物理量纲裁决 — 特征维度 7→10, 宏观 V_D/σ_D 广播写入
+- 所有原文存档于 `architect/gdocs/id{1..6}_*.md`
+
+### current_spec.yaml 全面重写
+- tensor.shape: [B,160,10,7] → **[B,160,10,10]** (新增 ΔP, macro_V_D, macro_σ_D)
+- training.target_model: SpatioTemporal2DMAE → **Omega-TIB**
+- 新增: target (VWAP forward return), srl_calibration (per-stock c_i), masking 详细参数
+- physics.c_tse → physics.c_default (Layer 1 → Layer 2 降级, 用户已批准)
+
+### omega_axioms.py 升级
+- YAML 解析器: 2 层 → **任意嵌套深度**
+- 检查项: 12 项 → **37 项** (覆盖全 spec)
+- c 从 Layer 1 eternal → Layer 2 fallback
+- 三重独立审计通过: omega_axioms PASS + Codex PASS + Gemini PASS
+
+### 三层审计体系建立
+- **Layer A**: `python3 omega_axioms.py --verbose` (37 项自检)
+- **Layer B**: `codex exec` (GPT 5.4 xhigh) — spec↔code recursive alignment
+- **Layer C**: `gemini -p` — 纯数学推理审计 (公式/量纲/梯度)
+- 已集成到 `/dev-cycle` (Stage 8) 和 `/axiom-audit` (三层结构)
+
+### V3 Pipeline Plan 完成
+- 10 阶段: Phase 0 → 0.5 → 0.6 → 1A → 1B → 2 → 3 → 4 → 5 → 6
+- Codex 审计 6/6 PASS
+- 完整 plan 存档于 `plan/v3_pipeline_plan.md`
+
+## 10. CRITICAL RULES FOR NEXT AGENT
 1. **Read `CLAUDE.md` first** — it's auto-loaded but understand the rules
 2. **Read `VIA_NEGATIVA.md`** — know what NOT to do before doing anything
 3. **Do not modify `omega_epiplexity_plus_core.py`** unless architect explicitly authorizes
-4. **Do not modify Layer 1 constants** (δ=0.5, c=0.842) — ever
+4. **Do not modify Layer 1 constants** (δ=0.5) — ever. Note: c is now Layer 2 (per-stock c_i)
 5. **All destructive operations require user confirmation** — no exceptions
-6. **Run `/axiom-audit` after any math-related code change**
+6. **Run `/axiom-audit` after any math-related code change** — this now includes Codex + Gemini
 7. **Run `/pre-flight` before any remote deployment**
 8. **Architecture changes go through `architect-liaison` agent** → spec update → user confirm
+9. **Read `plan/v3_pipeline_plan.md`** — current execution roadmap
+10. **Read `architect/gdocs/`** — 6 份架构师原文是 source of truth

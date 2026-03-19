@@ -11,7 +11,8 @@ Critical handover state, architectural documentation, workflow automation, and e
 ## Architecture
 - **[`../architect/current_spec.yaml`](../architect/current_spec.yaml)**: Current architecture params (tensor shape, physics constants, ETL config)
 - **[`../architect/INDEX.md`](../architect/INDEX.md)**: Architect directive timeline
-- **[`../omega_axioms.py`](../omega_axioms.py)**: Dual-layer axiom assertions (`python3 omega_axioms.py --verbose`)
+- **[`../omega_axioms.py`](../omega_axioms.py)**: Axiom assertions (37 checks, `python3 omega_axioms.py --verbose`)
+- **[`../architect/gdocs/`](../architect/gdocs/)**: 架构师 Google Docs 原文存档 (id1-id6, 通过 `gdocs read <id>` 可刷新)
 
 ## Engineering & Infrastructure
 - **[`HARDWARE_TOPOLOGY.md`](./HARDWARE_TOPOLOGY.md)**: Physical nodes (omega-vm, linux1, windows1, mac), IPs, SSH routes
@@ -36,9 +37,9 @@ Critical handover state, architectural documentation, workflow automation, and e
 | 命令 | 功能 |
 |------|------|
 | `/architect-ingest` | 架构师指令摄取 + 公理影响检测 + spec 更新 |
-| `/dev-cycle` | 八阶段开发周期（Plan→Audit→Fix→Code→Audit→Fix→Axiom→Summary） |
+| `/dev-cycle` | 九阶段开发周期（Plan→Audit→Fix→Code→Audit→Fix→Axiom→**ExternalAudit**→Summary） |
 | `/deploy-cycle` | 六阶段部署周期（Pre-flight→Axiom→Health→Deploy→Verify→Document） |
-| `/axiom-audit` | 公理完整性验证 |
+| `/axiom-audit` | 三层公理审计（omega_axioms.py + Codex recursive + Gemini 数学推理） |
 | `/pre-flight` | 部署前 9 项预检 |
 | `/node-health-check` | 集群健康巡检 |
 
@@ -49,6 +50,21 @@ Critical handover state, architectural documentation, workflow automation, and e
 | `architect-liaison` | opus | 架构师指令生命周期 + 公理影响检测 |
 | `infra-scout` | haiku | 快速集群健康检查 |
 | `deployment-guard` | sonnet | 部署门禁（任一失败→NO-GO） |
+
+### External Audit Tools（独立交叉验证）
+
+防止 AI 自测自验 (Bitter Lesson #7)，使用外部 LLM 进行独立审计：
+
+| 工具 | 用途 | 调用方式 |
+|------|------|----------|
+| **Codex** (GPT 5.4 xhigh) | Spec↔Code recursive alignment audit | `codex exec --full-auto "<prompt>"` |
+| **Gemini** | 纯数学推理审计（公式、量纲、梯度） | `cat <file> \| gemini -p "<prompt>"` |
+| **gdocs** | 读取架构师 Google Docs 原文 | `gdocs list` / `gdocs read <doc_id>` |
+
+**触发规则**:
+- Codex: 每次修改 spec/核心代码/ETL/Loader 后必须运行
+- Gemini: 仅在涉及数学公式、物理常数、损失函数时运行
+- gdocs: 摄取架构师指令时用于获取原文
 
 ### Config
 - [`.claude/settings.json`](../.claude/settings.json) — 项目级 hooks 配置（提交到 git）

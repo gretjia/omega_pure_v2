@@ -1,71 +1,73 @@
 ---
 name: axiom-audit
-description: 运行omega_axioms.py公理断言，检查物理常数、张量形状、数值稳定性
+description: 三层公理审计 — omega_axioms.py自检 + Codex recursive audit + Gemini数学审计
 user-invocable: true
 ---
 
-# Axiom Audit
+# Axiom Audit（三层公理审计）
 
-运行 OMEGA 公理断言模块，验证物理常数和架构规范的完整性。
+三层独立验证，防止 AI 自测自验 (Bitter Lesson #7)。
 
 ## 步骤
 
-1. **运行公理自检**:
-   ```bash
-   cd /home/zephryj/projects/omega_pure_v2 && python omega_axioms.py --verbose
-   ```
+### Layer A: omega_axioms.py 自检（37 项）
 
-2. **检查 architect/current_spec.yaml 存在性和格式**:
-   - 文件是否存在
-   - YAML 格式是否正确（能被 omega_axioms.py 解析）
-   - 必要字段是否齐全（tensor, physics, etl）
+```bash
+cd /home/zephryj/projects/omega_pure_v2 && python3 omega_axioms.py --verbose
+```
 
-3. **检查代码中的物理常数**:
-   - `omega_epiplexity_plus_core.py` 中 `c_constant = 0.842`
-   - `omega_epiplexity_plus_core.py` 中 `power_constant = 2.0`
-   - SRL inverter 在 `torch.no_grad()` 下运行
+验证内容：
+- Layer 1 永恒物理公理: δ=0.5, POWER_INVERSE=2.0
+- Layer 2 架构公理: 张量形状 [B,160,10,10], 特征 10 通道, ETL 参数
+- Layer 2 扩展: training (Omega-TIB, λ_s, masking), target (VWAP forward return), HPO (FVU), backtest (payoff>3.0)
+- Layer 2 新增: srl_calibration (OLS, per-stock c_i), model_architecture (4 层)
+- 代码常数: SRL inverter (c_constant 或 c_friction), power_constant=2.0, torch.no_grad()
 
-4. **交叉验证 spec 与代码**:
-   - spec 中的 physics.delta 与 Layer 1 硬编码一致
-   - spec 中的 physics.c_tse 与 Layer 1 硬编码一致
-   - 空间轴维度 >= 2（拓扑不可拍扁）
+### Layer B: Codex Recursive Audit（spec↔code 一致性）
 
-5. **报告结果**:
+仅在以下情况触发：
+- 修改了 `current_spec.yaml`
+- 修改了数学核心 (`omega_epiplexity_plus_core.py`)
+- 修改了 ETL (`omega_etl_v3_topo_forge.py`)
+- 修改了 Loader (`omega_webdataset_loader.py`)
+- 新增了架构师指令
+
+```bash
+codex exec --full-auto "Read architect/current_spec.yaml and architect/gdocs/id*.md. Cross-check against <变更文件>. Output PASS/FAIL per check."
+```
+
+### Layer C: Gemini 数学推理审计
+
+仅在以下情况触发：
+- 修改了物理公式相关代码
+- 修改了损失函数
+- 修改了 SRL 反演逻辑
+- 新增了数学模块
+
+```bash
+cat <变更文件> | gemini -p "纯数学推理审计: <具体检查项>。PASS/FAIL + 数学理由。"
+```
 
 ## 输出格式
 
 ```
-==================================================
- OMEGA AXIOM AUDIT
-==================================================
+=== OMEGA AXIOM AUDIT (3-LAYER) ===
 
-[Layer 1] Eternal Physics Axioms:
-  [OK] δ = 0.5 (Square Root Law exponent)
-  [OK] c = 0.842 (TSE empirical constant)
-  [OK] POWER_INVERSE = 2.0 (1/δ)
+[Layer A] omega_axioms.py: PASS (37/37 checks)
+[Layer B] Codex recursive: PASS / SKIP (无 spec 变更)
+[Layer C] Gemini math: PASS / SKIP (无数学变更)
 
-[Layer 2] Architecture Axioms (from spec):
-  [OK] spec.physics.delta consistent with Layer 1
-  [OK] spec.physics.c_tse consistent with Layer 1
-  [OK] tensor.time_axis = 160
-  [OK] tensor.spatial_axis = 10 (topology preserved)
-  [OK] tensor.feature_axis = 7
-  [OK] etl.vol_threshold = 50000
-  [OK] etl.window_size = 160
-  [OK] etl.stride = 20 (< window_size, overlap guaranteed)
-
-[Code] Physical Constants in Source:
-  [OK] AxiomaticSRLInverter.c_constant = 0.842
-  [OK] AxiomaticSRLInverter.power_constant = 2.0
-  [OK] SRL inverter runs under torch.no_grad()
-
-==================================================
- AUDIT PASSED — All axioms verified
-==================================================
+FINAL: PASS / FAIL
 ```
 
 ## 失败处理
 
-- 如果任何检查失败，显示具体违规内容
-- **Layer 1 违规是 FATAL** — 意味着物理常数被篡改，必须立即停止并通知用户
-- **Layer 2 违规可能是配置更新** — 检查是否有待执行的架构师指令
+- **Layer A FAIL**: 物理常数或架构参数违规 — 立即停止
+- **Layer B FAIL**: spec 与代码不一致 — 需要修复对齐
+- **Layer C FAIL**: 数学推导错误 — 需要架构师介入
+
+## 工具参考
+
+- `codex exec`: OpenAI Codex CLI (GPT 5.4 xhigh)，默认模型即可
+- `gemini -p`: Google Gemini CLI，通过 stdin 传入代码，-p 指定 prompt
+- `gdocs read <id>`: 读取 Google Docs 原文（架构师指令源）
