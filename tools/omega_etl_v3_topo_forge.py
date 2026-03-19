@@ -218,10 +218,14 @@ def _extract_bid_ask_snapshot(batch, row_idx: int) -> np.ndarray:
 
 def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
                         symbols: list = None, c_registry_path: str = None,
-                        batch_size: int = 100000):
+                        batch_size: int = 100000, file_list_path: str = None):
     """
     Single-pass streaming ETL with bounded per-symbol buffers.
     Cross-file state continuity. Columnar batch processing.
+
+    Args:
+        file_list_path: Optional path to a text file with one parquet path per line.
+                        Used for split dual-node execution. Overrides raw_parquet_dir scan.
     """
     lock_fd = _acquire_single_instance_lock()
     os.makedirs(output_tar_dir, exist_ok=True)
@@ -233,12 +237,17 @@ def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
     c_default = c_registry.get('__GLOBAL_A_SHARE_C__', 0.842)
     target_symbols = set(symbols) if symbols else None
 
-    all_files = []
-    for root, dirs, files in os.walk(raw_parquet_dir):
-        for f in files:
-            if f.endswith('.parquet'):
-                all_files.append(os.path.join(root, f))
-    all_files.sort()
+    if file_list_path and os.path.exists(file_list_path):
+        with open(file_list_path) as f:
+            all_files = [line.strip() for line in f if line.strip()]
+        logging.info(f"[FORGE] Using file list: {file_list_path} ({len(all_files)} files)")
+    else:
+        all_files = []
+        for root, dirs, files in os.walk(raw_parquet_dir):
+            for f in files:
+                if f.endswith('.parquet'):
+                    all_files.append(os.path.join(root, f))
+    all_files.sort(key=lambda p: os.path.basename(p)[:8])  # chronological by date
 
     # Cross-file state
     global_states = {}  # symbol → {sm, curr_date, daily_vol}
@@ -356,7 +365,9 @@ if __name__ == "__main__":
     parser.add_argument("--c_registry", type=str, default=None)
     parser.add_argument("--batch_size", type=int, default=100000,
                         help="PyArrow batch size (default 100000)")
+    parser.add_argument("--file_list", type=str, default=None,
+                        help="Path to text file with parquet paths (for split execution)")
     args = parser.parse_args()
 
     topo_forge_pipeline(args.base_dir, args.output_dir, args.symbols,
-                        args.c_registry, args.batch_size)
+                        args.c_registry, args.batch_size, args.file_list)
