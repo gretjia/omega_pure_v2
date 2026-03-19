@@ -503,7 +503,10 @@ def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
         # 1. Discover all symbols
         logging.info("[FORGE] Discovering symbols for partitioning...")
         if target_symbols:
-            all_syms = sorted(target_symbols)
+            non_a = [s for s in target_symbols if not _is_a_share(s)]
+            if non_a:
+                logging.warning(f"[FORGE] Skipping {len(non_a)} non-A-share symbols: {non_a[:5]}")
+            all_syms = sorted(s for s in target_symbols if _is_a_share(s))
         else:
             all_syms = _discover_symbols(all_files)
         logging.info(f"[FORGE] {len(all_syms)} symbols discovered, splitting across {workers} workers")
