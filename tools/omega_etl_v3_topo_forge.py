@@ -220,6 +220,19 @@ def _acquire_single_instance_lock():
     return lock_fd
 
 
+_A_SHARE_PREFIXES = frozenset([
+    '000', '001', '002', '003', '300', '301',  # SZSE main + SME + ChiNext
+    '600', '601', '603', '605',                 # SSE main
+    '688', '689',                               # STAR Market (科创板)
+])
+
+
+def _is_a_share(symbol: str) -> bool:
+    """Check if symbol is a valid A-share stock (excludes bonds, ETFs, funds, repos)."""
+    code = symbol.split('.')[0]
+    return len(code) == 6 and code[:3] in _A_SHARE_PREFIXES
+
+
 def _load_c_registry(path: str) -> dict:
     if path and os.path.exists(path):
         with open(path, 'r') as f:
@@ -241,13 +254,15 @@ def _safe_col_to_numpy(col, dtype=np.float64):
 
 
 def _discover_symbols(all_files):
-    """Scan all files to discover unique symbols (column-only read, fast)."""
+    """Scan all files to discover unique A-share symbols (column-only read, fast).
+    Excludes bonds, ETFs, funds, repos — only valid A-share stock codes.
+    """
     symbols = set()
     for fpath in all_files:
         pf = pq.ParquetFile(fpath)
         for batch in pf.iter_batches(batch_size=500000, columns=['symbol']):
             uniq = pc.unique(batch.column('symbol')).to_pylist()
-            symbols.update(s for s in uniq if s)
+            symbols.update(s for s in uniq if s and _is_a_share(s))
     return sorted(symbols)
 
 
@@ -347,7 +362,7 @@ def _worker_etl(worker_id, target_symbols, all_files, shard_dir,
                 if raw_sym is None or (isinstance(raw_sym, float) and np.isnan(raw_sym)):
                     continue
                 symbol = str(raw_sym)
-                if not symbol:
+                if not symbol or not _is_a_share(symbol):
                     continue
 
                 price = float(price_arr[idx])
