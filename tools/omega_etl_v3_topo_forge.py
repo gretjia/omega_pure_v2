@@ -1,23 +1,26 @@
 """
-OMEGA PURE V3: The Volume-Clocked Topo-Forge (Phase 0.5 Rewrite)
------------------------------------------------------------------
-Implements: Omega-TIB 10-channel tensor, cross-file state continuity,
-macro V_D/σ_D anchors, VWAP forward target, per-stock c_friction.
+OMEGA-TIB V3: The Volume-Clocked Topo-Forge (Phase 1A — Performance Optimized)
+-------------------------------------------------------------------------------
+Single-pass streaming with bounded per-symbol buffers.
+Columnar batch processing (no to_pylist). Cross-file state continuity.
 
 Tensor: [160, 10, 10] — Time × Spatial × Features
-Features: [Bid_P, Bid_V, Ask_P, Ask_V, Close, reserved, reserved, ΔP, macro_V_D, macro_σ_D]
+Target: Forward VWAP return in BP (H=20 bars, N+1 entry delay)
 
-Changes from previous version (Codex audit fixes):
-  - Cross-file symbol state: global dict persists across all files
-  - 10 channels (was 7): added ΔP, macro_V_D, macro_σ_D
-  - Rolling sigma_d (20-day ATR) alongside rolling ADV
-  - VWAP per volume bar + forward target computation
-  - c_friction per-stock lookup from a_share_c_registry.json
+Performance design (Bitter Lessons compliance):
+  - No gc.collect() in loops (#4)
+  - No unconditional use_threads=True (#4)
+  - OMP_NUM_THREADS=1 (no oversubscription)
+  - Must run via systemd-run --slice=heavy-workload.slice (#3)
+  - fcntl single-instance lock (#6)
+  - Bounded memory: ~200 bars/symbol × 5000 symbols ≈ 400MB (#2)
+  - Columnar batch extraction (avoids to_pylist dict creation overhead)
 """
 
 import os
 import sys
 import json
+import time
 import numpy as np
 import pyarrow.parquet as pq
 import webdataset as wds
@@ -27,8 +30,11 @@ import logging
 if sys.platform != "win32":
     import fcntl
 
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+# Force thread count to 1 — prevents oversubscription (Bitter Lesson #4)
+# Use direct assignment, not setdefault, to override any inherited env
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -37,18 +43,24 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # ==========================================
 MACRO_WINDOW = 160
 STRIDE = 20
-ADV_FRACTION = 1 / 50.0    # 0.02
+ADV_FRACTION = 1 / 50.0
 SPATIAL_DEPTH = 10
-FEATURE_DIM = 10            # 7 base + ΔP + macro_V_D + macro_σ_D
+FEATURE_DIM = 10
 SHARD_MAX_COUNT = 5000
-PAYOFF_HORIZON = 20         # H bars for forward target
+PAYOFF_HORIZON = 20
+# Minimum bars needed before we can emit a window with valid target
+MIN_BUFFER_FOR_EMIT = MACRO_WINDOW + 1 + PAYOFF_HORIZON  # 181
 
 
 class OmegaVolumeClockStateMachine:
     """
-    Volume-Clock state machine with macro physical anchors.
-    Persists across files (cross-file state continuity).
+    Volume-Clock state machine with bounded streaming buffer.
+    Emits windows as soon as forward target data is available.
+    Memory per symbol: ~350 bars max × 400 bytes = 140KB (hard capped).
+    Total for 5000 symbols: ~700MB worst case.
     """
+    MAX_BUFFER_SIZE = MACRO_WINDOW + PAYOFF_HORIZON + STRIDE + 50  # ~350 bars hard cap
+
     def __init__(self, symbol: str, c_friction: float = 0.842):
         self.symbol = symbol
         self.c_friction = c_friction
@@ -58,107 +70,120 @@ class OmegaVolumeClockStateMachine:
         self.rolling_sigma = deque(maxlen=20)
         self.vol_threshold = 50000.0
         self.macro_v_d = 5000000.0
-        self.macro_sigma_d = 0.50  # ATR in price units (~50 cents), updated daily
+        self.macro_sigma_d = 0.50
 
         # Volume bar accumulation
         self.cum_vol = 0.0
-        self.current_bar_ticks = []
-        self.current_bar_vwap_num = 0.0  # sum(price * vol)
-        self.current_bar_vwap_den = 0.0  # sum(vol)
+        self.bar_ticks_prices = []
+        self.bar_ticks_vols = []
+        self.bar_last_tick = None
+        self.bar_first_price = 0.0
 
-        # Ring buffer + stride
-        self.ring_buffer = deque(maxlen=MACRO_WINDOW)
-        self.vwap_buffer = deque(maxlen=MACRO_WINDOW + PAYOFF_HORIZON + 10)
-        self.stride_counter = 0
+        # Streaming bounded buffer: (spatial_bar, vwap) pairs
+        self.bar_buffer = []       # list of spatial_bar arrays
+        self.vwap_buffer = []      # list of vwap floats
+        self.emit_cursor = 0       # next window start index
 
         # Daily tracking
         self.daily_high = -np.inf
         self.daily_low = np.inf
 
-    def update_daily_macro(self, daily_vol: float, daily_high: float, daily_low: float):
-        """End-of-day: update rolling ADV and rolling ATR (absolute daily range)."""
+    def update_daily_macro(self, daily_vol: float):
+        """End-of-day: update rolling ADV and rolling ATR."""
         if daily_vol > 0:
             self.rolling_adv.append(daily_vol)
-        # ATR = absolute daily range (high - low), NOT normalized
-        # Must be in price units for SRL dimensional consistency: ΔP / (c · σ_D) → dimensionless
-        daily_atr = max(daily_high - daily_low, 1e-4) if daily_high > daily_low else 1e-4
+        daily_atr = max(self.daily_high - self.daily_low, 1e-4) if self.daily_high > self.daily_low else 1e-4
         self.rolling_sigma.append(daily_atr)
 
         self.macro_v_d = float(np.mean(self.rolling_adv)) if self.rolling_adv else 5000000.0
-        self.macro_sigma_d = float(np.mean(self.rolling_sigma)) if self.rolling_sigma else 0.05
+        self.macro_sigma_d = float(np.mean(self.rolling_sigma)) if self.rolling_sigma else 0.50
         self.vol_threshold = max(self.macro_v_d * ADV_FRACTION, 1000.0)
 
         self.daily_high = -np.inf
         self.daily_low = np.inf
 
-    def push_tick(self, tick: dict):
-        """Push a tick. Returns (spatial_bar, vwap) when volume bar completes, else (None, None)."""
-        vol = tick.get('vol_tick', 0.0)
-        price = tick.get('price', 0.0)
-
-        self.current_bar_ticks.append(tick)
-        self.cum_vol += vol
-        self.current_bar_vwap_num += price * vol
-        self.current_bar_vwap_den += vol
+    def push_tick_fast(self, price: float, vol_tick: float, bid_ask_snapshot: np.ndarray):
+        """Fast tick push using pre-extracted columnar values.
+        Returns (spatial_bar, vwap) if a volume bar completes, else (None, None).
+        """
+        self.bar_ticks_prices.append(price)
+        self.bar_ticks_vols.append(vol_tick)
+        self.bar_last_tick = bid_ask_snapshot
+        if not self.bar_first_price:
+            self.bar_first_price = price
+        self.cum_vol += vol_tick
 
         if price > 0:
-            self.daily_high = max(self.daily_high, price)
-            self.daily_low = min(self.daily_low, price)
+            if price > self.daily_high:
+                self.daily_high = price
+            if price < self.daily_low:
+                self.daily_low = price
 
         if self.cum_vol >= self.vol_threshold:
-            spatial_bar = self._collapse_to_spatial_bar()
-            bar_vwap = self.current_bar_vwap_num / (self.current_bar_vwap_den + 1e-8)
+            spatial_bar = self._collapse_fast(price)
+            vwap_num = sum(p * v for p, v in zip(self.bar_ticks_prices, self.bar_ticks_vols))
+            vwap_den = sum(self.bar_ticks_vols)
+            bar_vwap = vwap_num / (vwap_den + 1e-8)
 
             self.cum_vol -= self.vol_threshold
-            self.current_bar_ticks = []
-            self.current_bar_vwap_num = 0.0
-            self.current_bar_vwap_den = 0.0
+            self.bar_ticks_prices = []
+            self.bar_ticks_vols = []
+            self.bar_first_price = 0.0
             return spatial_bar, bar_vwap
 
         return None, None
 
-    def add_bar(self, spatial_bar: np.ndarray, bar_vwap: float):
-        """Add completed bar to ring buffer. Returns manifold tensor if ready."""
-        self.ring_buffer.append(spatial_bar)
-        self.stride_counter += 1
+    def add_bar_and_try_emit(self, spatial_bar: np.ndarray, bar_vwap: float):
+        """Add bar to buffer. Yield (manifold, target) for each emittable window."""
+        self.bar_buffer.append(spatial_bar)
+        self.vwap_buffer.append(bar_vwap)
 
-        if len(self.ring_buffer) == MACRO_WINDOW and self.stride_counter >= STRIDE:
-            self.stride_counter = 0
-            return np.stack(list(self.ring_buffer), axis=0)  # [160, 10, 10]
-        return None
+        results = []
+        n = len(self.bar_buffer)
 
-    def _collapse_to_spatial_bar(self) -> np.ndarray:
-        """Collapse accumulated ticks into [10, 10] spatial matrix."""
-        last_tick = self.current_bar_ticks[-1]
-        first_tick = self.current_bar_ticks[0]
+        # Emit all possible windows from emit_cursor
+        while self.emit_cursor + MACRO_WINDOW <= n:
+            last_bar_idx = self.emit_cursor + MACRO_WINDOW - 1
+            # Need vwap at last_bar_idx+1 (entry) and last_bar_idx+1+H (exit)
+            target_exit_idx = last_bar_idx + 1 + PAYOFF_HORIZON
+            if target_exit_idx >= n:
+                break  # Not enough future data yet
 
-        price_close = last_tick.get('price', 0.0)
-        delta_p = last_tick.get('price', 0.0) - first_tick.get('price', 0.0)
+            manifold = np.stack(self.bar_buffer[self.emit_cursor:self.emit_cursor + MACRO_WINDOW], axis=0)
+            entry_vwap = self.vwap_buffer[last_bar_idx + 1]
+            exit_vwap = self.vwap_buffer[target_exit_idx]
+            target = (exit_vwap - entry_vwap) / (entry_vwap + 1e-8) * 10000.0
+
+            results.append((manifold, target))
+            self.emit_cursor += STRIDE
+
+        # Trim consumed bars to bound memory (hard cap: MAX_BUFFER_SIZE)
+        if self.emit_cursor > MACRO_WINDOW or len(self.bar_buffer) > self.MAX_BUFFER_SIZE:
+            trim = max(self.emit_cursor - MACRO_WINDOW, len(self.bar_buffer) - self.MAX_BUFFER_SIZE)
+            if trim > 0:
+                self.bar_buffer = self.bar_buffer[trim:]
+                self.vwap_buffer = self.vwap_buffer[trim:]
+                self.emit_cursor = max(0, self.emit_cursor - trim)
+
+        return results
+
+    def _collapse_fast(self, price_close: float) -> np.ndarray:
+        """Fast spatial bar collapse using pre-stored snapshot."""
+        snapshot = self.bar_last_tick  # [SPATIAL_DEPTH, 4] = bid_p, bid_v, ask_p, ask_v
+        delta_p = price_close - self.bar_first_price
 
         spatial_matrix = np.zeros((SPATIAL_DEPTH, FEATURE_DIM), dtype=np.float32)
-
-        for i in range(SPATIAL_DEPTH):
-            level = i + 1
-            # Ch 0-3: LOB depth (static snapshot for TDA)
-            spatial_matrix[i, 0] = last_tick.get(f'bid_p{level}', 0.0)
-            spatial_matrix[i, 1] = last_tick.get(f'bid_v{level}', 0.0)
-            spatial_matrix[i, 2] = last_tick.get(f'ask_p{level}', 0.0)
-            spatial_matrix[i, 3] = last_tick.get(f'ask_v{level}', 0.0)
-            # Ch 4: Close price
-            spatial_matrix[i, 4] = price_close
-            # Ch 5-6: Reserved (SRL/Epiplexity computed model-side)
-            spatial_matrix[i, 5] = 0.0
-            spatial_matrix[i, 6] = 0.0
-            # Ch 7-9: SRL inversion inputs (macro physical anchors, broadcast)
-            spatial_matrix[i, 7] = delta_p
-            spatial_matrix[i, 8] = self.macro_v_d
-            spatial_matrix[i, 9] = self.macro_sigma_d
+        spatial_matrix[:, 0:4] = snapshot  # Ch 0-3: LOB depth
+        spatial_matrix[:, 4] = price_close  # Ch 4: Close
+        # Ch 5-6: reserved (0.0)
+        spatial_matrix[:, 7] = delta_p  # Ch 7: ΔP
+        spatial_matrix[:, 8] = self.macro_v_d  # Ch 8: macro V_D
+        spatial_matrix[:, 9] = self.macro_sigma_d  # Ch 9: macro σ_D
 
         return spatial_matrix
 
 
 def _acquire_single_instance_lock():
-    """Acquire exclusive lock to prevent concurrent ETL instances."""
     if sys.platform == "win32":
         return None
     lock_path = "/tmp/omega_etl_v3_topo_forge.lock"
@@ -166,32 +191,47 @@ def _acquire_single_instance_lock():
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        logging.error("Another omega_etl_v3_topo_forge instance is already running. Exiting.")
+        logging.error("Another ETL instance is already running. Exiting.")
         sys.exit(1)
     return lock_fd
 
 
 def _load_c_registry(path: str) -> dict:
-    """Load per-stock c_friction from calibration registry."""
     if path and os.path.exists(path):
         with open(path, 'r') as f:
             return json.load(f)
-    logging.warning(f"c_registry not found at {path}, using c_default=0.842 for all stocks")
+    logging.warning(f"c_registry not found at {path}, using c_default=0.842")
     return {}
 
 
+def _extract_bid_ask_snapshot(batch, row_idx: int) -> np.ndarray:
+    """Extract [10, 4] LOB snapshot from a single row, using columnar access."""
+    snapshot = np.zeros((SPATIAL_DEPTH, 4), dtype=np.float32)
+    for i in range(SPATIAL_DEPTH):
+        level = i + 1
+        snapshot[i, 0] = batch.column(f'bid_p{level}')[row_idx].as_py() or 0.0
+        snapshot[i, 1] = batch.column(f'bid_v{level}')[row_idx].as_py() or 0.0
+        snapshot[i, 2] = batch.column(f'ask_p{level}')[row_idx].as_py() or 0.0
+        snapshot[i, 3] = batch.column(f'ask_v{level}')[row_idx].as_py() or 0.0
+    return snapshot
+
+
 def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
-                        symbols: list = None, c_registry_path: str = None):
+                        symbols: list = None, c_registry_path: str = None,
+                        batch_size: int = 100000):
     """
-    Two-pass pipeline (id5 ruling: shift-based forward target):
-      Pass 1: Stream all ticks → accumulate volume bars + VWAPs per symbol
-      Pass 2: For each symbol, compute forward target via shift, then window + emit
+    Single-pass streaming ETL with bounded per-symbol buffers.
+    Cross-file state continuity. Columnar batch processing.
     """
     lock_fd = _acquire_single_instance_lock()
     os.makedirs(output_tar_dir, exist_ok=True)
+    abs_output_dir = os.path.abspath(output_tar_dir).replace("\\", "/")
+    pattern = f"file:///{abs_output_dir}/omega_shard_%05d.tar"
+    sink = wds.ShardWriter(pattern, maxcount=SHARD_MAX_COUNT)
 
     c_registry = _load_c_registry(c_registry_path)
     c_default = c_registry.get('__GLOBAL_A_SHARE_C__', 0.842)
+    target_symbols = set(symbols) if symbols else None
 
     all_files = []
     for root, dirs, files in os.walk(raw_parquet_dir):
@@ -200,115 +240,111 @@ def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
                 all_files.append(os.path.join(root, f))
     all_files.sort()
 
-    target_symbols = set(symbols) if symbols else None
+    # Cross-file state
+    global_states = {}  # symbol → {sm, curr_date, daily_vol}
+    global_sample_idx = 0
+    total_ticks = 0
+    start_time = time.time()
 
-    # ================================================================
-    # PASS 1: Stream ticks → collect volume bars per symbol
-    # ================================================================
-    logging.info(f"[FORGE PASS 1] Streaming {len(all_files)} files → volume bars")
-    global_symbol_states = {}
-    # Per-symbol: list of (spatial_bar [10,10], vwap float)
-    symbol_bars = {}
+    logging.info(f"[FORGE] {len(all_files)} files, batch_size={batch_size}, streaming mode")
 
     for file_idx, fpath in enumerate(all_files):
-        if (file_idx + 1) % 50 == 0 or file_idx == 0:
-            logging.info(f"  File {file_idx+1}/{len(all_files)}: {os.path.basename(fpath)}")
+        file_start = time.time()
         parquet_file = pq.ParquetFile(fpath)
 
-        for batch in parquet_file.iter_batches(batch_size=100000):
-            records = batch.to_pylist()
-            for tick in records:
-                symbol = tick.get('symbol')
+        for batch in parquet_file.iter_batches(batch_size=batch_size):
+            n_rows = batch.num_rows
+            # Columnar extraction (avoid to_pylist)
+            sym_col = batch.column('symbol')
+            price_col = batch.column('price')
+            vol_col = batch.column('vol_tick')
+            date_col = batch.column('date')
+
+            for row_idx in range(n_rows):
+                symbol = sym_col[row_idx].as_py()
                 if not symbol:
                     continue
                 if target_symbols and symbol not in target_symbols:
                     continue
 
-                if symbol not in global_symbol_states:
+                price = price_col[row_idx].as_py() or 0.0
+                vol_tick = vol_col[row_idx].as_py() or 0.0
+                tick_date = date_col[row_idx].as_py()
+
+                if symbol not in global_states:
                     c_i = c_registry.get(symbol, c_default)
-                    global_symbol_states[symbol] = {
+                    global_states[symbol] = {
                         'sm': OmegaVolumeClockStateMachine(symbol, c_friction=c_i),
                         'curr_date': None,
                         'daily_vol': 0.0,
                     }
-                    symbol_bars[symbol] = []
 
-                ctx = global_symbol_states[symbol]
+                ctx = global_states[symbol]
                 sm = ctx['sm']
-                tick_date = tick.get('date')
 
+                # Day boundary
                 if ctx['curr_date'] is not None and tick_date != ctx['curr_date']:
-                    sm.update_daily_macro(ctx['daily_vol'], sm.daily_high, sm.daily_low)
+                    sm.update_daily_macro(ctx['daily_vol'])
                     ctx['daily_vol'] = 0.0
 
                 ctx['curr_date'] = tick_date
-                ctx['daily_vol'] += tick.get('vol_tick', 0.0)
+                ctx['daily_vol'] += vol_tick
 
-                spatial_bar, bar_vwap = sm.push_tick(tick)
+                # Extract LOB snapshot only when volume threshold is close
+                # (optimization: avoid expensive snapshot for every tick)
+                if sm.cum_vol + vol_tick >= sm.vol_threshold * 0.8:
+                    snapshot = _extract_bid_ask_snapshot(batch, row_idx)
+                else:
+                    snapshot = sm.bar_last_tick if sm.bar_last_tick is not None else np.zeros((SPATIAL_DEPTH, 4), dtype=np.float32)
+
+                spatial_bar, bar_vwap = sm.push_tick_fast(price, vol_tick, snapshot)
                 if spatial_bar is not None:
-                    symbol_bars[symbol].append((spatial_bar, bar_vwap))
+                    emissions = sm.add_bar_and_try_emit(spatial_bar, bar_vwap)
+                    for manifold, target_val in emissions:
+                        sink.write({
+                            "__key__": f"{symbol}_{global_sample_idx:09d}",
+                            "manifold_2d.npy": manifold,
+                            "target.npy": np.array([target_val], dtype=np.float32),
+                            "c_friction.npy": np.array([sm.c_friction], dtype=np.float32),
+                            "meta.json": {"symbol": symbol, "timestamp": str(global_sample_idx)}
+                        })
+                        global_sample_idx += 1
+
+            total_ticks += n_rows
+
+        file_elapsed = time.time() - file_start
+        total_elapsed = time.time() - start_time
+        files_done = file_idx + 1
+        files_remaining = len(all_files) - files_done
+        avg_per_file = total_elapsed / files_done
+        eta_seconds = avg_per_file * files_remaining
+        eta_hours = eta_seconds / 3600
+
+        if files_done % 10 == 0 or files_done == 1:
+            logging.info(
+                f"[FORGE] {files_done}/{len(all_files)} files | "
+                f"{global_sample_idx} samples | {total_ticks/1e6:.1f}M ticks | "
+                f"{file_elapsed:.1f}s/file | ETA: {eta_hours:.1f}h"
+            )
+
+            # 15-hour warning threshold
+            if eta_hours > 15.0 and files_done >= 5:
+                logging.warning(
+                    f"⚠️ ETA {eta_hours:.1f}h exceeds 15h threshold! "
+                    f"Consider adding second node or optimizing batch_size."
+                )
 
     # Flush final day
-    for sym, ctx in global_symbol_states.items():
-        sm = ctx['sm']
-        sm.update_daily_macro(ctx['daily_vol'], sm.daily_high, sm.daily_low)
-
-    total_bars = sum(len(v) for v in symbol_bars.values())
-    logging.info(f"[FORGE PASS 1] Done. {len(symbol_bars)} symbols, {total_bars} volume bars total.")
-
-    # ================================================================
-    # PASS 2: Compute forward targets via shift, then window + emit
-    # ================================================================
-    logging.info(f"[FORGE PASS 2] Computing targets + windowing → shards")
-    abs_output_dir = os.path.abspath(output_tar_dir).replace("\\", "/")
-    pattern = f"file:///{abs_output_dir}/omega_shard_%05d.tar"
-    sink = wds.ShardWriter(pattern, maxcount=SHARD_MAX_COUNT)
-    global_sample_idx = 0
-
-    for sym, bars_list in symbol_bars.items():
-        if len(bars_list) < MACRO_WINDOW + 1 + PAYOFF_HORIZON:
-            continue  # Not enough bars for even one sample with target
-
-        sm = global_symbol_states[sym]['sm']
-        spatial_bars = [b[0] for b in bars_list]
-        vwaps = np.array([b[1] for b in bars_list], dtype=np.float64)
-
-        # Step 2a: Compute forward target for each bar via vectorized shift
-        # For bar i: entry = vwap[i+1], exit = vwap[i+1+H]
-        # target[i] = (exit - entry) / entry * 10000
-        n_bars = len(vwaps)
-        targets = np.zeros(n_bars, dtype=np.float32)
-        for i in range(n_bars - 1 - PAYOFF_HORIZON):
-            entry = vwaps[i + 1]
-            exit_v = vwaps[i + 1 + PAYOFF_HORIZON]
-            if entry > 1e-8:
-                targets[i] = (exit_v - entry) / entry * 10000.0
-
-        # Step 2b: Sliding window (size=160, stride=20) + bind target from last bar
-        for start in range(0, n_bars - MACRO_WINDOW + 1, STRIDE):
-            end = start + MACRO_WINDOW
-            last_bar_idx = end - 1
-
-            # Only emit if target is valid (not 0.0 from insufficient future)
-            if last_bar_idx >= n_bars - 1 - PAYOFF_HORIZON:
-                break  # No valid future target beyond this point
-
-            manifold = np.stack(spatial_bars[start:end], axis=0)  # [160, 10, 10]
-            target_val = targets[last_bar_idx]
-
-            sink.write({
-                "__key__": f"{sym}_{global_sample_idx:09d}",
-                "manifold_2d.npy": manifold,
-                "target.npy": np.array([target_val], dtype=np.float32),
-                "c_friction.npy": np.array([sm.c_friction], dtype=np.float32),
-                "meta.json": {"symbol": sym, "timestamp": str(global_sample_idx)}
-            })
-            global_sample_idx += 1
-            if global_sample_idx % 1000 == 0:
-                logging.info(f"  -> Emitted {global_sample_idx} samples...")
+    for sym, ctx in global_states.items():
+        ctx['sm'].update_daily_macro(ctx['daily_vol'])
 
     sink.close()
-    logging.info(f"[FORGE] Complete. {global_sample_idx} tensors from {len(symbol_bars)} symbols.")
+    total_time = time.time() - start_time
+    logging.info(
+        f"[FORGE] Complete. {global_sample_idx} tensors | "
+        f"{len(global_states)} symbols | {total_ticks/1e6:.0f}M ticks | "
+        f"{total_time/3600:.1f}h total"
+    )
 
 
 if __name__ == "__main__":
@@ -316,9 +352,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Omega-TIB V3 Topo-Forge ETL")
     parser.add_argument("--base_dir", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--symbols", type=str, nargs='+', help="Target symbols (omit for all)")
-    parser.add_argument("--c_registry", type=str, default=None,
-                        help="Path to a_share_c_registry.json")
+    parser.add_argument("--symbols", type=str, nargs='+', help="Target symbols")
+    parser.add_argument("--c_registry", type=str, default=None)
+    parser.add_argument("--batch_size", type=int, default=100000,
+                        help="PyArrow batch size (default 100000)")
     args = parser.parse_args()
 
-    topo_forge_pipeline(args.base_dir, args.output_dir, args.symbols, args.c_registry)
+    topo_forge_pipeline(args.base_dir, args.output_dir, args.symbols,
+                        args.c_registry, args.batch_size)
