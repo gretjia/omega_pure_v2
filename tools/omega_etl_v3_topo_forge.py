@@ -25,6 +25,7 @@ import json
 import time
 import glob
 import shutil
+import pickle
 import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -266,6 +267,48 @@ def _discover_symbols(all_files):
     return sorted(symbols)
 
 
+CHECKPOINT_FILENAME = "_checkpoint.pkl"
+
+
+def _save_checkpoint(output_dir, file_idx, sample_idx, total_ticks, global_states):
+    """Atomic write: .tmp → os.replace() to prevent crash corruption."""
+    ckpt_path = os.path.join(output_dir, CHECKPOINT_FILENAME)
+    tmp_path = ckpt_path + ".tmp"
+    data = {
+        'file_idx': file_idx,        # next file index to process
+        'sample_idx': sample_idx,
+        'total_ticks': total_ticks,
+        'global_states': global_states,
+        'version': 1,
+    }
+    with open(tmp_path, 'wb') as f:
+        pickle.dump(data, f, protocol=4)
+    os.replace(tmp_path, ckpt_path)  # POSIX atomic
+
+
+def _load_checkpoint(output_dir):
+    """Load checkpoint, return None if not found."""
+    ckpt_path = os.path.join(output_dir, CHECKPOINT_FILENAME)
+    if not os.path.exists(ckpt_path):
+        return None
+    with open(ckpt_path, 'rb') as f:
+        return pickle.load(f)
+
+
+def _scan_max_shard(output_dir):
+    """Scan output_dir for max shard number, return -1 if none."""
+    existing = glob.glob(os.path.join(output_dir, "omega_shard_*.tar"))
+    if not existing:
+        return -1
+    nums = []
+    for p in existing:
+        try:
+            nums.append(int(os.path.basename(p).replace("omega_shard_", "").replace(".tar", "")))
+        except ValueError:
+            pass
+    return max(nums) if nums else -1
+
+
 def _merge_shards(output_dir, num_workers):
     """Merge worker shard directories into a single numbered sequence."""
     shard_idx = 0
@@ -292,7 +335,8 @@ def _merge_shards(output_dir, num_workers):
 # ==========================================
 
 def _worker_etl(worker_id, target_symbols, all_files, shard_dir,
-                c_registry, c_default, batch_size, result_queue=None):
+                c_registry, c_default, batch_size, result_queue=None,
+                resume=False, checkpoint_interval=50):
     """
     Single worker ETL process with batch column extraction.
     Processes all files for a subset of symbols (or all symbols if target_symbols is None).
@@ -303,7 +347,6 @@ def _worker_etl(worker_id, target_symbols, all_files, shard_dir,
     os.makedirs(shard_dir, exist_ok=True)
     abs_dir = os.path.abspath(shard_dir).replace("\\", "/")
     pattern = f"file:///{abs_dir}/omega_shard_%05d.tar"
-    sink = wds.ShardWriter(pattern, maxcount=SHARD_MAX_COUNT)
 
     # Pre-compute PyArrow filter array for symbol-level filtering
     target_pa = pa.array(sorted(target_symbols)) if target_symbols else None
@@ -311,9 +354,38 @@ def _worker_etl(worker_id, target_symbols, all_files, shard_dir,
     global_states = {}  # symbol → {sm, curr_date, daily_vol}
     sample_idx = 0
     total_ticks = 0
+    resume_file_idx = 0
+    start_shard = 0
     start_time = time.time()
 
+    # ========== CHECKPOINT RESUME ==========
+    if resume:
+        ckpt = _load_checkpoint(shard_dir)
+        if ckpt:
+            resume_file_idx = ckpt['file_idx']
+            sample_idx = ckpt['sample_idx']
+            total_ticks = ckpt['total_ticks']
+            global_states = ckpt['global_states']
+            # Delete potentially incomplete last shard
+            max_shard = _scan_max_shard(shard_dir)
+            if max_shard >= 0:
+                last_shard = os.path.join(shard_dir, f"omega_shard_{max_shard:05d}.tar")
+                if os.path.exists(last_shard):
+                    os.remove(last_shard)
+                start_shard = max_shard
+            logging.info(
+                f"[Worker {worker_id}] CHECKPOINT RESUME: file {resume_file_idx}/{len(all_files)}, "
+                f"samples={sample_idx}, start_shard={start_shard}"
+            )
+        else:
+            logging.info(f"[Worker {worker_id}] --resume specified but no checkpoint found, starting fresh")
+
+    sink = wds.ShardWriter(pattern, maxcount=SHARD_MAX_COUNT, start_shard=start_shard)
+
     for file_idx, fpath in enumerate(all_files):
+        if file_idx < resume_file_idx:
+            continue
+
         file_start = time.time()
         parquet_file = pq.ParquetFile(fpath)
 
@@ -431,6 +503,17 @@ def _worker_etl(worker_id, target_symbols, all_files, shard_dir,
                     f"Consider adding workers or second node."
                 )
 
+        # ========== CHECKPOINT SAVE (every N files) ==========
+        if checkpoint_interval > 0 and files_done % checkpoint_interval == 0:
+            _save_checkpoint(shard_dir, file_idx + 1, sample_idx, total_ticks, global_states)
+            logging.info(
+                f"[Worker {worker_id}] CHECKPOINT saved at file {files_done}/{len(all_files)}"
+            )
+
+    # Final checkpoint before close
+    if checkpoint_interval > 0:
+        _save_checkpoint(shard_dir, len(all_files), sample_idx, total_ticks, global_states)
+
     # Flush final day for all symbols
     for sym, ctx in global_states.items():
         ctx['sm'].update_daily_macro(ctx['daily_vol'])
@@ -456,11 +539,13 @@ def _worker_etl(worker_id, target_symbols, all_files, shard_dir,
 def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
                         symbols: list = None, c_registry_path: str = None,
                         batch_size: int = 100000, file_list_path: str = None,
-                        workers: int = 1):
+                        workers: int = 1, resume: bool = False,
+                        checkpoint_interval: int = 50):
     """
     Single-pass streaming ETL with bounded per-symbol buffers.
     Cross-file state continuity. Batch column extraction.
     Symbol-level parallelism with --workers N.
+    Checkpoint/resume for OOM recovery.
 
     Args:
         raw_parquet_dir: Directory containing raw parquet files.
@@ -470,6 +555,8 @@ def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
         batch_size: PyArrow batch size (default 100000).
         file_list_path: Optional text file with parquet paths (for split execution).
         workers: Number of parallel workers (1 = single-core, N = symbol-level parallel).
+        resume: If True, resume from last checkpoint.
+        checkpoint_interval: Save checkpoint every N files (0 to disable).
     """
     lock_fd = _acquire_single_instance_lock()
     os.makedirs(output_tar_dir, exist_ok=True)
@@ -497,7 +584,8 @@ def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
         # ========== SINGLE-WORKER MODE ==========
         # Batch-optimized but no parallelism. Writes directly to output_tar_dir.
         _worker_etl(0, target_symbols, all_files, output_tar_dir,
-                     c_registry, c_default, batch_size)
+                     c_registry, c_default, batch_size,
+                     resume=resume, checkpoint_interval=checkpoint_interval)
     else:
         # ========== MULTI-WORKER MODE ==========
         # 1. Discover all symbols
@@ -527,7 +615,8 @@ def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
             p = Process(
                 target=_worker_etl,
                 args=(w, set(groups[w]), all_files, worker_dir,
-                      c_registry, c_default, batch_size, result_queue),
+                      c_registry, c_default, batch_size, result_queue,
+                      resume, checkpoint_interval),
                 name=f"etl-worker-{w}"
             )
             p.start()
@@ -575,8 +664,12 @@ if __name__ == "__main__":
                         help="Path to text file with parquet paths (for split execution)")
     parser.add_argument("--workers", type=int, default=1,
                         help="Number of parallel workers (1=single-core, N=symbol-level parallel)")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from last checkpoint (OOM recovery)")
+    parser.add_argument("--checkpoint_interval", type=int, default=50,
+                        help="Save checkpoint every N files (0 to disable, default 50)")
     args = parser.parse_args()
 
     topo_forge_pipeline(args.base_dir, args.output_dir, args.symbols,
                         args.c_registry, args.batch_size, args.file_list,
-                        args.workers)
+                        args.workers, args.resume, args.checkpoint_interval)

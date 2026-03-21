@@ -1,5 +1,5 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-03-19 (Thursday) - **STATUS: FULL ETL RUNNING — ETA 2026-03-21 ~17:00**
+Last Updated: 2026-03-21 — **STATUS: ETL 运行中 (~440/743)，断点续传已实现但未部署**
 
 ## 1. CURRENT STATUS: Full ETL In Progress
 
@@ -150,7 +150,8 @@ omega_pure_v2/
 │   │   ├── deploy-cycle/SKILL.md      # /deploy-cycle (6-stage)
 │   │   ├── axiom-audit/SKILL.md       # /axiom-audit
 │   │   ├── pre-flight/SKILL.md        # /pre-flight
-│   │   └── node-health-check/SKILL.md # /node-health-check
+│   │   ├── node-health-check/SKILL.md # /node-health-check
+│   │   └── handover-update/SKILL.md  # /handover-update (session结束强制)
 │   └── agents/
 │       ├── recursive-auditor.md       # Math audit (opus, read-only)
 │       ├── architect-liaison.md       # Directive lifecycle + axiom detection (opus)
@@ -334,7 +335,49 @@ omega_pure_v2/
 - **输出**: `/omega_pool/wds_shards_v3_full/`
 - **监控**: `ssh linux1-lx "tail -5 /home/zepher/omega_pure_v2/etl_full.log && ps -p 437460 -o %cpu,%mem,etime --no-headers && free -h | head -2"`
 
-## 11. CRITICAL RULES FOR NEXT AGENT
+## 12. SESSION 7: ETL 断点续传 Hotpatch + Handover Skill (2026-03-20)
+
+### ETL 断点续传 Hotpatch（紧急）
+ETL 运行 35h 后，RSS 从 31.2GB 阶梯式跳至 42.2GB（file ~420），剩余仅 6GB。
+原代码**零断点续传能力**——OOM 崩溃意味着 30+ 小时归零。
+
+**修改文件**: `tools/omega_etl_v3_topo_forge.py` (+99/-6 行，未提交)
+
+| 新增 | 说明 |
+|------|------|
+| `_save_checkpoint()` | 原子写入（`.tmp` → `os.replace()`），pickle protocol=4 |
+| `_load_checkpoint()` | 加载 checkpoint，无则返回 None |
+| `_scan_max_shard()` | glob 扫描最大 shard 编号 |
+| `--resume` CLI 参数 | 启用断点续传 |
+| `--checkpoint_interval` | 每 N 个文件存盘（默认 50，约 3h 工作量） |
+
+**设计决策**:
+- 序列化: pickle protocol=4（原生支持 deque + numpy）
+- 原子写入: POSIX `os.replace()` 防崩溃损坏
+- 恢复策略: 删除最后一个 shard（可能半写），从断点文件索引续传
+- Shard 续编: `wds.ShardWriter(start_shard=N)`
+
+**OOM 恢复命令** (linux1):
+```
+sudo systemd-run --slice=heavy-workload.slice --uid=1000 \
+  python3 tools/omega_etl_v3_topo_forge.py \
+  --base_dir /omega_pool/parquet_data/latest_base_l1 \
+  --output_dir /omega_pool/wds_shards_v3_full \
+  --c_registry /home/zepher/omega_pure_v2/a_share_c_registry.json \
+  --file_list /home/zepher/omega_pure_v2/etl_full_filelist.txt \
+  --workers 1 --batch_size 100000 --resume
+```
+
+### 新增 Skill
+- `/handover-update` — 会话结束前强制执行的 handover 更新流程（已创建）
+
+### ⚠ Warnings
+1. **ETL 代码改动未提交** — `tools/omega_etl_v3_topo_forge.py` 有 +99/-6 行未 commit
+2. **代码未部署到 linux1** — 需 `scp` 到 linux1 后才能用 `--resume` 恢复
+3. **RSS 仍在增长** — file ~420 时 42.2GB，后续可能再跳，OOM 风险仍存
+4. 本次会话未涉及远程节点操作
+
+## 13. CRITICAL RULES FOR NEXT AGENT
 1. **Read `CLAUDE.md` first** — it's auto-loaded but understand the rules
 2. **Read `VIA_NEGATIVA.md`** — know what NOT to do before doing anything
 3. **Do not modify `omega_epiplexity_plus_core.py`** unless architect explicitly authorizes

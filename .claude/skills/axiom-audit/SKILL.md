@@ -23,6 +23,20 @@ cd /home/zephryj/projects/omega_pure_v2 && python3 omega_axioms.py --verbose
 - Layer 2 新增: srl_calibration (OLS, per-stock c_i), model_architecture (4 层)
 - 代码常数: SRL inverter (c_constant 或 c_friction), power_constant=2.0, torch.no_grad()
 
+### Layer A+: Insight 一致性交叉验证
+
+扫描 `architect/insights/INS-*.md` 中所有 `status: active` 的洞察，验证：
+- 每个 insight 声明的 `axiom_impact` 与 `current_spec.yaml` 当前状态一致
+- `影响文件` 中列出的文件确实存在且反映了裁决内容
+- 无冲突洞察（两个 active insights 对同一参数有矛盾裁决）
+
+```bash
+# 快速检查: 列出所有 active insights 及其 axiom_impact
+grep -l "status: active" architect/insights/INS-*.md | while read f; do
+  echo "$(grep '^id:' $f | awk '{print $2}') | $(grep '^axiom_impact:' $f | awk '{print $2}') | $(grep '^title:' $f | cut -d: -f2-)"
+done
+```
+
 ### Layer B: Codex Recursive Audit（spec↔code 一致性）
 
 仅在以下情况触发：

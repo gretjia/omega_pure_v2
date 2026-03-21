@@ -102,11 +102,43 @@ Layer 1 物理公理由人类锁定，AI 不可修改。
 | YYYY-MM-DD | <主题> | [链接](directives/<filename>) | <AXIOM IMPACT 级别> | <状态> |
 ```
 
-### 5. 列出受影响文件
+### 5. 生成结构化洞察 (Insight)
+
+从指令中提炼原子化的设计决策，写入 `architect/insights/INS-NNN_<slug>.md`：
+
+```yaml
+---
+id: INS-NNN           # 递增编号，查 insights/INDEX.md 获取下一个
+title: <简短标题>
+category: <physics|architecture|training|metrics|nomenclature>
+date: <YYYY-MM-DD>
+axiom_impact: <NONE|UPDATE_REQUIRED|LAYER1_TO_LAYER2_DOWNGRADE|VIOLATION>
+status: <active|pending_<blocker>>
+source_directive: <directive 文件名>
+source_gdoc: <gdoc 文件名 or null>
+---
+
+# INS-NNN: <标题>
+
+## 裁决
+<一段话概括决策>
+
+## 理由
+<为什么这样做，物理/工程/哲学层面>
+
+## 影响文件
+<受影响的代码文件及变更描述>
+```
+
+同时更新 `architect/insights/INDEX.md` 索引表。
+
+**一个 directive 可以产生多个 insights**（如 id5 产生了 INS-001/003/004/008 四个独立洞察）。
+
+### 6. 列出受影响文件
 
 输出需要变更的代码文件清单及变更描述。
 
-### 6. 后续提醒
+### 7. 后续提醒
 
 如果涉及公理变更（AXIOM UPDATE REQUIRED），提醒用户：
 ```
