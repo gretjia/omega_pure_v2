@@ -1,5 +1,5 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-03-22 — **STATUS: ETL 完成 + 烟测 23/23 PASS — 准备进入 Phase 3 train.py**
+Last Updated: 2026-03-22 — **STATUS: train.py 完成 + GCS 上传中 (179/1992) — 准备 Vertex AI L4 训练**
 
 ## 1. CURRENT STATUS: ETL Complete, Phase 2 Passed
 
@@ -260,8 +260,10 @@ omega_pure_v2/
 9. ~~Phase 0.5/0.6/1A: ETL 多核改造 + batch 优化 + 烟测~~ **DONE — 21/23 PASS**
 10. ~~Phase 1B — 全量 ETL~~ **DONE — 9,958,131 samples, 1992 shards, 164GB, 69.7h**
 11. ~~Phase 2 — 端到端烟测~~ **DONE — 23/23 ALL CLEAR**
-12. **IN PROGRESS**: Phase 3: train.py (Omega-TIB + VolumeBlockInputMasking + FVU)
-13. Phase 4-6: HPO → 全量训练 → 回测
+12. ~~Phase 3: train.py~~ **DONE — CPU 验证通过, FVU 448→126**
+13. **IN PROGRESS**: GCS 数据上传 (179/1992, ETA ~15h)
+14. **NEXT**: 提交 Vertex AI CustomJob (1×L4, 10 epoch)
+15. Phase 4-6: HPO → 全量训练 → 回测
 
 ## 9. SESSION 5: 三层审计体系 + V3 Pipeline Plan (2026-03-18~19)
 
@@ -413,7 +415,53 @@ sudo systemd-run --slice=heavy-workload.slice --uid=1000 \
 
 ### 本次会话无新架构洞察
 
-## 15. CRITICAL RULES FOR NEXT AGENT
+## 16. SESSION 9: Phase 3 train.py + GCP 部署准备 (2026-03-22)
+
+### train.py 完成 (commit b77e646)
+- **OmegaTIBWithMasking**: wrapper 类，在 input_proj 和 tda_layer 之间插入 VolumeBlockInputMasking
+- **VolumeBlockInputMasking**: 从 architect/gdocs/id5 参考实现，10-30 bars 随机遮蔽，50% 概率，保留最后 5 bars
+- **Temporal validation split**: 前 80% shards 训练，后 20% 验证（零 look-ahead bias）
+- **AMP fp16 + gradient clipping + checkpoint save/load + fcntl 单实例锁**
+- **HPO 参数全部 CLI 可注入**: macro_window, coarse_graining_factor, window_size_t/s, payoff_horizon
+
+### CPU 烟测结果 (linux1)
+- 3 epoch, 5 steps/epoch, batch=4
+- Val FVU: 448 → 130 → 126（持续下降）✅
+- 无 NaN/Inf ✅，Checkpoint 保存成功 ✅
+
+### AMD AI Max 395 GPU 不可用
+- gfx1150 (RDNA 3.5) 不被 ROCm 6.1 支持
+- `torch.abs()` on CUDA tensor 报 "HIP error: invalid device function"
+- XDNA NPU 只支持推理，不支持训练
+- **结论**: linux1 只能 CPU 训练，正式训练需上 GCP
+
+### GCP 部署准备
+- **Vertex AI Training 配额充足**: L4×100, A100×20 (us-central1)
+- **GCE GPU 配额为 0** (GPUS_ALL_REGIONS=0)，但 Vertex AI 不受此限
+- **GCS 数据上传进行中**: 4 路 SSH pipe 并行 (omega-vm 中转)
+  - 当前: 179/1992 shards
+  - 速度: ~2 shards/min (4 workers)
+  - ETA: ~15h (预计 2026-03-23 下午)
+- **上传脚本**: `gcp/submit_training.sh`, `gcp/upload_shards.sh`
+- **网络速度对比**:
+  - linux1 直传 GCS: ~50 KiB/s (不可行，大量 retry)
+  - Mac VPN proxy: ~650 KiB/s (可用但慢)
+  - omega-vm SSH pipe: ~6 MiB/s ✅ (GCP 内网最快路径)
+
+### Key Decisions
+- **Masking 插入点**: wrapper 类分解 forward() 而非修改 core 文件
+- **训练硬件**: linux1 CPU 验证 → GCP Vertex AI L4 正式训练
+- **数据上传**: omega-vm 4 路 SSH pipe (GCP 内网最快路径)
+
+### ⚠ Warnings
+1. **4 路上传在 omega-vm 后台运行** — PIDs 3495737-3495740，勿 kill
+2. **linux1 的 gcloud SDK** 在 `/home/zepher/google-cloud-sdk/` — 直传速度极慢不要用
+3. **train.py 的 gcp/ 目录未 commit** — submit_training.sh + upload_shards.sh
+4. **Vertex AI job 提交需等上传完成**
+
+### 本次会话无新架构洞察
+
+## 17. CRITICAL RULES FOR NEXT AGENT
 1. **Read `CLAUDE.md` first** — it's auto-loaded but understand the rules
 2. **Read `VIA_NEGATIVA.md`** — know what NOT to do before doing anything
 3. **Do not modify `omega_epiplexity_plus_core.py`** unless architect explicitly authorizes
