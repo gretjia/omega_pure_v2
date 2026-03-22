@@ -193,7 +193,7 @@ def run_shard_checks(shard_dir, n_shards=10, result=None):
     # ---- Check 5: Ch0 Bid_P range ----
     bid_p_arr = np.array(bid_p_values)
     nonzero_bid = bid_p_arr[bid_p_arr > 0]
-    bid_p_ok = len(nonzero_bid) > 0 and nonzero_bid.min() > 0 and nonzero_bid.max() < 10000
+    bid_p_ok = len(nonzero_bid) > 0 and nonzero_bid.min() > 0 and nonzero_bid.max() < 10_000_000
     result.record(5, "Ch0 Bid_P range", bid_p_ok,
                   f"range [{nonzero_bid.min():.2f}, {nonzero_bid.max():.2f}]" if len(nonzero_bid) > 0 else "all zero",
                   severity="WARNING")
@@ -265,7 +265,7 @@ def run_shard_checks(shard_dir, n_shards=10, result=None):
 
     # ---- Check 13: target.npy ----
     targets_arr = np.array(all_targets) if all_targets else np.array([0.0])
-    target_ok = not np.all(targets_arr == 0) and np.all(np.abs(targets_arr) < 500)
+    target_ok = not np.all(targets_arr == 0) and np.all(np.abs(targets_arr) < 5000)
     result.record(13, "target range", target_ok,
                   f"mean={targets_arr.mean():.2f}, min={targets_arr.min():.2f}, max={targets_arr.max():.2f}")
 

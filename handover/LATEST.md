@@ -1,9 +1,9 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-03-21 — **STATUS: ETL 运行中 (~440/743)，断点续传已实现但未部署**
+Last Updated: 2026-03-22 — **STATUS: ETL 完成 + 烟测 23/23 PASS — 准备进入 Phase 3 train.py**
 
-## 1. CURRENT STATUS: Full ETL In Progress
+## 1. CURRENT STATUS: ETL Complete, Phase 2 Passed
 
-**Full ETL running on linux1** (single worker, 743 files, 5312 A-shares, ~45h ETA). Math core code is **frozen**.
+**Full ETL COMPLETE** (743/743 files, 9,958,131 samples, 1,992 shards, 164GB). Phase 2 烟测 23/23 ALL CLEAR. Math core code is **frozen**. 准备进入 Phase 3: train.py.
 
 The Claude CLI environment restructuring and workflow automation are **complete**. Three-layer automation architecture (Hooks + Skills + Agents) deployed and audited.
 
@@ -258,9 +258,9 @@ omega_pure_v2/
 7. ~~双节点远程审计与清理~~ **DONE — Linux1 回收 316GB, Windows1 回收 1+TB**
 8. ~~三层审计体系建立~~ **DONE — omega_axioms(37项) + Codex(6/6) + Gemini(6/6)**
 9. ~~Phase 0.5/0.6/1A: ETL 多核改造 + batch 优化 + 烟测~~ **DONE — 21/23 PASS**
-10. **IN PROGRESS**: Phase 1B — 全量 ETL 单 worker 运行中 (linux1, ETA ~45h, started 19:55 2026-03-19)
-11. **NEXT**: Phase 2 — 端到端烟测（全量 shard 验证 + Loader + Model）
-12. Phase 3: train.py (Omega-TIB + VolumeBlockInputMasking + FVU)
+10. ~~Phase 1B — 全量 ETL~~ **DONE — 9,958,131 samples, 1992 shards, 164GB, 69.7h**
+11. ~~Phase 2 — 端到端烟测~~ **DONE — 23/23 ALL CLEAR**
+12. **IN PROGRESS**: Phase 3: train.py (Omega-TIB + VolumeBlockInputMasking + FVU)
 13. Phase 4-6: HPO → 全量训练 → 回测
 
 ## 9. SESSION 5: 三层审计体系 + V3 Pipeline Plan (2026-03-18~19)
@@ -377,7 +377,43 @@ sudo systemd-run --slice=heavy-workload.slice --uid=1000 \
 3. **RSS 仍在增长** — file ~420 时 42.2GB，后续可能再跳，OOM 风险仍存
 4. 本次会话未涉及远程节点操作
 
-## 13. CRITICAL RULES FOR NEXT AGENT
+## 14. SESSION 8: ETL 完成 + Phase 2 全量烟测通过 (2026-03-22)
+
+### ETL 全量完成
+- **完成时间**: 2026-03-22 17:37
+- **总耗时**: 69.7 小时 (2.9 天)
+- **总样本**: 9,958,131
+- **股票数**: 5,312 只 A 股
+- **总 ticks**: 78,869M
+- **Shards**: 1,992 个 / 164 GB
+- **输出路径**: `/omega_pool/wds_shards_v3_full/`
+- **RSS 峰值**: 43.1 GB / 61 GB (68.4%) — 稳定未 OOM
+
+### Phase 2 烟测结果: 23/23 ALL CLEAR
+| 层级 | 检查项 | 结果 |
+|------|--------|------|
+| Step 1: Shard 格式 (#1-18) | shape/dtype/NaN/channels/target/c_friction | 18/18 PASS |
+| Step 2: Loader (#19-20) | WebDataset → batched tensors | 2/2 PASS |
+| Step 3: Model (#21-23) | forward → MDL loss → backward gradients | 3/3 PASS |
+
+关键验证点:
+- 张量形状 [B, 160, 10, 10] 正确
+- 零 NaN/Inf，159K spread 检查零违规
+- 51 只股票有 51 个不同 c_friction（per-stock 标定生效）
+- Target 分布: mean=-5 BP, std=216 BP — 健康
+- 极端值 -2932 BP 是合法尾部事件（连续跌停），非 bug
+
+### 烟测阈值修复
+- #5 Bid_P: `max < 10000` → `max < 10_000_000`（适配厘单位）
+- #13 target: `abs < 500` → `abs < 5000`（覆盖连续跌停尾部）
+
+### 断点续传代码已部署
+- `tools/omega_etl_v3_topo_forge.py` 已 scp 到 linux1
+- `--resume` + `--checkpoint_interval` 可用（本次未触发 OOM，未实际使用）
+
+### 本次会话无新架构洞察
+
+## 15. CRITICAL RULES FOR NEXT AGENT
 1. **Read `CLAUDE.md` first** — it's auto-loaded but understand the rules
 2. **Read `VIA_NEGATIVA.md`** — know what NOT to do before doing anything
 3. **Do not modify `omega_epiplexity_plus_core.py`** unless architect explicitly authorizes
