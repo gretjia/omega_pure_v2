@@ -146,7 +146,6 @@ def create_val_dataloader(wds_url, batch_size, macro_window,
     preprocess_fn = dynamic_processor(macro_window, coarse_graining_factor)
     dataset = (
         wds.WebDataset(wds_url, resampled=False, handler=wds.warn_and_continue)
-        .split_by_worker()
         .decode(handler=wds.warn_and_continue)
         .map(preprocess_fn, handler=wds.warn_and_continue)
         .batched(batch_size)
@@ -378,7 +377,6 @@ def main():
     _train_preprocess = dynamic_processor(args.macro_window, args.coarse_graining_factor)
     _train_ds = (
         wds.WebDataset(train_shards, resampled=True, handler=wds.warn_and_continue)
-        .split_by_worker()
         .shuffle(1000)
         .decode(handler=wds.warn_and_continue)
         .map(_train_preprocess, handler=wds.warn_and_continue)
