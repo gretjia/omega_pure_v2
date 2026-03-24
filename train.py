@@ -243,7 +243,7 @@ def load_checkpoint(path, model, optimizer, scaler, device):
 
 def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                     grad_clip, device, epoch, steps_per_epoch, global_step,
-                    use_amp, warmup_epochs=2, overfit_batch=None):
+                    use_amp, warmup_epochs=2, overfit_batch=None, scheduler=None):
     model.train()
     running = {"total": 0.0, "h_t": 0.0, "s_t": 0.0, "fvu": 0.0, "count": 0}
     loader_iter = iter(loader) if overfit_batch is None else None
@@ -290,6 +290,9 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
             total_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
+
+        if scheduler is not None:
+            scheduler.step()
 
         running["total"] += total_loss.item()
         running["h_t"] += h_t.item()
@@ -471,9 +474,14 @@ def main():
                 f"macro_window={args.macro_window}, "
                 f"coarse_graining={args.coarse_graining_factor}")
 
-    # --- Optimizer + Scaler ---
+    # --- Optimizer + Scaler + LR Scheduler ---
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-5)
     scaler = torch.cuda.amp.GradScaler() if use_amp else None
+    total_steps = args.epochs * args.steps_per_epoch
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer, max_lr=args.lr, total_steps=total_steps,
+        pct_start=0.05, anneal_strategy='cos', div_factor=100,  # start lr/100, warmup 5%
+    ) if not args.overfit else None
 
     # --- Resume ---
     ckpt_path = os.path.join(args.output_dir, "latest.pt")
@@ -505,7 +513,7 @@ def main():
             model, train_loader, optimizer, scaler, args.lambda_s,
             args.grad_clip, device, epoch, args.steps_per_epoch, global_step,
             use_amp, warmup_epochs=args.warmup_epochs,
-            overfit_batch=overfit_batch
+            overfit_batch=overfit_batch, scheduler=scheduler
         )
 
         val_metrics = validate(model, val_loader, args.lambda_s, device,
