@@ -1,9 +1,9 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-03-22 — **STATUS: train.py 完成 + GCS 上传中 (179/1992) — 准备 Vertex AI L4 训练**
+Last Updated: 2026-03-24 — **STATUS: v10 训练在 L4 GPU 运行中 (Step 4000+, 无 NaN) — ETA ~13:00 UTC**
 
-## 1. CURRENT STATUS: ETL Complete, Phase 2 Passed
+## 1. CURRENT STATUS: GPU Training Running
 
-**Full ETL COMPLETE** (743/743 files, 9,958,131 samples, 1,992 shards, 164GB). Phase 2 烟测 23/23 ALL CLEAR. Math core code is **frozen**. 准备进入 Phase 3: train.py.
+**v10 Vertex AI 训练运行中** (1×L4, g2-standard-8, AMP fp16). Step 0→4000 loss 稳定无 NaN. 经历 v1-v9 连续 9 次失败后，通过 Gemini 审计 4 条修复终于稳定。Shard 修复 470/476 接近完成。
 
 The Claude CLI environment restructuring and workflow automation are **complete**. Three-layer automation architecture (Hooks + Skills + Agents) deployed and audited.
 
@@ -260,10 +260,12 @@ omega_pure_v2/
 9. ~~Phase 0.5/0.6/1A: ETL 多核改造 + batch 优化 + 烟测~~ **DONE — 21/23 PASS**
 10. ~~Phase 1B — 全量 ETL~~ **DONE — 9,958,131 samples, 1992 shards, 164GB, 69.7h**
 11. ~~Phase 2 — 端到端烟测~~ **DONE — 23/23 ALL CLEAR**
-12. ~~Phase 3: train.py~~ **DONE — CPU 验证通过, FVU 448→126**
-13. **IN PROGRESS**: GCS 数据上传 (179/1992, ETA ~15h)
-14. **NEXT**: 提交 Vertex AI CustomJob (1×L4, 10 epoch)
-15. Phase 4-6: HPO → 全量训练 → 回测
+12. ~~Phase 3: train.py~~ **DONE — v10 在 L4 上运行中**
+13. ~~GCS 数据上传~~ **DONE — 1992 shards, shard 修复 470/476**
+14. **IN PROGRESS**: v10 训练运行中 (Job 2787612291124690944, ETA ~13:00 UTC 2026-03-24)
+15. **NEXT**: 分析 v10 训练结果 (FVU < 1.0?)
+16. Phase 4: HPO (Vizier, 100×L4)
+17. Phase 5-6: 全量训练 → 回测
 
 ## 9. SESSION 5: 三层审计体系 + V3 Pipeline Plan (2026-03-18~19)
 
@@ -461,7 +463,110 @@ sudo systemd-run --slice=heavy-workload.slice --uid=1000 \
 
 ### 本次会话无新架构洞察
 
-## 17. CRITICAL RULES FOR NEXT AGENT
+## 18. SESSION 10: Vertex AI GPU 训练部署 — 10 次迭代终见曙光 (2026-03-24)
+
+### GCS 数据上传完成
+- 1992 shards (164GB) 全部上传到 `gs://omega-pure-data/wds_shards_v3_full/`
+- 路径：linux1 → omega-vm SSH pipe → GCS（GCP 内网高速）+ linux1 → HK → GCS（辅助）
+- 476 个空/截断 shard（上传失败遗留）→ 修复脚本 470/476 完成中
+- 总耗时 ~16h（4+2 路并行，后减至 4 路优化带宽争抢）
+
+### Vertex AI 训练：10 次提交才成功
+
+| 版本 | 错误 | 修复 |
+|------|------|------|
+| v1 | PyTorch 镜像 tag 不存在 | `pytorch-gpu.2-2.py310:latest` |
+| v2 | `torch.amp.GradScaler` 不存在 (PyTorch 2.2) | `torch.cuda.amp.GradScaler` |
+| v3 | AMP fp16 溢出 → Loss=NaN (Step 0) | 禁用 AMP |
+| v4 | `tarfile.ReadError: empty file` (shard 01155) | `os.path.getsize > 1MB` 过滤空 shard |
+| v5 | `tarfile.ReadError: unexpected end` (shard 01683) | `num_workers=0`（DataLoader worker 内错误不被 handler 捕获） |
+| v6 | 同上（只修了 val_loader 没修 train_loader） | train_loader 也加 `warn_and_continue` |
+| v7 | 损坏 shard 跳过成功，但 Step 1000 Loss=NaN | try/except 修复了 shard 问题；NaN 是特征尺度问题 |
+| v8 | Loss 不下降 (26K→35K↑) lr=1e-5 太保守 | LayerNorm 稳定了训练但 lr 不够 → **Gemini 审计** |
+| v9 | `split_by_worker` AttributeError | webdataset 1.0.2 无此 API → 移除 |
+| **v10** | **✅ RUNNING** | **Gemini 全修复: log1p + symlog + AMP + handler** |
+
+### v10 训练状态 (Job ID: 2787612291124690944)
+- **GPU**: 1×NVIDIA L4 (g2-standard-8, 8 vCPU, 32GB RAM)
+- **AMP**: 启用（log1p 压缩后特征值在 fp16 安全范围）
+- **Step 0→4000**: Loss 28K→36K（running average，无 NaN）
+- **速度**: ~3min/1K steps → 30min/epoch
+- **ETA**: ~6h（10 epochs），预计 ~13:00 UTC 2026-03-24
+
+### Gemini 审计 4 条修复（commit 59c4dab）
+1. **CRITICAL**: `log1p` 压缩 LOB 特征（5M→~15），`symlog` 处理 q_metaorder 奇异点（σ_D≈0 时 1e20 极值）
+2. **HIGH**: 重启 AMP fp16（log1p 后安全，~2.5x L4 吞吐提升）
+3. **CRITICAL**: 全链路 `warn_and_continue` handler（WebDataset 初始化 + decode + map）
+4. **MEDIUM**: 移除 `os.path.getsize` gcsfuse 同步请求（gcsfuse 不是真文件系统）
+
+### HK Tailscale 停止
+- 停止 HK 上 `tailscaled` 释放 1.2GB RAM（62.4% of 1.9GB）
+- 所有主路径（WireGuard + 公网 SSH）不受影响
+- 已记录到 `/projects/networks/README.md` 和 `handover.md`
+- 恢复命令: `ssh hk-wg 'sudo systemctl start tailscaled'`
+
+## 19. BITTER LESSONS: "烟测通过 ≠ 训练可行" — 10 次失败的工程教训
+
+> 这是 Omega 项目第二次重大教训集（第一次见 `audit/gemini_bitter_lessons.md`）。
+> 核心主题：**本地小规模烟测无法预测生产环境的真实行为。**
+
+### 教训 1: 本地烟测的 4 个致命盲区
+CPU 烟测 3 epoch 全通过（FVU 448→126），但 GPU 训练连续 9 次失败。烟测用 batch=4 × 5 steps（20 samples），生产用 batch=256 × 10K steps（256 万 samples），差距 128000 倍。
+
+| 盲区 | 烟测隐藏了什么 | 生产暴露了什么 |
+|------|--------------|--------------|
+| **精度差异** | CPU 全 fp32 | GPU AMP fp16 → 5M 级原始值溢出 65504 |
+| **数据覆盖** | 5 个 batch × 4 samples = 20 samples | 10K batches 命中了 476 个损坏 shard |
+| **梯度累积** | 5 步不足以发散 | 1000 步后梯度爆炸 → NaN |
+| **API 版本** | linux1 PyTorch 2.6 | Vertex AI 镜像 PyTorch 2.2 |
+
+**规则**: 未来训练前必须在**目标环境**跑 `--epochs=1 --steps_per_epoch=100` 快速烟测。
+
+### 教训 2: 未标准化的原始特征是定时炸弹
+价格以厘为单位（25K-5M），成交量 ~10M，直接输入 Linear(6, 64) → 激活值 ~百万级 → MSE loss 90M → 梯度爆炸。
+
+**规则**: 任何数值型特征进入模型前必须压缩到 [-30, 30]。推荐 `log1p`（非负）或 `symlog`（含负值）。这是永恒工程公理。
+
+### 教训 3: SRL 反演的 σ_D≈0 奇异点
+`(|ΔP| / (c × σ_D + 1e-8))^2 × V_D` 当 σ_D→0 时产生 1e20 极值。eps=1e-8 对 σ_D 量级（~10K）太小。冷门股票日波动率接近 0 时触发。
+
+**规则**: `symlog` 包裹 q_metaorder 是必须的防御层。已在 `OmegaTIBWithMasking.forward()` 实现。
+
+### 教训 4: gcsfuse 不是真正的文件系统
+- `os.path.getsize()` 需要同步 GCS API 请求（1992 文件 = 几分钟假死）
+- 多 worker 并发读同一 shard → tarfile 流断裂
+- `warn_and_continue` 只能捕获 WebDataset 层错误，tarfile 底层错误需要外层 try/except
+
+**规则**: gcsfuse 上禁止批量 stat；所有管道必须有 handler；优先 `num_workers=0` 或确保 worker 隔离。
+
+### 教训 5: PyTorch/webdataset 版本差异
+- `torch.amp.GradScaler`（2.3+）vs `torch.cuda.amp.GradScaler`（2.2）
+- `wds.split_by_worker`（新版）在 1.0.2 不存在
+- `.decode(handler=...)` 和 `.map(handler=...)` 参数兼容性不同
+
+**规则**: 提交前确认目标镜像版本。用 `pip install --upgrade webdataset` 保证最新版。
+
+### 教训 6: SSH pipe 上传产生 0 字节文件
+SSH 断开后 `gsutil cp - gs://...` 仍创建 0 字节目标文件。476/1992 shards 损坏。并行度越高失败率越高（7 路时单 shard 从 54s 涨到 13min）。
+
+**规则**: 上传后必须验证大小。并行度不超过带宽阈值（本项目 4 路最优）。
+
+## 20. PRE-TRAINING GATE（训练前强制检查清单）
+
+> 未来版本升级或架构变更后，在提交任何 Vertex AI 训练 job 之前，必须逐条通过。
+
+1. **[ ] 目标镜像版本确认**: 在容器内 `pip list | grep -E "torch|webdataset"` 确认版本
+2. **[ ] 特征值范围检查**: 所有输入 channel 的 max/min 必须在 [-100, 100]（或已做 log1p/symlog）
+3. **[ ] AMP 安全性**: 经 log1p 后最大值 < 65504（fp16 上限）
+4. **[ ] GCS shard 完整性**: `gsutil ls -l | awk '$1 < 1000000'` 返回 0 条（无空文件）
+5. **[ ] Vertex AI 快速烟测**: `--epochs=1 --steps_per_epoch=100 --batch_size=64` 通过
+6. **[ ] Loss 非 NaN 持续 100+ steps**: 快速烟测最低标准
+7. **[ ] handler 全链路**: WebDataset + decode + map 都有 `warn_and_continue`
+8. **[ ] try/except batch iteration**: 训练循环外层有错误恢复
+9. **[ ] SRL 奇异点防护**: q_metaorder 经过 symlog 压缩
+10. **[ ] LayerNorm/BatchNorm**: input_proj 后有标准化层
+
+## 21. CRITICAL RULES FOR NEXT AGENT
 1. **Read `CLAUDE.md` first** — it's auto-loaded but understand the rules
 2. **Read `VIA_NEGATIVA.md`** — know what NOT to do before doing anything
 3. **Do not modify `omega_epiplexity_plus_core.py`** unless architect explicitly authorizes

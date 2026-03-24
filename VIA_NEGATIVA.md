@@ -85,6 +85,34 @@
 - **为什么危险**: CPython + glibc malloc arena 碎片化导致 RSS 持续膨胀。预期工作集 ~863MB，实际 RSS 32.8GB（38x 超出），线性外推到 743 文件为 71.7GB，超过 61GB 可用 RAM。根因：`bar_ticks_prices/vols` 列表在每根 volume bar 完成后清空重建（~570 亿次 float 对象分配/释放），`bar_buffer = bar_buffer[trim:]` 列表切片（~128 万次），glibc malloc arena 被碎片化的小对象"钉住"无法归还 OS
 - **结论**: 任何 ETA > 1h 的批处理脚本必须实现断点续传（已完成文件跳过）。一旦 OOM 崩溃，无断点续传 = 数十小时工作归零
 
+### SSH pipe 并行上传 → 空文件 + 带宽反优化
+- **证伪时间**: 2026-03-23，omega-vm → GCS 上传
+- **做了什么**: 7 路并行 SSH pipe (`ssh linux1 'cat shard' | gsutil cp - gs://...`)
+- **为什么失败**: (1) 7 路共享 linux1 上行带宽 ~3-4 MiB/s，每路降到 0.5 MiB/s，单 shard 从 54s 暴涨到 13min。(2) SSH 断开后 gsutil 仍创建 0 字节目标文件 → 476/1992 shards 损坏。(3) 修复脚本用 `while read` 循环，但 `ssh` 偷走了 stdin → 只修了 1 个就退出
+- **结论**: 并行度不可超过带宽阈值（4 路最优）。上传后必须验证文件大小。脚本避免 `while read` + SSH 同时用 stdin（改用 `mapfile` + `for` 循环）
+
+### 未标准化的原始特征直接输入神经网络 → 梯度爆炸
+- **证伪时间**: 2026-03-24，Vertex AI v3/v7/v8
+- **做了什么**: 原始价格（厘，25K-5M）和成交量（~10M）直接输入 `nn.Linear(6, 64)`
+- **为什么失败**: 激活值 ~百万级 → MSE loss 90M → 1000 步后梯度爆炸 NaN。fp16 AMP 时第 0 步就溢出（65504 上限）。CPU 烟测 5 步看不出问题
+- **结论**: 永恒工程公理 — 所有数值特征进入模型前必须压缩到 [-30, 30]。`log1p`（非负）或 `symlog`（含负值）是标准手段
+
+### 本地 CPU 烟测通过 → 相信 GPU 训练也能通过
+- **证伪时间**: 2026-03-24，v1-v9 连续失败
+- **做了什么**: CPU 烟测 batch=4 × 5 steps 全通过（FVU 下降），直接提交 GPU 全量训练
+- **为什么失败**: CPU/GPU 精度不同（fp32 vs fp16）、数据覆盖率不同（20 samples vs 256 万）、PyTorch 版本不同（2.6 vs 2.2）、存储后端不同（本地 NVMe vs gcsfuse）
+- **结论**: 烟测必须在**目标环境**执行。Vertex AI 训练前必须先提交 `--epochs=1 --steps_per_epoch=100` 快速烟测 job
+
+---
+
+## 云基础设施
+
+### gcsfuse 当真实文件系统用 → stat 假死 + 并发读取损坏
+- **证伪时间**: 2026-03-24，Vertex AI v4-v6
+- **做了什么**: (1) `os.path.getsize()` 遍历 1992 个 shard 做预过滤；(2) `num_workers=4` 的 DataLoader 并发读取 gcsfuse 挂载的 .tar 文件
+- **为什么失败**: (1) gcsfuse 的 stat 需要同步 GCS API 请求，1992 次 → 几分钟假死。(2) 多 worker 并发读同一 tar 文件导致流断裂 `tarfile.ReadError`，且 WebDataset 的 `warn_and_continue` handler 无法捕获 DataLoader worker 进程内的异常
+- **结论**: gcsfuse 上禁止批量 stat。WebDataset 管道必须全链路 handler。如需 multi-worker 安全，必须确保 shard 完整性或用 try/except 包裹批读取
+
 ---
 
 ## AI 治理
