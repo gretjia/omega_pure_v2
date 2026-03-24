@@ -356,6 +356,8 @@ def main():
     parser.add_argument("--max_val_steps", type=int, default=0,
                         help="Max validation steps (0=all, useful for CPU smoke tests)")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--mask_prob", type=float, default=0.5,
+                        help="Block masking probability (0.0 to disable)")
     args = parser.parse_args()
 
     # --- Single instance lock (CLAUDE.md rule #25) ---
@@ -417,6 +419,7 @@ def main():
     model = OmegaTIBWithMasking(
         hidden_dim=args.hidden_dim,
         window_size=(args.window_size_t, args.window_size_s),
+        mask_prob=args.mask_prob,
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
