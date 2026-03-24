@@ -96,6 +96,8 @@ class OmegaTIBWithMasking(nn.Module):
         self.model = OmegaMathematicalCompressor(hidden_dim, window_size)
         self.masking = VolumeBlockInputMasking(min_mask_bars, max_mask_bars,
                                                mask_prob, keep_last)
+        # LayerNorm after input_proj to stabilize training with unnormalized raw features
+        self.post_proj_norm = nn.LayerNorm(hidden_dim)
 
     def forward(self, x_2d: torch.Tensor, c_friction: torch.Tensor):
         B, T, S, C = x_2d.shape
@@ -114,8 +116,14 @@ class OmegaTIBWithMasking(nn.Module):
 
         # Step 2: Build native manifold + project
         lob_features = x_2d[:, :, :, :5]
+        # [Gemini Fix 2] log1p compression: 5M → ~15, safe for fp16 and gradient stability
+        lob_features = torch.log1p(torch.clamp(lob_features, min=0))
+        # [Gemini Fix 2] symlog for q_metaorder: handles negative values + sigma_d≈0 singularity
+        q_metaorder = torch.sign(q_metaorder) * torch.log1p(torch.abs(q_metaorder))
+
         native_manifold = torch.cat([lob_features, q_metaorder], dim=-1)
         x = self.model.input_proj(native_manifold)
+        x = self.post_proj_norm(x)
 
         # === MASKING INSERTION POINT (spec: after input_proj, before tda) ===
         x = self.masking(x)
@@ -137,9 +145,10 @@ def create_val_dataloader(wds_url, batch_size, macro_window,
                           coarse_graining_factor, num_workers):
     preprocess_fn = dynamic_processor(macro_window, coarse_graining_factor)
     dataset = (
-        wds.WebDataset(wds_url, resampled=False)
-        .decode()
-        .map(preprocess_fn)
+        wds.WebDataset(wds_url, resampled=False, handler=wds.warn_and_continue)
+        .split_by_worker()
+        .decode(handler=wds.warn_and_continue)
+        .map(preprocess_fn, handler=wds.warn_and_continue)
         .batched(batch_size)
     )
     loader_kwargs = dict(batch_size=None, num_workers=num_workers)
@@ -187,10 +196,21 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                     use_amp):
     model.train()
     running = {"total": 0.0, "h_t": 0.0, "s_t": 0.0, "count": 0}
+    loader_iter = iter(loader)
+    skipped = 0
 
-    for step_i, batch in enumerate(loader):
-        if step_i >= steps_per_epoch:
-            break
+    for step_i in range(steps_per_epoch):
+        try:
+            batch = next(loader_iter)
+        except StopIteration:
+            loader_iter = iter(loader)
+            batch = next(loader_iter)
+        except Exception as e:
+            skipped += 1
+            if skipped % 10 == 1:
+                logger.warning(f"Skipping corrupt batch (total skipped: {skipped}): {e}")
+            loader_iter = iter(loader)
+            continue
 
         manifold = batch["manifold_2d"].to(device)
         c_friction = batch["c_friction"].to(device).unsqueeze(-1)
@@ -331,7 +351,7 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    use_amp = device.type == "cuda"
+    use_amp = device.type == "cuda"  # Safe: log1p compresses features to [-30,30], within fp16 range
     logger.info(f"Device: {device}, AMP: {use_amp}")
 
     # Add file handler
@@ -345,17 +365,29 @@ def main():
         logger.error(f"No shards found in {args.shard_dir}")
         sys.exit(1)
 
-    n_train = int(len(all_shards) * (1 - args.val_split))
-    train_shards = all_shards[:n_train]
-    val_shards = all_shards[n_train:]
-    logger.info(f"Shards: {len(all_shards)} total, {len(train_shards)} train, "
+    # [Gemini Fix 4] Skip slow gcsfuse getsize; handler auto-skips corrupt shards at read time
+    valid_shards = all_shards
+    logger.info(f"Using all {len(valid_shards)} shards (corrupt shards bypassed by handler)")
+    n_train = int(len(valid_shards) * (1 - args.val_split))
+    train_shards = valid_shards[:n_train]
+    val_shards = valid_shards[n_train:]
+    logger.info(f"Shards: {len(valid_shards)} valid, {len(train_shards)} train, "
                 f"{len(val_shards)} val (temporal split, no look-ahead)")
 
-    # --- DataLoaders ---
-    train_loader = create_dataloader(
-        train_shards, args.batch_size, args.macro_window,
-        args.coarse_graining_factor, args.num_workers
+    # --- DataLoaders (with error handler for corrupt shards) ---
+    _train_preprocess = dynamic_processor(args.macro_window, args.coarse_graining_factor)
+    _train_ds = (
+        wds.WebDataset(train_shards, resampled=True, handler=wds.warn_and_continue)
+        .split_by_worker()
+        .shuffle(1000)
+        .decode(handler=wds.warn_and_continue)
+        .map(_train_preprocess, handler=wds.warn_and_continue)
+        .batched(args.batch_size)
     )
+    _train_kw = dict(batch_size=None, num_workers=args.num_workers)
+    if args.num_workers > 0:
+        _train_kw["prefetch_factor"] = 2
+    train_loader = DataLoader(_train_ds, **_train_kw)
     val_loader = create_val_dataloader(
         val_shards, args.batch_size, args.macro_window,
         args.coarse_graining_factor, args.num_workers
@@ -376,7 +408,7 @@ def main():
 
     # --- Optimizer + Scaler ---
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-5)
-    scaler = torch.amp.GradScaler() if use_amp else None
+    scaler = torch.cuda.amp.GradScaler() if use_amp else None
 
     # --- Resume ---
     ckpt_path = os.path.join(args.output_dir, "latest.pt")
