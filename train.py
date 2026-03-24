@@ -114,11 +114,33 @@ class OmegaTIBWithMasking(nn.Module):
             )
         q_metaorder = q_metaorder.unsqueeze(-1).unsqueeze(-1).expand(B, T, S, 1)
 
-        # Step 2: Build native manifold + project
-        lob_features = x_2d[:, :, :, :5]
-        # [Gemini Fix 2] log1p compression: 5M → ~15, safe for fp16 and gradient stability
-        lob_features = torch.log1p(torch.clamp(lob_features, min=0))
-        # [Gemini Fix 2] symlog for q_metaorder: handles negative values + sigma_d≈0 singularity
+        # Step 2: Build native manifold — Financial Relativity Transform
+        # Architect directive: decompose LOB into 3 orthogonal physical representations
+        # (1) Micro-structure: Bid/Ask → BP deviation from Mid-Price (preserves spread)
+        # (2) Macro-trend: Close → cumulative log return from t=0 (preserves momentum)
+        # (3) Volume: log1p (preserves power-law distribution)
+        lob = x_2d[:, :, :, :5].float()  # fp32 for precision during division
+
+        bid_p, bid_v, ask_p, ask_v, close_p = (
+            lob[..., 0], lob[..., 1], lob[..., 2], lob[..., 3], lob[..., 4]
+        )
+
+        # (1) Micro: BP deviation from instantaneous Mid-Price
+        mid_p = ((bid_p + ask_p) / 2.0).clamp(min=1e-6)
+        lob[..., 0] = (bid_p - mid_p) / mid_p * 10000.0   # Bid spread ~[-10, -0.5] BP
+        lob[..., 2] = (ask_p - mid_p) / mid_p * 10000.0   # Ask spread ~[+0.5, +10] BP
+
+        # (2) Macro: cumulative log return from t=0 anchor (in %, 10% move → 10)
+        anchor = close_p[:, 0:1, ...].clamp(min=1e-6)
+        lob[..., 4] = torch.log(close_p.clamp(min=1e-6) / anchor) * 100.0
+
+        # (3) Volume: log1p compression (power-law safe, range [0, 15])
+        lob[..., 1] = torch.log1p(bid_v.clamp(min=0.0))
+        lob[..., 3] = torch.log1p(ask_v.clamp(min=0.0))
+
+        lob_features = lob.to(x_2d.dtype)  # back to model dtype (fp16 if AMP)
+
+        # symlog for q_metaorder: handles negative values + sigma_d≈0 singularity
         q_metaorder = torch.sign(q_metaorder) * torch.log1p(torch.abs(q_metaorder))
 
         native_manifold = torch.cat([lob_features, q_metaorder], dim=-1)
