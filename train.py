@@ -38,6 +38,35 @@ from omega_epiplexity_plus_core import (
 )
 from omega_webdataset_loader import create_dataloader, dynamic_processor
 
+# Global target stats (from Phase 2 smoke test: 9.96M samples)
+TARGET_MEAN = -5.08   # BP
+TARGET_STD = 216.24   # BP
+
+
+def compute_robust_loss(prediction, target, z_core, lambda_s, epoch,
+                        warmup_epochs=2):
+    """Architect directive 2026-03-24: Huber + target Z-score + MDL warmup."""
+    # 1. Target Z-score with global stats (not per-batch) + 5σ clip
+    target_z = (target - TARGET_MEAN) / TARGET_STD
+    target_z = torch.clamp(target_z, -5.0, 5.0)
+
+    # 2. Huber loss (robust to fat-tail outliers)
+    h_t = F.huber_loss(prediction.squeeze(), target_z, delta=1.0)
+
+    # 3. MDL warmup: lambda_s=0 for first warmup_epochs
+    lambda_s_eff = lambda_s if epoch >= warmup_epochs else 0.0
+    s_t = torch.norm(z_core, p=1, dim=-1).mean()
+    total = h_t + lambda_s_eff * s_t
+
+    # 4. Real FVU for monitoring (no grad)
+    with torch.no_grad():
+        pred_bp = prediction.squeeze() * TARGET_STD + TARGET_MEAN
+        mse_real = F.mse_loss(pred_bp, target)
+        fvu = mse_real / (torch.var(target) + 1e-8)
+
+    return total, h_t, s_t, fvu
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -214,24 +243,27 @@ def load_checkpoint(path, model, optimizer, scaler, device):
 
 def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                     grad_clip, device, epoch, steps_per_epoch, global_step,
-                    use_amp):
+                    use_amp, warmup_epochs=2, overfit_batch=None):
     model.train()
-    running = {"total": 0.0, "h_t": 0.0, "s_t": 0.0, "count": 0}
-    loader_iter = iter(loader)
+    running = {"total": 0.0, "h_t": 0.0, "s_t": 0.0, "fvu": 0.0, "count": 0}
+    loader_iter = iter(loader) if overfit_batch is None else None
     skipped = 0
 
     for step_i in range(steps_per_epoch):
-        try:
-            batch = next(loader_iter)
-        except StopIteration:
-            loader_iter = iter(loader)
-            batch = next(loader_iter)
-        except Exception as e:
-            skipped += 1
-            if skipped % 10 == 1:
-                logger.warning(f"Skipping corrupt batch (total skipped: {skipped}): {e}")
-            loader_iter = iter(loader)
-            continue
+        if overfit_batch is not None:
+            batch = overfit_batch  # Same batch every step (overfit test)
+        else:
+            try:
+                batch = next(loader_iter)
+            except StopIteration:
+                loader_iter = iter(loader)
+                batch = next(loader_iter)
+            except Exception as e:
+                skipped += 1
+                if skipped % 10 == 1:
+                    logger.warning(f"Skipping corrupt batch (total skipped: {skipped}): {e}")
+                loader_iter = iter(loader)
+                continue
 
         manifold = batch["manifold_2d"].to(device)
         c_friction = batch["c_friction"].to(device).unsqueeze(-1)
@@ -242,8 +274,8 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
         if use_amp:
             with torch.autocast(device_type="cuda", dtype=torch.float16):
                 prediction, z_core = model(manifold, c_friction)
-                total_loss, h_t, s_t = compute_epiplexity_mdl_loss(
-                    prediction, target, z_core, lambda_s
+                total_loss, h_t, s_t, batch_fvu = compute_robust_loss(
+                    prediction, target, z_core, lambda_s, epoch, warmup_epochs
                 )
             scaler.scale(total_loss).backward()
             scaler.unscale_(optimizer)
@@ -252,8 +284,8 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
             scaler.update()
         else:
             prediction, z_core = model(manifold, c_friction)
-            total_loss, h_t, s_t = compute_epiplexity_mdl_loss(
-                prediction, target, z_core, lambda_s
+            total_loss, h_t, s_t, batch_fvu = compute_robust_loss(
+                prediction, target, z_core, lambda_s, epoch, warmup_epochs
             )
             total_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -262,6 +294,7 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
         running["total"] += total_loss.item()
         running["h_t"] += h_t.item()
         running["s_t"] += s_t.item()
+        running["fvu"] += batch_fvu.item()
         running["count"] += 1
         global_step += 1
 
@@ -271,7 +304,8 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                 f"Epoch {epoch} Step {step_i}/{steps_per_epoch} | "
                 f"Loss={running['total']/n:.6f} "
                 f"H_T={running['h_t']/n:.6f} "
-                f"S_T={running['s_t']/n:.4f}"
+                f"S_T={running['s_t']/n:.4f} "
+                f"FVU={running['fvu']/n:.4f}"
             )
 
     n = max(running["count"], 1)
@@ -279,6 +313,7 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
         "total": running["total"] / n,
         "h_t": running["h_t"] / n,
         "s_t": running["s_t"] / n,
+        "fvu": running["fvu"] / n,
         "steps": running["count"],
     }
     return avg_metrics, global_step
@@ -288,7 +323,8 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
 # Validation
 # ============================================================
 
-def validate(model, val_loader, lambda_s, device, max_steps=0):
+def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
+             warmup_epochs=2):
     model.eval()
     all_preds, all_targets = [], []
     running = {"total": 0.0, "h_t": 0.0, "s_t": 0.0, "count": 0}
@@ -302,8 +338,8 @@ def validate(model, val_loader, lambda_s, device, max_steps=0):
             target = batch["target"].to(device)
 
             prediction, z_core = model(manifold, c_friction)
-            total_loss, h_t, s_t = compute_epiplexity_mdl_loss(
-                prediction, target, z_core, lambda_s
+            total_loss, h_t, s_t, _ = compute_robust_loss(
+                prediction, target, z_core, lambda_s, epoch, warmup_epochs
             )
             bs = target.size(0)
             running["total"] += total_loss.item() * bs
@@ -316,7 +352,9 @@ def validate(model, val_loader, lambda_s, device, max_steps=0):
     n = max(running["count"], 1)
     preds = torch.cat(all_preds)
     targets = torch.cat(all_targets)
-    fvu = compute_fvu(preds, targets)
+    # FVU on real BP scale (model outputs Z-score, convert back)
+    preds_bp = preds * TARGET_STD + TARGET_MEAN
+    fvu = compute_fvu(preds_bp, targets)
 
     return {
         "total": running["total"] / n,
@@ -358,6 +396,10 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--mask_prob", type=float, default=0.5,
                         help="Block masking probability (0.0 to disable)")
+    parser.add_argument("--overfit", action="store_true",
+                        help="Overfit test: repeat first batch for all steps")
+    parser.add_argument("--warmup_epochs", type=int, default=2,
+                        help="MDL lambda_s warmup: 0 for first N epochs")
     args = parser.parse_args()
 
     # --- Single instance lock (CLAUDE.md rule #25) ---
@@ -441,10 +483,18 @@ def main():
             ckpt_path, model, optimizer, scaler, device
         )
 
+    # --- Overfit mode: capture first batch ---
+    overfit_batch = None
+    if args.overfit:
+        loader_iter = iter(train_loader)
+        overfit_batch = next(loader_iter)
+        logger.info(f"OVERFIT MODE: repeating single batch of {overfit_batch['target'].shape[0]} samples")
+
     # --- Training ---
     logger.info(f"Starting training: epochs={args.epochs}, "
                 f"steps/epoch={args.steps_per_epoch}, batch={args.batch_size}, "
-                f"lr={args.lr}, lambda_s={args.lambda_s}")
+                f"lr={args.lr}, lambda_s={args.lambda_s}, "
+                f"warmup={args.warmup_epochs}, mask_prob={args.mask_prob}")
 
     best_fvu = float("inf")
 
@@ -454,11 +504,13 @@ def main():
         train_metrics, global_step = train_one_epoch(
             model, train_loader, optimizer, scaler, args.lambda_s,
             args.grad_clip, device, epoch, args.steps_per_epoch, global_step,
-            use_amp
+            use_amp, warmup_epochs=args.warmup_epochs,
+            overfit_batch=overfit_batch
         )
 
         val_metrics = validate(model, val_loader, args.lambda_s, device,
-                               max_steps=args.max_val_steps)
+                               max_steps=args.max_val_steps, epoch=epoch,
+                               warmup_epochs=args.warmup_epochs)
         elapsed = time.time() - t0
 
         logger.info(

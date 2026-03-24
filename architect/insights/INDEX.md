@@ -18,6 +18,9 @@
 | INS-006 | 空间轴恢复 [T,S,F] 四维 | 架构 | 2026-03-18 | L2 更新 | 已实现 |
 | INS-007 | 相对容量时钟 (动态阈值) | 架构 | 2026-03-18 | L2 更新 | 已实现 |
 | INS-008 | FVU 为 HPO 最高准则 | 度量 | 2026-03-18 | — | 待实现 (train.py) |
+| INS-009 | 均值坍缩修复: Huber+TargetNorm+MDL Warmup | 训练 | 2026-03-24 | L2 更新 | 待确认 |
+| INS-010 | payoff_horizon 锁定, 禁入 HPO | 度量 | 2026-03-24 | L2 更新 | 待确认 |
+| INS-011 | 严格日内回测, 禁止 T+1 隔夜 | 架构 | 2026-03-24 | L2 更新 | 待确认 |
 
 ---
 
@@ -33,3 +36,6 @@
 | INS-006 | v3_spatial_restoration | — |
 | INS-007 | v3_spatial_restoration | — |
 | INS-008 | v3_full_design_audit | id5 |
+| INS-009 | mean_collapse_diagnosis | — |
+| INS-010 | mean_collapse_diagnosis | — |
+| INS-011 | mean_collapse_diagnosis | — |

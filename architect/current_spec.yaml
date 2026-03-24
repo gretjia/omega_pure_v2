@@ -71,7 +71,7 @@ target:
   type: "forward_vwap_return"
   entry: "VWAP of bar N+1 (forced delay after signal at bar N)"
   exit: "VWAP of bar N+1+H"
-  payoff_horizon: 20    # H bars (HPO searchable: [10, 20, 40, 80])
+  payoff_horizon: 20    # H bars — 固定值, 禁止进入 HPO 搜索 (INS-010: 目标劫持风险)
   unit: "basis_points"  # Y = (VWAP_exit - VWAP_entry) / VWAP_entry × 10000
   # ETL 三步法: Tick→VolumeBar(VWAP)→shift计算→SlidingWindow绑定target
   # 绝对封杀 Look-ahead Bias
@@ -81,8 +81,10 @@ target:
 # ============================================================
 training:
   target_model: Omega-TIB   # Topological Information Bottleneck (正名自 SpatioTemporal2DMAE)
-  loss: "MDL (H_T + lambda_s * S_T)"  # Two-Part MDL 损失
+  loss: "MDL (H_T_huber + lambda_s_warmup * S_T)"  # Two-Part MDL, Huber for fat-tail robustness
+  loss_function: "Huber(delta=1.0) on Z-scored target (5σ clipped)"  # 架构师 2026-03-24 裁决
   lambda_s: 0.001            # 压缩权重 (Epiplexity vs 预测残差)
+  lambda_s_warmup: 2         # 前 N epochs lambda_s=0, 让网络先学习再压缩 (INS-009)
   masking:
     strategy: block_input    # 输入端 Block-wise Masking (非 MAE 输出重构)
     min_bars: 10             # 最小遮蔽长度
@@ -116,9 +118,10 @@ hpo:
     window_size_s:
       type: choice
       values: [4, 5, 10]
-    payoff_horizon:
-      type: choice
-      values: [10, 20, 40, 80]
+    # payoff_horizon: REMOVED from HPO (INS-010: 禁止算法选择目标, 固定 20)
+    learning_rate:
+      type: loguniform
+      range: [1e-5, 1e-2]
   success_criterion: "FVU shows distinct sharp minimum (< 0.95) at specific spatio-temporal scale"
 
 # ============================================================
@@ -126,9 +129,9 @@ hpo:
 # ============================================================
 backtest:
   execution_delay: "N+1 bar VWAP"    # 信号触发后只能在下一根Bar的VWAP成交
-  t_plus_1_exposure: true             # 强制T+1隔夜跳空风险暴露
-  exit_strategy: volume_clocked       # 基于容量时钟退场 (payoff_horizon bars)
-  success_criterion: "asymmetry_payoff_ratio > 3.0"
+  t_plus_1_exposure: false             # INS-011: 严格日内, LOB Alpha 不可扛隔夜
+  exit_strategy: volume_clocked_intraday  # 基于容量时钟退场 + 收盘前强制平仓 (Time-stop)
+  success_criterion: "asymmetry_payoff_ratio > 3.0 AND expectancy > slippage + fee"
 
 # ============================================================
 # 模型架构层级 (Omega-TIB)
