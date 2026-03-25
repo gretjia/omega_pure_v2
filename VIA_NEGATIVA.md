@@ -128,3 +128,37 @@
 - **做了什么**: Gemini 收到架构师的 V3 指令后，未经用户确认即删除 188GB V2 数据并开始 V3 改造
 - **为什么失败**: 架构师指令是"方向性的"，不是"立即执行的"。V2 数据在 V3 验证完成前应当保留
 - **结论**: 接收指令 ≠ 授权执行。破坏性操作必须经人工确认
+
+---
+
+## Vertex AI HPO + Spot VM
+
+### Epoch 级 checkpoint + Spot VM → 训练进度全部丢失
+- **证伪时间**: 2026-03-25，Phase 4 HPO v1
+- **做了什么**: 仅在 epoch 结束时保存 checkpoint（每 30 分钟），使用 Spot VM
+- **为什么失败**: Spot L4 在 us-central1 白天平均 ~10 分钟被抢占一次，远短于一个 epoch。20 个 trial 全部在 Epoch 0 中途被抢占，无有效 checkpoint，SIGTERM 报告 best_fvu=inf，Vizier 判定全部 INFEASIBLE
+- **结论**: Spot VM 训练必须使用 step 级 checkpoint（每 500 步 / ~3 分钟）。Epoch 级 checkpoint 在 Spot 环境下等于没有 checkpoint
+
+### float("inf") 作为 HPO metric → Vizier 全盘判死
+- **证伪时间**: 2026-03-25，Phase 4 HPO v1
+- **做了什么**: SIGTERM handler 报告 best_fvu=float("inf")（因为 validation 未执行，best_fvu 从未更新）
+- **为什么失败**: Vizier API 拒绝 inf 作为 objective value（"Invalid objective value: inf"），将 trial 标记为 INFEASIBLE。20/20 trials 全部 inf → HPO job 直接 FAILED
+- **结论**: 任何报告给 Vizier 的 metric 必须是有限实数。用 999.0 或 batch 级 FVU 兜底
+
+### 不同 HPO job 复用同一 checkpoint 目录 → 架构不兼容崩溃
+- **证伪时间**: 2026-03-25，Phase 4 HPO v2
+- **做了什么**: v2 HPO job 的 trial 1-20 使用了与 v1 相同的 output_dir（phase4/trial_${ID}）。v1 的 checkpoint 含不同超参的 state_dict
+- **为什么失败**: v2 Trial 12（hidden=128）加载 v1 Trial 12（hidden=256）的 checkpoint → model.load_state_dict() shape mismatch → RuntimeError → "Internal error" → INFEASIBLE
+- **结论**: 每次 HPO 提交必须使用唯一的 output base dir（如 phase4_v3）。或在 load_checkpoint 中加 try/except 处理不兼容情况
+
+### Vertex AI 离散参数传递为 float 字符串 → argparse int() 崩溃
+- **证伪时间**: 2026-03-25，Gemini 审计发现
+- **做了什么**: argparse 使用 type=int，但 Vertex AI Vizier 传递离散值为 "128.0"（float 字符串）
+- **为什么失败**: Python int("128.0") 抛出 ValueError。所有含离散参数的 trial 启动即崩溃
+- **结论**: HPO 可搜索的整数参数必须用 type=lambda x: int(float(x))
+
+### bash -c 吞噬 HPO 超参 → 100 个 trial 用同一默认参数
+- **证伪时间**: 2026-03-25，Gemini 审计发现
+- **做了什么**: containerSpec 使用 bash -c "pip install && python3 train.py --固定参数"，Vertex AI 将 HPO 参数追加到 args 列表末尾
+- **为什么失败**: bash -c "cmd" 之后的参数变成 $0, $1 等位置变量，不会传递给 cmd 内部的 python3。所有 trial 实际运行的是完全相同的默认参数
+- **结论**: 必须在 bash -c 脚本末尾加 "$@"，并在 args 列表中追加 "_" 作为 $0 占位符
