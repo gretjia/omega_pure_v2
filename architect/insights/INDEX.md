@@ -21,6 +21,9 @@
 | INS-009 | 均值坍缩修复: Huber+TargetNorm+MDL Warmup | 训练 | 2026-03-24 | L2 更新 | 待确认 |
 | INS-010 | payoff_horizon 锁定, 禁入 HPO | 度量 | 2026-03-24 | L2 更新 | 待确认 |
 | INS-011 | 严格日内回测, 禁止 T+1 隔夜 | 架构 | 2026-03-24 | L2 更新 | 待确认 |
+| INS-012 | MDL 断头台 — λ_s=0.001 绞杀微弱 Alpha | 训练 | 2026-03-25 | L2 更新 | 已生效 |
+| INS-013 | Phase 4 HPO 搜索空间 — 六维拓扑共振搜索 | 训练 | 2026-03-25 | L2 更新 | 被 INS-014 取代 |
+| INS-014 | 时间膨胀器回归 — coarse_graining 作为 P0 搜索参数 | 架构 | 2026-03-25 | L2 更新 | 待确认 |
 
 ---
 
@@ -39,3 +42,6 @@
 | INS-009 | mean_collapse_diagnosis | — |
 | INS-010 | mean_collapse_diagnosis | — |
 | INS-011 | mean_collapse_diagnosis | — |
+| INS-012 | phase4_hpo_authorization | — |
+| INS-013 | phase4_hpo_authorization | — |
+| INS-014 | phase4_ashare_swing_tracker | — |

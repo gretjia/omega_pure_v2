@@ -83,8 +83,8 @@ training:
   target_model: Omega-TIB   # Topological Information Bottleneck (正名自 SpatioTemporal2DMAE)
   loss: "MDL (H_T_huber + lambda_s_warmup * S_T)"  # Two-Part MDL, Huber for fat-tail robustness
   loss_function: "Huber(delta=1.0) on Z-scored target (5σ clipped)"  # 架构师 2026-03-24 裁决
-  lambda_s: 0.001            # 压缩权重 (Epiplexity vs 预测残差)
-  lambda_s_warmup: 2         # 前 N epochs lambda_s=0, 让网络先学习再压缩 (INS-009)
+  lambda_s: 0.001            # Phase 3 值; Phase 4 搜索 [1e-6, 1e-4] (INS-012: MDL 断头台)
+  lambda_s_warmup: 2         # Phase 3 值; Phase 4 搜索 [3, 4, 5] (INS-009)
   masking:
     strategy: block_input    # 输入端 Block-wise Masking (非 MAE 输出重构)
     min_bars: 10             # 最小遮蔽长度
@@ -100,29 +100,43 @@ training:
 # ============================================================
 hpo:
   engine: google_vizier              # Bayesian optimization
-  phase2_gpu: "100x L4 (g2-standard-4)"
-  phase3_gpu: "8x A100"
+  infrastructure: "20x L4 SPOT VM (g2-standard-8), 100 trials"
   metric: "FVU = MSE / Var(target)"  # 尺度无关 (Scale-invariant)
-  # FVU ≈ 1.0 = 等同瞎猜, FVU < 0.95 = 黄金拓扑窗口
+  # FVU ≈ 1.0 = 等同瞎猜, FVU < 0.998 = Alpha 存在
+  # Phase 4 搜索空间 (A-Share Swing Tracker, INS-013→INS-014)
   search_space:
-    macro_window:
-      type: qrandint
-      range: [40, 160]
-      step: 20
-    coarse_graining_factor:
+    coarse_graining_factor:          # P0: 时间膨胀器 (INS-014)
       type: choice
-      values: [1, 2, 4, 8]
-    window_size_t:
+      values: [1, 4, 16, 64]
+    window_size_t:                   # P1: FWT 注意力跨度
       type: choice
-      values: [4, 8, 16, 32]
-    window_size_s:
-      type: choice
-      values: [4, 5, 10]
-    # payoff_horizon: REMOVED from HPO (INS-010: 禁止算法选择目标, 固定 20)
-    learning_rate:
+      values: [8, 16, 32]
+    lambda_s:                        # P1: MDL 降压 (INS-012)
       type: loguniform
-      range: [1e-5, 1e-2]
-  success_criterion: "FVU shows distinct sharp minimum (< 0.95) at specific spatio-temporal scale"
+      range: [1e-6, 1e-4]
+    lambda_s_warmup:                 # P1: MDL 蜜月期
+      type: choice
+      values: [3, 4, 5]
+    hidden_dim:                      # P2: 模型容量
+      type: choice
+      values: [128, 256]
+    learning_rate:                   # P2: 优化器动力学
+      type: loguniform
+      range: [1e-4, 1e-3]
+    # LOCKED (not searched):
+    # macro_window: 160 (Phase 3 validated)
+    # window_size_s: 10 (full LOB depth)
+    # mask_prob: 0.0 (Phase 3 baseline)
+    # payoff_horizon: 20 (INS-010: 禁止算法选择目标)
+  fixed_params:
+    macro_window: 160
+    window_size_s: 10
+    batch_size: 128                  # OOM safety for hidden=256 + cg=1
+    mask_prob: 0.0
+    epochs: 8
+    steps_per_epoch: 5000
+    early_stop_fvu: 1.05
+  success_criterion: "Any trial achieves Val FVU < 0.998 (stable, not transient)"
 
 # ============================================================
 # 回测约束 (The Crucible)

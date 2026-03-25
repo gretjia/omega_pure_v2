@@ -12,3 +12,5 @@
 | 2026-03-18 | 代码库递归审计 (3 Docs) | [directives/2026-03-18_recursive_audit_codebase.md](directives/2026-03-18_recursive_audit_codebase.md) | 5 fixes 全部完成 |
 | 2026-03-18 | V3 完整设计审计 (重新摄取 id.1+id.2+id.3) | [directives/2026-03-18_v3_full_design_audit.md](directives/2026-03-18_v3_full_design_audit.md) | AXIOM UPDATE REQUIRED — spec 已更新 |
 | 2026-03-24 | 均值坍缩诊断 + Phase 4/6 致命悖论 | [directives/2026-03-24_mean_collapse_diagnosis_and_phase4_6_audit.md](directives/2026-03-24_mean_collapse_diagnosis_and_phase4_6_audit.md) | AXIOM UPDATE REQUIRED — 待用户确认 |
+| 2026-03-25 | Phase 4 HPO 总攻授权 + MDL 断头台诊断 | [directives/2026-03-25_phase4_hpo_authorization.md](directives/2026-03-25_phase4_hpo_authorization.md) | AXIOM UPDATE REQUIRED — 待用户确认 |
+| 2026-03-25 | Phase 4 A股长周期波段重构 + 时空撕裂三法则 | [directives/2026-03-25_phase4_ashare_swing_tracker.md](directives/2026-03-25_phase4_ashare_swing_tracker.md) | AXIOM UPDATE REQUIRED — 待用户确认 |

@@ -1,0 +1,95 @@
+# =========================================================
+# OMEGA Phase 4: A-Share Institutional Footprint HPO
+# Full Vertex AI HP Tuning Job Config (SPOT VM enabled)
+# =========================================================
+# Usage: gcloud ai hp-tuning-jobs create --region=us-central1 --config=gcp/phase4_hpo_config.yaml
+#
+# SPOT VM:  Preemptible L4 quota = 200, saves ~70% cost
+# Restart:  restartJobOnWorkerRestart=true for spot preemption recovery
+# Budget:   100 trials × ~2h × $0.65/hr ≈ $130 (spot pricing)
+
+displayName: omega-phase4-ashare-swing
+maxTrialCount: 100
+parallelTrialCount: 20
+
+studySpec:
+  metrics:
+    - metricId: best_val_fvu
+      goal: MINIMIZE
+
+  parameters:
+    # --- P0: Temporal Receptive Field (A-Share specific) ---
+    - parameterId: coarse_graining_factor
+      discreteValueSpec:
+        values: [1.0, 4.0, 16.0, 64.0]
+
+    - parameterId: window_size_t
+      discreteValueSpec:
+        values: [8.0, 16.0, 32.0]
+
+    # --- P1: MDL Soft Bottleneck ---
+    - parameterId: lambda_s
+      doubleValueSpec:
+        minValue: 0.000001
+        maxValue: 0.0001
+      scaleType: UNIT_LOG_SCALE
+
+    - parameterId: warmup_epochs
+      discreteValueSpec:
+        values: [3.0, 4.0, 5.0]
+
+    # --- P2: Capacity ---
+    - parameterId: hidden_dim
+      discreteValueSpec:
+        values: [128.0, 256.0]
+
+    # --- P2: Optimizer ---
+    - parameterId: lr
+      doubleValueSpec:
+        minValue: 0.0001
+        maxValue: 0.001
+      scaleType: UNIT_LOG_SCALE
+
+  algorithm: ALGORITHM_UNSPECIFIED
+
+  automatedStoppingSpec:
+    decayCurveStoppingConfig:
+      useElapsedDuration: false
+
+trialJobSpec:
+  # SPOT VM scheduling — uses preemptible L4 quota (200 GPUs)
+  scheduling:
+    strategy: SPOT
+    restartJobOnWorkerRestart: true
+
+  workerPoolSpecs:
+    - machineSpec:
+        machineType: g2-standard-8
+        acceleratorType: NVIDIA_L4
+        acceleratorCount: 1
+      replicaCount: 1
+      containerSpec:
+        imageUri: us-docker.pkg.dev/vertex-ai/training/pytorch-gpu.2-2.py310:latest
+        command:
+          - bash
+          - -c
+        args:
+          # "$@" forwards Vizier's --lambda_s=X --hidden_dim=X etc. to train.py
+          # "_" is the $0 placeholder for bash -c
+          - |
+            pip install webdataset cloudml-hypertune &&
+            gcloud storage cp gs://omega-pure-data/scripts/v4/*.py . &&
+            python3 train.py \
+              --shard_dir=/gcs/omega-pure-data/wds_shards_v3_full \
+              --output_dir=/gcs/omega-pure-data/checkpoints/phase4/trial_${CLOUD_ML_TRIAL_ID} \
+              --epochs=8 \
+              --steps_per_epoch=5000 \
+              --batch_size=128 \
+              --mask_prob=0.0 \
+              --grad_clip=1.0 \
+              --macro_window=160 \
+              --window_size_s=10 \
+              --early_stop_fvu=1.05 \
+              --early_stop_patience=3 \
+              --num_workers=0 "$@"
+          - _

@@ -1,0 +1,55 @@
+# =========================================================
+# OMEGA Phase 4: HPO Study Spec for Vertex AI Vizier
+# =========================================================
+# Used by: gcloud ai hp-tuning-jobs create --config=THIS_FILE
+# Objective: Find lambda_s + capacity + topology sweet spot
+#
+# Phase 3 lesson: lambda_s=0.001 is "Occam's Sledgehammer"
+# — killed Alpha signal by imposing 0.0108 structural penalty
+#    when the signal's gradient contribution was only ~10^-4.
+# Phase 4 searches 3 orders of magnitude lower (1e-6 to 1e-4).
+
+metrics:
+  - metricId: best_val_fvu
+    goal: MINIMIZE
+
+parameters:
+  # --- P0: MDL Soft Bottleneck (highest priority) ---
+  - parameterId: lambda_s
+    doubleValueSpec:
+      minValue: 0.000001      # 1e-6 (3 orders of magnitude below Phase 3)
+      maxValue: 0.0001        # 1e-4
+    scaleType: UNIT_LOG_SCALE
+
+  - parameterId: warmup_epochs
+    discreteValueSpec:
+      values: [3.0, 4.0, 5.0]
+
+  # --- P1: Capacity Expansion ---
+  - parameterId: hidden_dim
+    discreteValueSpec:
+      values: [128.0, 256.0, 384.0]
+
+  # --- P1: Spatio-Temporal Topology ---
+  - parameterId: window_size_t
+    discreteValueSpec:
+      values: [8.0, 16.0, 32.0, 64.0]
+
+  - parameterId: window_size_s
+    discreteValueSpec:
+      values: [5.0, 10.0]
+
+  # --- P2: Optimization Dynamics ---
+  - parameterId: lr
+    doubleValueSpec:
+      minValue: 0.0001        # 1e-4
+      maxValue: 0.001         # 1e-3
+    scaleType: UNIT_LOG_SCALE
+
+# Vizier default algorithm (Bayesian Optimization)
+algorithm: ALGORITHM_UNSPECIFIED
+
+# Safety: kill trials that show no hope after 3 epochs
+automatedStoppingSpec:
+  decayCurveStoppingConfig:
+    useElapsedDuration: false

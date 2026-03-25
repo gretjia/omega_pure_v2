@@ -24,6 +24,7 @@ import random
 import argparse
 import logging
 import fcntl
+import signal
 
 import torch
 import torch.nn as nn
@@ -38,9 +39,43 @@ from omega_epiplexity_plus_core import (
 )
 from omega_webdataset_loader import create_dataloader, dynamic_processor
 
+# Optional: Vertex AI HPO metric reporting
+try:
+    import hypertune
+    _hpt = hypertune.HyperTune()
+except ImportError:
+    _hpt = None
+
 # Global target stats (from Phase 2 smoke test: 9.96M samples)
 TARGET_MEAN = -5.08   # BP
 TARGET_STD = 216.24   # BP
+
+# --- Spot VM preemption state (SIGTERM handler saves checkpoint) ---
+_preemption_state = {
+    "model": None, "optimizer": None, "scaler": None,
+    "epoch": 0, "global_step": 0, "best_fvu": float("inf"),
+    "ckpt_path": None,
+}
+
+
+def _sigterm_handler(signum, frame):
+    """Handle SIGTERM from Spot VM preemption (30s grace period)."""
+    logger = logging.getLogger(__name__)
+    logger.warning("SIGTERM received — Spot VM preemption, saving emergency checkpoint")
+    s = _preemption_state
+    if s["model"] is not None and s["ckpt_path"] is not None:
+        save_checkpoint(s["ckpt_path"], s["model"], s["optimizer"], s["scaler"],
+                        s["epoch"], s["global_step"], {"emergency": True},
+                        scheduler=s.get("scheduler"))
+    if _hpt is not None:
+        _hpt.report_hyperparameter_tuning_metric(
+            hyperparameter_metric_tag="best_val_fvu",
+            metric_value=s["best_fvu"], global_step=s["epoch"])
+    logger.warning(f"Emergency checkpoint saved (epoch={s['epoch']}, fvu={s['best_fvu']:.4f}). Exiting 143.")
+    sys.exit(143)  # 128+SIGTERM(15) — signals abnormal termination for Spot VM restart
+
+
+signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
 def compute_robust_loss(prediction, target, z_core, lambda_s, epoch,
@@ -211,7 +246,8 @@ def create_val_dataloader(wds_url, batch_size, macro_window,
 # Checkpoint save/load (atomic write)
 # ============================================================
 
-def save_checkpoint(path, model, optimizer, scaler, epoch, global_step, metrics):
+def save_checkpoint(path, model, optimizer, scaler, epoch, global_step, metrics,
+                    scheduler=None):
     tmp_path = path + ".tmp"
     torch.save({
         "epoch": epoch,
@@ -219,13 +255,14 @@ def save_checkpoint(path, model, optimizer, scaler, epoch, global_step, metrics)
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "scaler_state_dict": scaler.state_dict() if scaler is not None else {},
+        "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else {},
         "metrics": metrics,
     }, tmp_path)
     os.replace(tmp_path, path)
     logger.info(f"Checkpoint saved: epoch={epoch}, step={global_step}")
 
 
-def load_checkpoint(path, model, optimizer, scaler, device):
+def load_checkpoint(path, model, optimizer, scaler, device, scheduler=None):
     if not os.path.exists(path):
         return 0, 0, {}
     ckpt = torch.load(path, map_location=device, weights_only=False)
@@ -233,6 +270,8 @@ def load_checkpoint(path, model, optimizer, scaler, device):
     optimizer.load_state_dict(ckpt["optimizer_state_dict"])
     if scaler is not None and "scaler_state_dict" in ckpt:
         scaler.load_state_dict(ckpt["scaler_state_dict"])
+    if scheduler is not None and "scheduler_state_dict" in ckpt and ckpt["scheduler_state_dict"]:
+        scheduler.load_state_dict(ckpt["scheduler_state_dict"])
     logger.info(f"Resumed from checkpoint: epoch={ckpt['epoch']}, step={ckpt['global_step']}")
     return ckpt["epoch"], ckpt["global_step"], ckpt.get("metrics", {})
 
@@ -271,25 +310,34 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
 
         optimizer.zero_grad(set_to_none=True)
 
-        if use_amp:
-            with torch.autocast(device_type="cuda", dtype=torch.float16):
+        try:
+            if use_amp:
+                with torch.autocast(device_type="cuda", dtype=torch.float16):
+                    prediction, z_core = model(manifold, c_friction)
+                    total_loss, h_t, s_t, batch_fvu = compute_robust_loss(
+                        prediction, target, z_core, lambda_s, epoch, warmup_epochs
+                    )
+                scaler.scale(total_loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
                 prediction, z_core = model(manifold, c_friction)
                 total_loss, h_t, s_t, batch_fvu = compute_robust_loss(
                     prediction, target, z_core, lambda_s, epoch, warmup_epochs
                 )
-            scaler.scale(total_loss).backward()
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            prediction, z_core = model(manifold, c_friction)
-            total_loss, h_t, s_t, batch_fvu = compute_robust_loss(
-                prediction, target, z_core, lambda_s, epoch, warmup_epochs
-            )
-            total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-            optimizer.step()
+                total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                optimizer.step()
+        except torch.cuda.OutOfMemoryError:
+            torch.cuda.empty_cache()
+            logger.error("CUDA OOM — parameter space INFEASIBLE for this trial")
+            if _hpt is not None:
+                _hpt.report_hyperparameter_tuning_metric(
+                    hyperparameter_metric_tag="best_val_fvu",
+                    metric_value=999.0, global_step=0)
+            sys.exit(0)  # Clean exit — prevents infinite restart on Spot VM
 
         if scheduler is not None:
             scheduler.step()
@@ -385,12 +433,13 @@ def main():
     parser.add_argument("--lambda_s", type=float, default=0.001)
     parser.add_argument("--grad_clip", type=float, default=1.0)
     parser.add_argument("--val_split", type=float, default=0.2)
-    # HPO-searchable
-    parser.add_argument("--macro_window", type=int, default=160)
-    parser.add_argument("--coarse_graining_factor", type=int, default=1)
-    parser.add_argument("--window_size_t", type=int, default=4)
-    parser.add_argument("--window_size_s", type=int, default=4)
-    parser.add_argument("--hidden_dim", type=int, default=64)
+    # HPO-searchable (lambda x: int(float(x)) handles Vertex AI "128.0" format)
+    _int = lambda x: int(float(x))
+    parser.add_argument("--macro_window", type=_int, default=160)
+    parser.add_argument("--coarse_graining_factor", type=_int, default=1)
+    parser.add_argument("--window_size_t", type=_int, default=4)
+    parser.add_argument("--window_size_s", type=_int, default=4)
+    parser.add_argument("--hidden_dim", type=_int, default=64)
     # Infra
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--resume", action="store_true")
@@ -403,6 +452,11 @@ def main():
                         help="Overfit test: repeat first batch for all steps")
     parser.add_argument("--warmup_epochs", type=int, default=2,
                         help="MDL lambda_s warmup: 0 for first N epochs")
+    # Phase 4 HPO: early stopping
+    parser.add_argument("--early_stop_fvu", type=float, default=0.0,
+                        help="Early stop if best FVU > threshold after patience epochs (0=disabled)")
+    parser.add_argument("--early_stop_patience", type=int, default=3,
+                        help="Epochs to wait before checking early stop condition")
     args = parser.parse_args()
 
     # --- Single instance lock (CLAUDE.md rule #25) ---
@@ -483,13 +537,22 @@ def main():
         pct_start=0.05, anneal_strategy='cos', div_factor=100,  # start lr/100, warmup 5%
     ) if not args.overfit else None
 
-    # --- Resume ---
+    # --- Resume (auto-resume for Spot VM preemption recovery) ---
     ckpt_path = os.path.join(args.output_dir, "latest.pt")
     start_epoch, global_step = 0, 0
-    if args.resume:
+    if os.path.exists(ckpt_path):
         start_epoch, global_step, _ = load_checkpoint(
-            ckpt_path, model, optimizer, scaler, device
+            ckpt_path, model, optimizer, scaler, device, scheduler
         )
+    elif args.resume:
+        logger.warning(f"Resume requested but no checkpoint at {ckpt_path}")
+
+    # Register state for SIGTERM preemption handler
+    _preemption_state.update({
+        "model": model, "optimizer": optimizer, "scaler": scaler,
+        "scheduler": scheduler, "epoch": start_epoch, "global_step": global_step,
+        "ckpt_path": ckpt_path,
+    })
 
     # --- Overfit mode: capture first batch ---
     overfit_batch = None
@@ -529,17 +592,44 @@ def main():
             f"FVU={val_metrics['fvu']:.4f} ({val_metrics['n_samples']} samples)"
         )
 
-        # Save checkpoint every epoch
+        # Save checkpoint every epoch (including scheduler for Spot VM resume)
         save_checkpoint(ckpt_path, model, optimizer, scaler, epoch + 1,
-                        global_step, {"train": train_metrics, "val": val_metrics})
+                        global_step, {"train": train_metrics, "val": val_metrics},
+                        scheduler=scheduler)
 
         # Save best model by FVU
         if val_metrics["fvu"] < best_fvu:
             best_fvu = val_metrics["fvu"]
             best_path = os.path.join(args.output_dir, "best.pt")
             save_checkpoint(best_path, model, optimizer, scaler, epoch + 1,
-                            global_step, {"train": train_metrics, "val": val_metrics})
+                            global_step, {"train": train_metrics, "val": val_metrics},
+                            scheduler=scheduler)
             logger.info(f"New best FVU: {best_fvu:.4f}")
+
+        # Report metric for Vertex AI HPO (Vizier)
+        if _hpt is not None:
+            _hpt.report_hyperparameter_tuning_metric(
+                hyperparameter_metric_tag="best_val_fvu",
+                metric_value=best_fvu,
+                global_step=epoch,
+            )
+
+        # Update preemption state (for SIGTERM handler on Spot VMs)
+        _preemption_state.update({
+            "epoch": epoch + 1, "global_step": global_step,
+            "best_fvu": best_fvu,
+        })
+
+        # Early stopping (MDL-shock aware: wait for warmup + 1 absorption epoch)
+        safe_epoch = max(args.early_stop_patience, args.warmup_epochs + 1)
+        if args.early_stop_fvu > 0 and epoch >= safe_epoch:
+            if best_fvu > args.early_stop_fvu:
+                logger.info(
+                    f"Early stopping: best FVU {best_fvu:.4f} > "
+                    f"{args.early_stop_fvu} after {epoch + 1} epochs "
+                    f"(safe_epoch={safe_epoch})"
+                )
+                break
 
     logger.info(f"Training complete. Best FVU: {best_fvu:.4f}")
 
