@@ -66,64 +66,50 @@
 9. adv_fraction = 0.02（动态阈值 = ADV × 此值）
 
 ### 破坏性操作红线
-10. **删除数据文件** → 必须人工确认，无例外
-11. **修改 δ=0.5** → 绝对禁止（c 已降级为 Layer 2 per-stock 标定值，可通过标定脚本更新）
-12. **远程推送**（git push, scp 到生产节点）→ 必须人工确认
-13. **修改 architect/current_spec.yaml** → 必须人工确认
-14. **删除/覆盖已产出的 parquet/tar shard** → 必须人工确认
-15. **同时运行多个 ETL 实例** → 禁止（单实例锁）
+10. **删除/覆盖数据文件**（含 parquet/tar shard）→ 必须人工确认，无例外
+11. **远程推送**（git push, scp 到生产节点）→ 必须人工确认
+12. **修改 architect/current_spec.yaml** → 必须人工确认
+13. **同时运行多个 ETL 实例** → 禁止（单实例锁）
 
 ### 强制预检清单（部署任何东西之前）
-16. 目标节点 SSH 连通性验证
-17. 磁盘空间 > 20% 可用
-18. 内存检查（无 OOM 风险）
-19. `ps aux | grep python` — 无重复实例
-20. 确认正确的节点（linux1 vs windows1 vs omega-vm）
-21. 确认正确的 systemd slice（heavy-workload.slice）
+14. 目标节点 SSH 连通性验证
+15. 磁盘空间 > 20% 可用
+16. 内存检查（无 OOM 风险）
+17. `ps aux | grep python` — 无重复实例
+18. 确认正确的节点（linux1 vs windows1 vs omega-vm）
+19. 确认正确的 systemd slice（heavy-workload.slice）
 
 ### 工程规范
-22. 重计算必须通过 `systemd-run --slice=heavy-workload.slice` 启动
-23. 禁止紧密循环中的 `gc.collect()`
-24. 禁止无条件 `use_threads=True`，必须先基准测试
-25. ETL 脚本必须有单实例文件锁（fcntl.LOCK_EX）
-26. PyArrow 读取必须用 `iter_batches`，禁止 `.collect()` 全量加载
-27. batch_size 默认 500000，可通过环境变量 OMEGA_ETL_BATCH_SIZE 覆盖
-28. **断点续传是强制要求** — 任何运行时间超过 1 小时的批处理脚本（ETL、标定、训练）必须实现断点续传机制：
-    - 记录已完成的文件/batch/epoch 列表（checkpoint 文件或 shard 目录扫描）
-    - 启动时自动检测已完成部分并跳过
-    - 原因：CPython 内存碎片化（glibc malloc arena 不归还堆内存）导致长时间运行的进程 RSS 远超预期工作集。OOM 崩溃、SSH 断连、节点重启都会导致数十小时的工作归零。断点续传是唯一的工程保险
+20. 重计算必须通过 `systemd-run --slice=heavy-workload.slice` 启动
+21. 禁止紧密循环中的 `gc.collect()`
+22. 禁止无条件 `use_threads=True`，必须先基准测试
+23. ETL 脚本必须有单实例文件锁（fcntl.LOCK_EX）
+24. PyArrow 读取必须用 `iter_batches`，禁止 `.collect()` 全量加载
+25. batch_size 默认 500000，可通过环境变量 OMEGA_ETL_BATCH_SIZE 覆盖
+26. **断点续传是强制要求** — >1h 批处理必须实现 checkpoint（OOM/断连/重启时零工作损失）
 
-### 硬件拓扑（详见 `handover/HARDWARE_TOPOLOGY.md`）
-29. **omega-vm** (当前节点): GCP US, 16GB RAM, 无 GPU — 控制节点
-30. **linux1-lx**: AMD AI Max 395, 128GB RAM, 4TB+8TB SSD — 重计算节点
-31. **windows1-w1**: AMD AI Max 395, 128GB RAM, 4TB+8TB SSD — 重计算节点
-32. **zephrymac-studio**: Apple M4, 32GB — 架构师控制台
-
-### SSH 路由
-33. omega-vm → linux1: `ssh linux1-lx`
-34. omega-vm → windows1: `ssh windows1-w1`
-35. omega-vm → mac: `ssh zephrymac-studio`
-36. 详细路由表见 `handover/HARDWARE_TOPOLOGY.md`
+### 硬件拓扑与 SSH（详见 `handover/HARDWARE_TOPOLOGY.md`）
+27. 四节点：omega-vm（控制，16GB，无GPU）→ linux1-lx / windows1-w1（计算，AMD AI Max 395，128GB）→ zephrymac-studio（架构师，M4，32GB）
+28. SSH 别名：`ssh linux1-lx` | `ssh windows1-w1` | `ssh zephrymac-studio`
 
 ### 上下文管理
-37. `handover/LATEST.md` — 当前项目状态的单一真相源
-38. `VIA_NEGATIVA.md` — 已证伪路径（新 agent 必读）
-39. `audit/` — 灾难复盘存档
-40. `architect/current_spec.yaml` — 当前架构规范
-41. `architect/INDEX.md` — 架构师指令时间线
-42. `architect/insights/INDEX.md` — 架构师洞察索引（结构化决策卡片，可按 ID/类别快速检索）
-    - `architect/insights/INS-NNN_*.md` — 原子化设计决策，每个裁决一张卡片
-    - 与 `architect/directives/` 的区别：directives 是原始归档（完整原文），insights 是提炼后的结构化查询接口
+29. `handover/LATEST.md` — 当前项目状态的单一真相源
+30. `VIA_NEGATIVA.md` — 已证伪路径（新 agent 必读）
+31. `audit/` — 灾难复盘存档
+32. `architect/current_spec.yaml` — 当前架构规范
+33. `architect/INDEX.md` — 架构师指令时间线
+34. `architect/insights/INDEX.md` — 结构化决策卡片（directives = 原始归档，insights = 提炼后查询接口）
+35. 审计等重输出通过 Agent 子进程执行，仅返回 verdict + 关键发现，防止主上下文膨胀
 
 ### 灾难教训速查（完整版见 `audit/gemini_bitter_lessons.md`）
-43. 物理常数由人类锁定，AI 只提供参考区间
-44. 接收架构师指令 ≠ 授权执行
-45. AI 不可自测自验（烟测独立于被测代码）
-46. SSH 会话不继承 OOM 保护
-47. V_old 数据在 V_new 验证完成前不可删除
+36. 物理常数由人类锁定，AI 只提供参考区间
+37. 接收架构师指令 ≠ 授权执行
+38. AI 不可自测自验（烟测独立于被测代码）
+39. SSH 会话不继承 OOM 保护
+40. V_old 数据在 V_new 验证完成前不可删除
 
 ### 用户画像
-48. 独狼量化研究员，零编程基础 vibe coder
-49. 优势是品味、市场洞察、Taleb 反脆弱哲学
-50. 沟通偏好：中文为主，技术术语可用英文
-51. 对代码解释需要简明扼要，避免过度技术化
+41. 独狼量化研究员，零编程基础 vibe coder
+42. 优势是品味、市场洞察、Taleb 反脆弱哲学
+43. 沟通偏好：中文为主，技术术语可用英文
+44. 对代码解释需要简明扼要，避免过度技术化

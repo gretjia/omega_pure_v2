@@ -70,6 +70,18 @@ Details: <specific findings>
 === VERDICT: CLEAN / VIOLATIONS FOUND ===
 ```
 
+## 校准锚点（Calibration Anchors）
+
+以下示例校准你的判断阈值，防止评估漂移：
+
+**FAIL — Layer 1 物理违规**：代码中出现 `delta = nn.Parameter(torch.tensor(0.5))` 或任何使 δ 可学习的写法。即使注释说"初始化为0.5"也是 FAIL——δ 是常数不是参数。
+
+**FAIL — 空间轴坍缩**：张量被 reshape 为 `[B, T, S*F]` 或 `[B, T, -1]`，丢失了独立的空间维度。这直接违反"空间轴不可被拍扁"。
+
+**PASS — 正常状态**：`c_constant = 0.842` 硬编码（非 nn.Parameter），`POWER_INVERSE = 2.0` 硬编码，SRL inverter 包裹在 `torch.no_grad()` 中，张量全程保持 `[B, T, S, F]` 四维。
+
+**PASS 但 WARNING**：代码正确但 epsilon 值为 `1e-12`（合理但接近下限），标记为 WARNING 供人工判断。
+
 ## 工具限制
 
 你只能使用以下工具：
