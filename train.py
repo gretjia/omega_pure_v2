@@ -52,8 +52,10 @@ TARGET_STD = 216.24   # BP
 
 # --- Spot VM preemption state (SIGTERM handler saves checkpoint) ---
 _preemption_state = {
-    "model": None, "optimizer": None, "scaler": None,
-    "epoch": 0, "global_step": 0, "best_fvu": float("inf"),
+    "model": None, "optimizer": None, "scaler": None, "scheduler": None,
+    "epoch": 0, "global_step": 0,
+    "best_fvu": float("inf"),        # Best val FVU (epoch-level)
+    "best_batch_fvu": float("inf"),   # Best train batch FVU (step-level, noisy but >inf)
     "ckpt_path": None,
 }
 
@@ -68,12 +70,17 @@ def _sigterm_handler(signum, frame):
                         s["epoch"], s["global_step"], {"emergency": True},
                         scheduler=s.get("scheduler"))
     if _hpt is not None:
-        # Clamp inf → 999.0 (Vizier rejects inf as invalid objective value)
-        report_fvu = s["best_fvu"] if s["best_fvu"] != float("inf") else 999.0
+        # Use best available FVU: val > batch > 999.0 (Vizier rejects inf)
+        report_fvu = s["best_fvu"]
+        if report_fvu == float("inf"):
+            report_fvu = s.get("best_batch_fvu", float("inf"))
+        if report_fvu == float("inf"):
+            report_fvu = 999.0
         _hpt.report_hyperparameter_tuning_metric(
             hyperparameter_metric_tag="best_val_fvu",
-            metric_value=report_fvu, global_step=s["epoch"])
-    logger.warning(f"Emergency checkpoint saved (epoch={s['epoch']}, fvu={s['best_fvu']:.4f}). Exiting 143.")
+            metric_value=report_fvu, global_step=s["global_step"])
+    logger.warning(f"Emergency checkpoint saved (epoch={s['epoch']}, step={s['global_step']}, "
+                   f"fvu={s['best_fvu']:.4f}, batch_fvu={s.get('best_batch_fvu', float('inf')):.4f}). Exiting 143.")
     sys.exit(143)  # 128+SIGTERM(15) — signals abnormal termination for Spot VM restart
 
 
@@ -268,7 +275,12 @@ def load_checkpoint(path, model, optimizer, scaler, device, scheduler=None):
     if not os.path.exists(path):
         return 0, 0, {}
     ckpt = torch.load(path, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt["model_state_dict"])
+    try:
+        model.load_state_dict(ckpt["model_state_dict"])
+    except RuntimeError as e:
+        # Architecture mismatch (e.g., different hidden_dim from prior HPO job)
+        logger.warning(f"Checkpoint incompatible (different architecture), starting fresh: {e}")
+        return 0, 0, {}
     optimizer.load_state_dict(ckpt["optimizer_state_dict"])
     if scaler is not None and "scaler_state_dict" in ckpt:
         scaler.load_state_dict(ckpt["scaler_state_dict"])
@@ -284,13 +296,17 @@ def load_checkpoint(path, model, optimizer, scaler, device, scheduler=None):
 
 def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                     grad_clip, device, epoch, steps_per_epoch, global_step,
-                    use_amp, warmup_epochs=2, overfit_batch=None, scheduler=None):
+                    use_amp, warmup_epochs=2, overfit_batch=None, scheduler=None,
+                    start_step=0, ckpt_path=None, ckpt_every=0):
     model.train()
     running = {"total": 0.0, "h_t": 0.0, "s_t": 0.0, "fvu": 0.0, "count": 0}
     loader_iter = iter(loader) if overfit_batch is None else None
     skipped = 0
 
-    for step_i in range(steps_per_epoch):
+    if start_step > 0:
+        logger.info(f"Epoch {epoch}: resuming from step {start_step}/{steps_per_epoch}")
+
+    for step_i in range(start_step, steps_per_epoch):
         if overfit_batch is not None:
             batch = overfit_batch  # Same batch every step (overfit test)
         else:
@@ -350,6 +366,18 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
         running["fvu"] += batch_fvu.item()
         running["count"] += 1
         global_step += 1
+
+        # Update preemption state with batch-level FVU (for SIGTERM reporting)
+        fvu_val = batch_fvu.item()
+        _preemption_state["global_step"] = global_step
+        if fvu_val < _preemption_state.get("best_batch_fvu", float("inf")):
+            _preemption_state["best_batch_fvu"] = fvu_val
+
+        # Step-level checkpoint for Spot VM resilience (~every 3 min)
+        if ckpt_path and ckpt_every > 0 and global_step % ckpt_every == 0:
+            save_checkpoint(ckpt_path, model, optimizer, scaler,
+                            epoch, global_step, {"step_ckpt": True},
+                            scheduler=scheduler)
 
         if step_i % max(1, steps_per_epoch // 10) == 0:
             n = max(running["count"], 1)
@@ -459,6 +487,9 @@ def main():
                         help="Early stop if best FVU > threshold after patience epochs (0=disabled)")
     parser.add_argument("--early_stop_patience", type=int, default=3,
                         help="Epochs to wait before checking early stop condition")
+    # Spot VM resilience
+    parser.add_argument("--ckpt_every_n_steps", type=int, default=0,
+                        help="Save checkpoint every N steps (0=epoch-only, 500 recommended for Spot)")
     args = parser.parse_args()
 
     # --- Single instance lock (CLAUDE.md rule #25) ---
@@ -546,6 +577,11 @@ def main():
         start_epoch, global_step, _ = load_checkpoint(
             ckpt_path, model, optimizer, scaler, device, scheduler
         )
+        # Compute mid-epoch resume position from global_step
+        if global_step > 0 and global_step % args.steps_per_epoch != 0:
+            start_epoch = global_step // args.steps_per_epoch
+            logger.info(f"Mid-epoch resume: epoch={start_epoch}, "
+                        f"step={global_step % args.steps_per_epoch}/{args.steps_per_epoch}")
     elif args.resume:
         logger.warning(f"Resume requested but no checkpoint at {ckpt_path}")
 
@@ -574,11 +610,16 @@ def main():
     for epoch in range(start_epoch, args.epochs):
         t0 = time.time()
 
+        # Compute start_step for mid-epoch resume (0 if starting fresh)
+        start_step = global_step - (epoch * args.steps_per_epoch) if global_step > epoch * args.steps_per_epoch else 0
+
         train_metrics, global_step = train_one_epoch(
             model, train_loader, optimizer, scaler, args.lambda_s,
             args.grad_clip, device, epoch, args.steps_per_epoch, global_step,
             use_amp, warmup_epochs=args.warmup_epochs,
-            overfit_batch=overfit_batch, scheduler=scheduler
+            overfit_batch=overfit_batch, scheduler=scheduler,
+            start_step=start_step, ckpt_path=ckpt_path,
+            ckpt_every=args.ckpt_every_n_steps,
         )
 
         val_metrics = validate(model, val_loader, args.lambda_s, device,

@@ -52,10 +52,6 @@ studySpec:
 
   algorithm: ALGORITHM_UNSPECIFIED
 
-  automatedStoppingSpec:
-    decayCurveStoppingConfig:
-      useElapsedDuration: false
-
 trialJobSpec:
   # SPOT VM scheduling — uses preemptible L4 quota (200 GPUs)
   scheduling:
@@ -81,7 +77,7 @@ trialJobSpec:
             gcloud storage cp gs://omega-pure-data/scripts/v4/*.py . &&
             python3 train.py \
               --shard_dir=/gcs/omega-pure-data/wds_shards_v3_full \
-              --output_dir=/gcs/omega-pure-data/checkpoints/phase4/trial_${CLOUD_ML_TRIAL_ID} \
+              --output_dir=/gcs/omega-pure-data/checkpoints/phase4_v3/trial_${CLOUD_ML_TRIAL_ID} \
               --epochs=8 \
               --steps_per_epoch=5000 \
               --batch_size=128 \
@@ -91,5 +87,6 @@ trialJobSpec:
               --window_size_s=10 \
               --early_stop_fvu=1.05 \
               --early_stop_patience=3 \
+              --ckpt_every_n_steps=500 \
               --num_workers=0 "$@"
           - _
