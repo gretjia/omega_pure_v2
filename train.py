@@ -68,9 +68,11 @@ def _sigterm_handler(signum, frame):
                         s["epoch"], s["global_step"], {"emergency": True},
                         scheduler=s.get("scheduler"))
     if _hpt is not None:
+        # Clamp inf → 999.0 (Vizier rejects inf as invalid objective value)
+        report_fvu = s["best_fvu"] if s["best_fvu"] != float("inf") else 999.0
         _hpt.report_hyperparameter_tuning_metric(
             hyperparameter_metric_tag="best_val_fvu",
-            metric_value=s["best_fvu"], global_step=s["epoch"])
+            metric_value=report_fvu, global_step=s["epoch"])
     logger.warning(f"Emergency checkpoint saved (epoch={s['epoch']}, fvu={s['best_fvu']:.4f}). Exiting 143.")
     sys.exit(143)  # 128+SIGTERM(15) — signals abnormal termination for Spot VM restart
 
