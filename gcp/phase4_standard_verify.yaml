@@ -38,5 +38,6 @@ workerPoolSpecs:
             --macro_window=160 \
             --early_stop_fvu=0 \
             --early_stop_patience=3 \
+            --max_val_steps=200 \
             --ckpt_every_n_steps=500 \
             --num_workers=0
