@@ -89,6 +89,7 @@ trialJobSpec:
               --window_size_s=10 \
               --early_stop_fvu=1.05 \
               --early_stop_patience=3 \
+              --max_val_steps=200 \
               --ckpt_every_n_steps=500 \
               --num_workers=0 "$@"
           - _

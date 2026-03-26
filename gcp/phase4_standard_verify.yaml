@@ -1,0 +1,42 @@
+# =========================================================
+# Phase 4 STANDARD Verification Trial ($2, ~2h)
+# =========================================================
+# Purpose: End-to-end verification before $222 HPO commitment
+# Verifies: 8 epochs complete + hypertune reports + no crashes
+# Middle-ground hyperparams: cg=4, hidden=128, lambda_s=1e-5
+#
+# Submit: gcloud ai custom-jobs create --region=us-central1 --config=gcp/phase4_standard_verify.yaml
+
+workerPoolSpecs:
+  - machineSpec:
+      machineType: g2-standard-8
+      acceleratorType: NVIDIA_L4
+      acceleratorCount: 1
+    replicaCount: 1
+    containerSpec:
+      imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:v5
+      command:
+        - bash
+        - -c
+      args:
+        - |
+          cd /app && python3 train.py \
+            --shard_dir=/gcs/omega-pure-data/wds_shards_v3_full \
+            --output_dir=/gcs/omega-pure-data/checkpoints/phase4_verify \
+            --epochs=8 \
+            --steps_per_epoch=5000 \
+            --batch_size=128 \
+            --lr=0.0005 \
+            --lambda_s=0.00001 \
+            --warmup_epochs=4 \
+            --hidden_dim=128 \
+            --window_size_t=16 \
+            --window_size_s=10 \
+            --coarse_graining_factor=4 \
+            --mask_prob=0.0 \
+            --grad_clip=1.0 \
+            --macro_window=160 \
+            --early_stop_fvu=0 \
+            --early_stop_patience=3 \
+            --ckpt_every_n_steps=500 \
+            --num_workers=0
