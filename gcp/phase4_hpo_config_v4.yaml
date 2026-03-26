@@ -1,0 +1,89 @@
+# =========================================================
+# OMEGA Phase 4 v4: Custom Docker + Reduced Parallelism
+# =========================================================
+# Improvements over v3:
+#   - Custom Docker image: pre-installed deps → init ~5 min (was ~11 min)
+#   - parallel_trial_count=5 (was 20) → less thundering herd
+#   - Output dir: phase4_v4 (clean slate)
+#
+# Spot VM resilience (from v3):
+#   - Step-level checkpoint every 500 steps (~3 min)
+#   - SIGTERM handler with batch FVU reporting
+#   - Auto-resume from GCS checkpoint
+#   - restartJobOnWorkerRestart: true
+
+displayName: omega-phase4-v4-docker
+maxTrialCount: 100
+parallelTrialCount: 5
+
+studySpec:
+  metrics:
+    - metricId: best_val_fvu
+      goal: MINIMIZE
+
+  parameters:
+    # --- P0: Temporal Receptive Field (A-Share specific) ---
+    - parameterId: coarse_graining_factor
+      discreteValueSpec:
+        values: [1.0, 4.0, 16.0, 64.0]
+
+    - parameterId: window_size_t
+      discreteValueSpec:
+        values: [8.0, 16.0, 32.0]
+
+    # --- P1: MDL Soft Bottleneck ---
+    - parameterId: lambda_s
+      doubleValueSpec:
+        minValue: 0.000001
+        maxValue: 0.0001
+      scaleType: UNIT_LOG_SCALE
+
+    - parameterId: warmup_epochs
+      discreteValueSpec:
+        values: [3.0, 4.0, 5.0]
+
+    # --- P2: Capacity ---
+    - parameterId: hidden_dim
+      discreteValueSpec:
+        values: [128.0, 256.0]
+
+    # --- P2: Optimizer ---
+    - parameterId: lr
+      doubleValueSpec:
+        minValue: 0.0001
+        maxValue: 0.001
+      scaleType: UNIT_LOG_SCALE
+
+  algorithm: ALGORITHM_UNSPECIFIED
+
+trialJobSpec:
+  scheduling:
+    strategy: SPOT
+    restartJobOnWorkerRestart: true
+
+  workerPoolSpecs:
+    - machineSpec:
+        machineType: g2-standard-8
+        acceleratorType: NVIDIA_L4
+        acceleratorCount: 1
+      replicaCount: 1
+      containerSpec:
+        # Custom image: deps pre-installed, scripts embedded
+        imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:v4
+        command:
+          - python3
+          - train.py
+        args:
+          - --shard_dir=/gcs/omega-pure-data/wds_shards_v3_full
+          - --output_dir=/gcs/omega-pure-data/checkpoints/phase4_v4/trial_${CLOUD_ML_TRIAL_ID}
+          - --epochs=8
+          - --steps_per_epoch=5000
+          - --batch_size=128
+          - --mask_prob=0.0
+          - --grad_clip=1.0
+          - --macro_window=160
+          - --window_size_s=10
+          - --early_stop_fvu=1.05
+          - --early_stop_patience=3
+          - --ckpt_every_n_steps=500
+          - --num_workers=0
