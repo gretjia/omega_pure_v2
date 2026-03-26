@@ -1,0 +1,78 @@
+# =========================================================
+# OMEGA Phase 4: STANDARD HPO (no preemption, $222)
+# =========================================================
+# Verified by: phase4-verify-v2 trial (8 epochs, no crash)
+# Docker: v5 (Codex fixes: warmup_epochs _int, best_fvu resume)
+# Budget: 100 trials × 5 parallel × ~$1.11/h × ~2h = ~$222
+
+displayName: omega-phase4-recon-30t
+maxTrialCount: 30
+parallelTrialCount: 8
+
+studySpec:
+  metrics:
+    - metricId: best_val_fvu
+      goal: MINIMIZE
+
+  parameters:
+    - parameterId: coarse_graining_factor
+      discreteValueSpec:
+        values: [1.0, 2.0, 4.0, 8.0]
+
+    - parameterId: window_size_t
+      discreteValueSpec:
+        values: [8.0, 16.0, 32.0]
+
+    - parameterId: lambda_s
+      doubleValueSpec:
+        minValue: 0.000001
+        maxValue: 0.0001
+      scaleType: UNIT_LOG_SCALE
+
+    - parameterId: warmup_epochs
+      discreteValueSpec:
+        values: [3.0, 4.0, 5.0]
+
+    - parameterId: hidden_dim
+      discreteValueSpec:
+        values: [128.0, 256.0]
+
+    - parameterId: lr
+      doubleValueSpec:
+        minValue: 0.0001
+        maxValue: 0.001
+      scaleType: UNIT_LOG_SCALE
+
+  algorithm: ALGORITHM_UNSPECIFIED
+
+trialJobSpec:
+  # STANDARD scheduling — no preemption, guaranteed completion
+  workerPoolSpecs:
+    - machineSpec:
+        machineType: g2-standard-8
+        acceleratorType: NVIDIA_L4
+        acceleratorCount: 1
+      replicaCount: 1
+      containerSpec:
+        imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:v5
+        command:
+          - bash
+          - -c
+        args:
+          - |
+            cd /app && python3 train.py \
+              --shard_dir=/gcs/omega-pure-data/wds_shards_v3_full \
+              --output_dir=/gcs/omega-pure-data/checkpoints/phase4_standard/trial_${CLOUD_ML_TRIAL_ID} \
+              --epochs=8 \
+              --steps_per_epoch=5000 \
+              --batch_size=128 \
+              --mask_prob=0.0 \
+              --grad_clip=1.0 \
+              --macro_window=160 \
+              --window_size_s=10 \
+              --early_stop_fvu=1.05 \
+              --early_stop_patience=3 \
+              --max_val_steps=200 \
+              --ckpt_every_n_steps=500 \
+              --num_workers=0 "$@"
+          - _

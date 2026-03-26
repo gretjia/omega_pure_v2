@@ -100,14 +100,14 @@ training:
 # ============================================================
 hpo:
   engine: google_vizier              # Bayesian optimization
-  infrastructure: "20x L4 SPOT VM (g2-standard-8), 100 trials"
+  infrastructure: "STANDARD L4 (g2-standard-8), 30 trials recon + 70 exploit (INS-015)"
   metric: "FVU = MSE / Var(target)"  # 尺度无关 (Scale-invariant)
   # FVU ≈ 1.0 = 等同瞎猜, FVU < 0.998 = Alpha 存在
-  # Phase 4 搜索空间 (A-Share Swing Tracker, INS-013→INS-014)
+  # Phase 4 搜索空间 (INS-016: 微观结构保护)
   search_space:
-    coarse_graining_factor:          # P0: 时间膨胀器 (INS-014)
+    coarse_graining_factor:          # P0: 微观探针分辨率 (INS-016: 保护 Volume-Clock)
       type: choice
-      values: [1, 4, 16, 64]
+      values: [1, 2, 4, 8]           # 移除 16/64 (摧毁 Volume-Clock 自适应粗粒化)
     window_size_t:                   # P1: FWT 注意力跨度
       type: choice
       values: [8, 16, 32]
