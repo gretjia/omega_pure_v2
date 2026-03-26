@@ -68,22 +68,27 @@ trialJobSpec:
         acceleratorCount: 1
       replicaCount: 1
       containerSpec:
-        # Custom image: deps pre-installed, scripts embedded
+        # Custom image: deps pre-installed, scripts embedded at /app/
         imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:v4
         command:
-          - python3
-          - train.py
+          - bash
+          - -c
         args:
-          - --shard_dir=/gcs/omega-pure-data/wds_shards_v3_full
-          - --output_dir=/gcs/omega-pure-data/checkpoints/phase4_v4/trial_${CLOUD_ML_TRIAL_ID}
-          - --epochs=8
-          - --steps_per_epoch=5000
-          - --batch_size=128
-          - --mask_prob=0.0
-          - --grad_clip=1.0
-          - --macro_window=160
-          - --window_size_s=10
-          - --early_stop_fvu=1.05
-          - --early_stop_patience=3
-          - --ckpt_every_n_steps=500
-          - --num_workers=0
+          # Need bash to expand ${CLOUD_ML_TRIAL_ID} env var for unique output dirs
+          # "$@" forwards Vizier HPO params to train.py
+          - |
+            cd /app && python3 train.py \
+              --shard_dir=/gcs/omega-pure-data/wds_shards_v3_full \
+              --output_dir=/gcs/omega-pure-data/checkpoints/phase4_v4/trial_${CLOUD_ML_TRIAL_ID} \
+              --epochs=8 \
+              --steps_per_epoch=5000 \
+              --batch_size=128 \
+              --mask_prob=0.0 \
+              --grad_clip=1.0 \
+              --macro_window=160 \
+              --window_size_s=10 \
+              --early_stop_fvu=1.05 \
+              --early_stop_patience=3 \
+              --ckpt_every_n_steps=500 \
+              --num_workers=0 "$@"
+          - _
