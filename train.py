@@ -376,7 +376,8 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
         # Step-level checkpoint for Spot VM resilience (~every 3 min)
         if ckpt_path and ckpt_every > 0 and global_step % ckpt_every == 0:
             save_checkpoint(ckpt_path, model, optimizer, scaler,
-                            epoch, global_step, {"step_ckpt": True},
+                            epoch, global_step,
+                            {"step_ckpt": True, "best_fvu": _preemption_state.get("best_fvu", float("inf"))},
                             scheduler=scheduler)
 
         if step_i % max(1, steps_per_epoch // 10) == 0:
@@ -480,7 +481,7 @@ def main():
                         help="Block masking probability (0.0 to disable)")
     parser.add_argument("--overfit", action="store_true",
                         help="Overfit test: repeat first batch for all steps")
-    parser.add_argument("--warmup_epochs", type=int, default=2,
+    parser.add_argument("--warmup_epochs", type=_int, default=2,
                         help="MDL lambda_s warmup: 0 for first N epochs")
     # Phase 4 HPO: early stopping
     parser.add_argument("--early_stop_fvu", type=float, default=0.0,
@@ -573,8 +574,9 @@ def main():
     # --- Resume (auto-resume for Spot VM preemption recovery) ---
     ckpt_path = os.path.join(args.output_dir, "latest.pt")
     start_epoch, global_step = 0, 0
+    _resumed_metrics = {}
     if os.path.exists(ckpt_path):
-        start_epoch, global_step, _ = load_checkpoint(
+        start_epoch, global_step, _resumed_metrics = load_checkpoint(
             ckpt_path, model, optimizer, scaler, device, scheduler
         )
         # Compute mid-epoch resume position from global_step
@@ -605,7 +607,7 @@ def main():
                 f"lr={args.lr}, lambda_s={args.lambda_s}, "
                 f"warmup={args.warmup_epochs}, mask_prob={args.mask_prob}")
 
-    best_fvu = float("inf")
+    best_fvu = _resumed_metrics.get("best_fvu", float("inf"))
 
     for epoch in range(start_epoch, args.epochs):
         t0 = time.time()
@@ -637,7 +639,8 @@ def main():
 
         # Save checkpoint every epoch (including scheduler for Spot VM resume)
         save_checkpoint(ckpt_path, model, optimizer, scaler, epoch + 1,
-                        global_step, {"train": train_metrics, "val": val_metrics},
+                        global_step, {"train": train_metrics, "val": val_metrics,
+                                      "best_fvu": best_fvu},
                         scheduler=scheduler)
 
         # Save best model by FVU
@@ -645,7 +648,8 @@ def main():
             best_fvu = val_metrics["fvu"]
             best_path = os.path.join(args.output_dir, "best.pt")
             save_checkpoint(best_path, model, optimizer, scaler, epoch + 1,
-                            global_step, {"train": train_metrics, "val": val_metrics},
+                            global_step, {"train": train_metrics, "val": val_metrics,
+                                          "best_fvu": best_fvu},
                             scheduler=scheduler)
             logger.info(f"New best FVU: {best_fvu:.4f}")
 
