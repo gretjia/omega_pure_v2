@@ -10,6 +10,9 @@ workerPoolSpecs:
       acceleratorType: NVIDIA_TESLA_A100
       acceleratorCount: 1
     replicaCount: 1
+    diskSpec:
+      bootDiskType: pd-ssd
+      bootDiskSizeGb: 500
     containerSpec:
       imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:v7-vanguard
       command:
