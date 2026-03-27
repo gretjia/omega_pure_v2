@@ -1,0 +1,26 @@
+# Phase 5a: Signal Direction Statistical Test
+# T16 best.pt (FVU=0.998896) on val shards
+# Cost: ~$1-2, ~30 min
+
+workerPoolSpecs:
+  - machineSpec:
+      machineType: g2-standard-8
+      acceleratorType: NVIDIA_L4
+      acceleratorCount: 1
+    replicaCount: 1
+    containerSpec:
+      imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:v6-backtest
+      command:
+        - python3
+      args:
+        - /app/backtest_5a.py
+        - --checkpoint=/gcs/omega-pure-data/checkpoints/phase4_standard/trial_16/best.pt
+        - --shard_dir=/gcs/omega-pure-data/wds_shards_v3_full
+        - --output_dir=/gcs/omega-pure-data/backtest/phase5a_t16
+        - --hidden_dim=128
+        - --window_size_t=16
+        - --window_size_s=10
+        - --coarse_graining_factor=1
+        - --macro_window=160
+        - --batch_size=256
+        - --costs_bp=15.0
