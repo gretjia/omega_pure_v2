@@ -29,6 +29,10 @@ import signal
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+# A100 TF32 optimization (INS-017 Vanguard, ~40% throughput boost on Ampere GPUs)
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 import webdataset as wds
 from torch.utils.data import DataLoader
 
@@ -365,6 +369,10 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
         running["s_t"] += s_t.item()
         running["fvu"] += batch_fvu.item()
         running["count"] += 1
+        # Track prediction std (cross-sectional variance monitoring, INS-017)
+        with torch.no_grad():
+            pred_std = prediction.squeeze().std().item()
+            running["pred_std"] = running.get("pred_std", 0.0) + pred_std
         global_step += 1
 
         # Update preemption state with batch-level FVU (for SIGTERM reporting)
@@ -387,7 +395,8 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                 f"Loss={running['total']/n:.6f} "
                 f"H_T={running['h_t']/n:.6f} "
                 f"S_T={running['s_t']/n:.4f} "
-                f"FVU={running['fvu']/n:.4f}"
+                f"FVU={running['fvu']/n:.4f} "
+                f"Std_yhat={running.get('pred_std',0)/n:.6f}"
             )
 
     n = max(running["count"], 1)
@@ -438,10 +447,14 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
     preds_bp = preds * TARGET_STD + TARGET_MEAN
     fvu = compute_fvu(preds_bp, targets)
 
+    # Cross-sectional prediction std (INS-017: Std Expansion monitoring)
+    pred_std_bp = (preds * TARGET_STD).std().item()
+
     return {
         "total": running["total"] / n,
         "h_t": running["h_t"] / n,
         "s_t": running["s_t"] / n,
+        "pred_std_bp": pred_std_bp,
         "fvu": fvu,
         "n_samples": running["count"],
     }
@@ -634,7 +647,8 @@ def main():
             f"Train: loss={train_metrics['total']:.6f} "
             f"H_T={train_metrics['h_t']:.6f} S_T={train_metrics['s_t']:.4f} | "
             f"Val: loss={val_metrics['total']:.6f} "
-            f"FVU={val_metrics['fvu']:.4f} ({val_metrics['n_samples']} samples)"
+            f"FVU={val_metrics['fvu']:.4f} Std_yhat={val_metrics.get('pred_std_bp',0):.2f}BP "
+            f"({val_metrics['n_samples']} samples)"
         )
 
         # Save checkpoint every epoch (including scheduler for Spot VM resume)

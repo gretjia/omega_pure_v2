@@ -1,0 +1,47 @@
+# Vanguard Protocol: T16 Full Convergence Run (INS-017)
+# A100 40GB SPOT + local NVMe prefetch + TF32
+# T16 config: cg=1, hidden=128, λ_s=6.84841e-06, lr=3.77207e-04, warmup=5, wt=16
+# 20 epochs × 5000 steps = 100K steps (~3 passes)
+# Cost: ~$3 (A100 Spot + optimized), Time: ~2h
+
+workerPoolSpecs:
+  - machineSpec:
+      machineType: a2-highgpu-1g
+      acceleratorType: NVIDIA_TESLA_A100
+      acceleratorCount: 1
+    replicaCount: 1
+    containerSpec:
+      imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:v7-vanguard
+      command:
+        - bash
+        - -c
+      args:
+        - |
+          echo "=== Prefetching 164GB to local NVMe SSD ===" &&
+          mkdir -p /tmp/shards &&
+          gsutil -m cp "gs://omega-pure-data/wds_shards_v3_full/omega_shard_*.tar" /tmp/shards/ &&
+          echo "=== Data loaded ($(($(ls /tmp/shards/*.tar | wc -l))) shards). Launching training ===" &&
+          exec python3 /app/train.py \
+            --shard_dir=/tmp/shards \
+            --output_dir=/gcs/omega-pure-data/checkpoints/vanguard_t16 \
+            --epochs=20 \
+            --steps_per_epoch=5000 \
+            --batch_size=256 \
+            --lr=0.000377207 \
+            --lambda_s=0.00000684841 \
+            --warmup_epochs=5 \
+            --hidden_dim=128 \
+            --window_size_t=16 \
+            --window_size_s=10 \
+            --coarse_graining_factor=1 \
+            --mask_prob=0.0 \
+            --grad_clip=1.0 \
+            --macro_window=160 \
+            --max_val_steps=200 \
+            --early_stop_fvu=0 \
+            --early_stop_patience=99 \
+            --ckpt_every_n_steps=500 \
+            --num_workers=8
+scheduling:
+  strategy: SPOT
+  restartJobOnWorkerRestart: true
