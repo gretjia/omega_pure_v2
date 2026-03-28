@@ -79,14 +79,19 @@
 18. 确认正确的节点（linux1 vs windows1 vs omega-vm）
 19. 确认正确的 systemd slice（heavy-workload.slice）
 
+### 云资源与训练部署
+20. **云资源分配先算后申请** — 磁盘/内存/配额必须计算实际需求 + 2x 安全余量，禁止猜测
+21. **失败后排查根因** — 连续失败时分析 WHY 而非回退到次优方案
+22. **checkpoint = 随时可中断优化** — 慢速运行的 job 如果有 checkpoint，应主动建议中断改进再 resume，不被沉没成本绑架
+
 ### 工程规范
-20. 重计算必须通过 `systemd-run --slice=heavy-workload.slice` 启动
-21. 禁止紧密循环中的 `gc.collect()`
-22. 禁止无条件 `use_threads=True`，必须先基准测试
-23. ETL 脚本必须有单实例文件锁（fcntl.LOCK_EX）
-24. PyArrow 读取必须用 `iter_batches`，禁止 `.collect()` 全量加载
-25. batch_size 默认 500000，可通过环境变量 OMEGA_ETL_BATCH_SIZE 覆盖
-26. **断点续传是强制要求** — >1h 批处理必须实现 checkpoint（OOM/断连/重启时零工作损失）
+23. 重计算必须通过 `systemd-run --slice=heavy-workload.slice` 启动
+24. 禁止紧密循环中的 `gc.collect()`
+25. 禁止无条件 `use_threads=True`，必须先基准测试
+26. ETL 脚本必须有单实例文件锁（fcntl.LOCK_EX）
+27. PyArrow 读取必须用 `iter_batches`，禁止 `.collect()` 全量加载
+28. batch_size 默认 500000，可通过环境变量 OMEGA_ETL_BATCH_SIZE 覆盖
+29. **断点续传是强制要求** — >1h 批处理必须实现 checkpoint（OOM/断连/重启时零工作损失）
 
 ### 硬件拓扑与 SSH（详见 `handover/HARDWARE_TOPOLOGY.md`）
 27. 四节点：omega-vm（控制，16GB，无GPU）→ linux1-lx / windows1-w1（计算，AMD AI Max 395，128GB）→ zephrymac-studio（架构师，M4，32GB）

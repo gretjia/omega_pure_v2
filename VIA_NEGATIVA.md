@@ -157,6 +157,12 @@
 - **为什么失败**: Python int("128.0") 抛出 ValueError。所有含离散参数的 trial 启动即崩溃
 - **结论**: HPO 可搜索的整数参数必须用 type=lambda x: int(float(x))
 
+### 云资源分配不算就猜 → 两次 disk-full + 放弃正确方案
+- **证伪时间**: 2026-03-27，Vanguard v1/v2/v3
+- **做了什么**: (1) 用默认 100GB disk 拷贝 164GB 数据 → 失败。(2) 猜测涨到 500GB → 还是失败。(3) 放弃 NVMe，回退到 gcsfuse 慢方案。(4) gcsfuse 跑了 13h，不敢中断优化
+- **为什么失败**: 从未计算实际磁盘需求（gsutil 显示需要 556GB）。两次失败后恐惧驱动决策，选择"安全但慢"而非排查根因。已有 checkpoint/resume 能力却忘记利用
+- **结论**: (1) 云资源分配必须先计算再申请，留 2x 安全余量。(2) 连续失败时排查根因，不要回退到次优方案。(3) 慢速 job 如果有 checkpoint，随时可以中断改进再 resume——不要被沉没成本绑架
+
 ### bash -c 吞噬 HPO 超参 → 100 个 trial 用同一默认参数
 - **证伪时间**: 2026-03-25，Gemini 审计发现
 - **做了什么**: containerSpec 使用 bash -c "pip install && python3 train.py --固定参数"，Vertex AI 将 HPO 参数追加到 args 列表末尾
