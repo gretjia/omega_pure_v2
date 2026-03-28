@@ -91,28 +91,44 @@ def _sigterm_handler(signum, frame):
 signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
+def pearson_correlation_loss(y_pred, y_true, eps=1e-8):
+    """INS-018: Pearson IC Loss — optimize cross-sectional ranking, not absolute values."""
+    pred_flat = y_pred.view(-1)
+    true_flat = y_true.view(-1)
+    pred_centered = pred_flat - pred_flat.mean()
+    true_centered = true_flat - true_flat.mean()
+    cov = torch.sum(pred_centered * true_centered)
+    pred_std = torch.sqrt(torch.sum(pred_centered ** 2) + eps)
+    true_std = torch.sqrt(torch.sum(true_centered ** 2) + eps)
+    corr = cov / (pred_std * true_std)
+    return 1.0 - corr, corr
+
+
 def compute_robust_loss(prediction, target, z_core, lambda_s, epoch,
                         warmup_epochs=2):
-    """Architect directive 2026-03-24: Huber + target Z-score + MDL warmup."""
-    # 1. Target Z-score with global stats (not per-batch) + 5σ clip
-    target_z = (target - TARGET_MEAN) / TARGET_STD
-    target_z = torch.clamp(target_z, -5.0, 5.0)
+    """INS-018: IC Loss + MSE anchor + MDL. Replaces Huber on absolute BP."""
+    pred = prediction.squeeze()
 
-    # 2. Huber loss (robust to fat-tail outliers)
-    h_t = F.huber_loss(prediction.squeeze(), target_z, delta=1.0)
+    # 1. IC Loss: maximize batch-level Pearson correlation (ranking signal)
+    ic_loss, ic_val = pearson_correlation_loss(pred, target)
+
+    # 2. Tiny MSE anchor: prevent prediction from exploding (FP16 safety)
+    target_z = (target - TARGET_MEAN) / TARGET_STD
+    anchor_loss = 0.01 * F.mse_loss(pred, target_z)
 
     # 3. MDL warmup: lambda_s=0 for first warmup_epochs
     lambda_s_eff = lambda_s if epoch >= warmup_epochs else 0.0
     s_t = torch.norm(z_core, p=1, dim=-1).mean()
-    total = h_t + lambda_s_eff * s_t
+    total = ic_loss + anchor_loss + lambda_s_eff * s_t
 
-    # 4. Real FVU for monitoring (no grad)
+    # 4. Monitoring: IC (replaces FVU), pred std
     with torch.no_grad():
-        pred_bp = prediction.squeeze() * TARGET_STD + TARGET_MEAN
-        mse_real = F.mse_loss(pred_bp, target)
-        fvu = mse_real / (torch.var(target) + 1e-8)
+        pred_std = pred.std().item()
+        # Return ic_val as "fvu" slot for backward compat with logging
+        # Negative IC = we want to maximize, so batch_fvu here = 1 - IC
+        fvu_compat = 1.0 - ic_val.item()  # lower = better IC, same direction as FVU
 
-    return total, h_t, s_t, fvu
+    return total, ic_loss, s_t, torch.tensor(fvu_compat)
 
 
 logging.basicConfig(
@@ -395,7 +411,7 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                 f"Loss={running['total']/n:.6f} "
                 f"H_T={running['h_t']/n:.6f} "
                 f"S_T={running['s_t']/n:.4f} "
-                f"FVU={running['fvu']/n:.4f} "
+                f"IC={1.0 - running['fvu']/n:.4f} "
                 f"Std_yhat={running.get('pred_std',0)/n:.6f}"
             )
 
@@ -443,19 +459,21 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
     n = max(running["count"], 1)
     preds = torch.cat(all_preds)
     targets = torch.cat(all_targets)
-    # FVU on real BP scale (model outputs Z-score, convert back)
-    preds_bp = preds * TARGET_STD + TARGET_MEAN
-    fvu = compute_fvu(preds_bp, targets)
+
+    # INS-018: Rank IC (Pearson Correlation) replaces FVU as primary metric
+    _, ic_val = pearson_correlation_loss(preds, targets)
+    rank_ic = ic_val.item()
 
     # Cross-sectional prediction std (INS-017: Std Expansion monitoring)
-    pred_std_bp = (preds * TARGET_STD).std().item()
+    pred_std_bp = preds.std().item() * TARGET_STD
 
     return {
         "total": running["total"] / n,
         "h_t": running["h_t"] / n,
         "s_t": running["s_t"] / n,
         "pred_std_bp": pred_std_bp,
-        "fvu": fvu,
+        "fvu": 1.0 - rank_ic,  # backward compat: lower = better IC
+        "rank_ic": rank_ic,
         "n_samples": running["count"],
     }
 
@@ -647,7 +665,7 @@ def main():
             f"Train: loss={train_metrics['total']:.6f} "
             f"H_T={train_metrics['h_t']:.6f} S_T={train_metrics['s_t']:.4f} | "
             f"Val: loss={val_metrics['total']:.6f} "
-            f"FVU={val_metrics['fvu']:.4f} Std_yhat={val_metrics.get('pred_std_bp',0):.2f}BP "
+            f"IC={val_metrics.get('rank_ic',0):.4f} Std_yhat={val_metrics.get('pred_std_bp',0):.2f}BP "
             f"({val_metrics['n_samples']} samples)"
         )
 

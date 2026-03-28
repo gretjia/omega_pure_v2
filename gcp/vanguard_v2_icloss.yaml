@@ -1,0 +1,48 @@
+# Vanguard V2: IC Loss + T16 config (INS-018)
+# Fresh training (NOT resuming from V1 Huber checkpoint)
+# A100 Spot + 1TB disk + local NVMe prefetch + TF32
+
+workerPoolSpecs:
+  - machineSpec:
+      machineType: a2-highgpu-1g
+      acceleratorType: NVIDIA_TESLA_A100
+      acceleratorCount: 1
+    replicaCount: 1
+    diskSpec:
+      bootDiskType: pd-ssd
+      bootDiskSizeGb: 1000
+    containerSpec:
+      imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:v8-icloss
+      command:
+        - bash
+        - -c
+      args:
+        - |
+          echo "=== Prefetching to local NVMe ===" &&
+          mkdir -p /tmp/shards &&
+          gsutil -m cp "gs://omega-pure-data/wds_shards_v3_full/omega_shard_*.tar" /tmp/shards/ &&
+          echo "=== Loaded $(ls /tmp/shards/*.tar | wc -l) shards ===" &&
+          exec python3 /app/train.py \
+            --shard_dir=/tmp/shards \
+            --output_dir=/gcs/omega-pure-data/checkpoints/vanguard_v2_icloss \
+            --epochs=20 \
+            --steps_per_epoch=5000 \
+            --batch_size=256 \
+            --lr=0.000377207 \
+            --lambda_s=0.00000684841 \
+            --warmup_epochs=5 \
+            --hidden_dim=128 \
+            --window_size_t=16 \
+            --window_size_s=10 \
+            --coarse_graining_factor=1 \
+            --mask_prob=0.0 \
+            --grad_clip=1.0 \
+            --macro_window=160 \
+            --max_val_steps=200 \
+            --early_stop_fvu=0 \
+            --early_stop_patience=99 \
+            --ckpt_every_n_steps=500 \
+            --num_workers=8
+scheduling:
+  strategy: SPOT
+  restartJobOnWorkerRestart: true
