@@ -1,0 +1,94 @@
+# =========================================================
+# OMEGA Phase 6: IC Loss Exploitation HPO (INS-018)
+# =========================================================
+# Evidence: Vanguard V2 STRONG PASS (Spread=+11.07 BP, 9/9 monotonicity)
+# Loss: Pearson IC Loss + MSE anchor + MDL (replaces Huber)
+# GPU: A100 Spot + NVMe prefetch (proven in Vanguard V2)
+# Gemini dual audit: PASS (anchor_weight>=1e-4, warmup=[2,3,5])
+# Budget: 70 trials × $1.10/hr × 1.4 hr ≈ $108
+
+displayName: omega-phase6-icloss-hpo
+maxTrialCount: 70
+parallelTrialCount: 8
+
+studySpec:
+  metrics:
+    - metricId: best_val_fvu
+      goal: MINIMIZE    # 1-IC: lower = better correlation
+
+  parameters:
+    - parameterId: lr
+      doubleValueSpec:
+        minValue: 0.0001
+        maxValue: 0.001
+      scaleType: UNIT_LOG_SCALE
+
+    - parameterId: lambda_s
+      doubleValueSpec:
+        minValue: 0.0000001    # 1e-7 (wider than Phase 4, IC Loss gradient smaller)
+        maxValue: 0.0001       # 1e-4
+      scaleType: UNIT_LOG_SCALE
+
+    - parameterId: warmup_epochs
+      discreteValueSpec:
+        values: [2.0, 3.0, 5.0]    # Gemini: warmup=7 + epochs=15 leaves only 8 MDL epochs
+
+    - parameterId: hidden_dim
+      discreteValueSpec:
+        values: [64.0, 128.0, 256.0]    # Added 64 for smaller model exploration
+
+    - parameterId: window_size_t
+      discreteValueSpec:
+        values: [8.0, 16.0, 32.0]
+
+    - parameterId: batch_size
+      discreteValueSpec:
+        values: [128.0, 256.0, 512.0]    # NEW: IC Loss cross-sectional statistics
+
+    - parameterId: anchor_weight
+      discreteValueSpec:
+        values: [0.0001, 0.001, 0.01, 0.1]    # Gemini: 0.0 risks FP16 NaN
+
+  algorithm: ALGORITHM_UNSPECIFIED    # Vizier Bayesian default
+
+trialJobSpec:
+  scheduling:
+    strategy: SPOT
+    restartJobOnWorkerRestart: true
+
+  workerPoolSpecs:
+    - machineSpec:
+        machineType: a2-highgpu-1g
+        acceleratorType: NVIDIA_TESLA_A100
+        acceleratorCount: 1
+      replicaCount: 1
+      diskSpec:
+        bootDiskType: pd-ssd
+        bootDiskSizeGb: 1000
+      containerSpec:
+        imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:v9-phase6
+        command:
+          - bash
+          - -c
+        args:
+          - |
+            echo "=== Prefetching to local NVMe ===" &&
+            mkdir -p /tmp/shards &&
+            gcloud storage cp "gs://omega-pure-data/wds_shards_v3_full/omega_shard_*.tar" /tmp/shards/ &&
+            echo "=== Loaded $(ls /tmp/shards/*.tar | wc -l) shards ===" &&
+            exec python3 /app/train.py \
+              --shard_dir=/tmp/shards \
+              --output_dir=/gcs/omega-pure-data/checkpoints/phase6_icloss/trial_${CLOUD_ML_TRIAL_ID} \
+              --epochs=15 \
+              --steps_per_epoch=5000 \
+              --coarse_graining_factor=1 \
+              --mask_prob=0.0 \
+              --grad_clip=1.0 \
+              --macro_window=160 \
+              --window_size_s=10 \
+              --early_stop_fvu=0 \
+              --early_stop_patience=99 \
+              --max_val_steps=200 \
+              --ckpt_every_n_steps=500 \
+              --num_workers=8 "$@"
+          - _

@@ -105,7 +105,7 @@ def pearson_correlation_loss(y_pred, y_true, eps=1e-8):
 
 
 def compute_robust_loss(prediction, target, z_core, lambda_s, epoch,
-                        warmup_epochs=2):
+                        warmup_epochs=2, anchor_weight=0.01):
     """INS-018: IC Loss + MSE anchor + MDL. Replaces Huber on absolute BP."""
     pred = prediction.squeeze()
 
@@ -114,7 +114,7 @@ def compute_robust_loss(prediction, target, z_core, lambda_s, epoch,
 
     # 2. Tiny MSE anchor: prevent prediction from exploding (FP16 safety)
     target_z = (target - TARGET_MEAN) / TARGET_STD
-    anchor_loss = 0.01 * F.mse_loss(pred, target_z)
+    anchor_loss = anchor_weight * F.mse_loss(pred, target_z)
 
     # 3. MDL warmup: lambda_s=0 for first warmup_epochs
     lambda_s_eff = lambda_s if epoch >= warmup_epochs else 0.0
@@ -317,7 +317,7 @@ def load_checkpoint(path, model, optimizer, scaler, device, scheduler=None):
 def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                     grad_clip, device, epoch, steps_per_epoch, global_step,
                     use_amp, warmup_epochs=2, overfit_batch=None, scheduler=None,
-                    start_step=0, ckpt_path=None, ckpt_every=0):
+                    start_step=0, ckpt_path=None, ckpt_every=0, anchor_weight=0.01):
     model.train()
     running = {"total": 0.0, "h_t": 0.0, "s_t": 0.0, "fvu": 0.0, "count": 0}
     loader_iter = iter(loader) if overfit_batch is None else None
@@ -353,7 +353,8 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                 with torch.autocast(device_type="cuda", dtype=torch.float16):
                     prediction, z_core = model(manifold, c_friction)
                     total_loss, h_t, s_t, batch_fvu = compute_robust_loss(
-                        prediction, target, z_core, lambda_s, epoch, warmup_epochs
+                        prediction, target, z_core, lambda_s, epoch, warmup_epochs,
+                        anchor_weight=anchor_weight
                     )
                 scaler.scale(total_loss).backward()
                 scaler.unscale_(optimizer)
@@ -363,7 +364,8 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
             else:
                 prediction, z_core = model(manifold, c_friction)
                 total_loss, h_t, s_t, batch_fvu = compute_robust_loss(
-                    prediction, target, z_core, lambda_s, epoch, warmup_epochs
+                    prediction, target, z_core, lambda_s, epoch, warmup_epochs,
+                    anchor_weight=anchor_weight
                 )
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -431,7 +433,7 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
 # ============================================================
 
 def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
-             warmup_epochs=2):
+             warmup_epochs=2, anchor_weight=0.01):
     model.eval()
     all_preds, all_targets = [], []
     running = {"total": 0.0, "h_t": 0.0, "s_t": 0.0, "count": 0}
@@ -446,7 +448,8 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
 
             prediction, z_core = model(manifold, c_friction)
             total_loss, h_t, s_t, _ = compute_robust_loss(
-                prediction, target, z_core, lambda_s, epoch, warmup_epochs
+                prediction, target, z_core, lambda_s, epoch, warmup_epochs,
+                anchor_weight=anchor_weight
             )
             bs = target.size(0)
             running["total"] += total_loss.item() * bs
@@ -522,6 +525,9 @@ def main():
     # Spot VM resilience
     parser.add_argument("--ckpt_every_n_steps", type=int, default=0,
                         help="Save checkpoint every N steps (0=epoch-only, 500 recommended for Spot)")
+    # IC Loss (INS-018)
+    parser.add_argument("--anchor_weight", type=float, default=0.01,
+                        help="MSE anchor weight for IC Loss (0.0 to disable)")
     args = parser.parse_args()
 
     # --- Single instance lock (CLAUDE.md rule #25) ---
@@ -636,7 +642,8 @@ def main():
     logger.info(f"Starting training: epochs={args.epochs}, "
                 f"steps/epoch={args.steps_per_epoch}, batch={args.batch_size}, "
                 f"lr={args.lr}, lambda_s={args.lambda_s}, "
-                f"warmup={args.warmup_epochs}, mask_prob={args.mask_prob}")
+                f"warmup={args.warmup_epochs}, mask_prob={args.mask_prob}, "
+                f"anchor_weight={args.anchor_weight}")
 
     best_fvu = _resumed_metrics.get("best_fvu", float("inf"))
 
@@ -653,11 +660,13 @@ def main():
             overfit_batch=overfit_batch, scheduler=scheduler,
             start_step=start_step, ckpt_path=ckpt_path,
             ckpt_every=args.ckpt_every_n_steps,
+            anchor_weight=args.anchor_weight,
         )
 
         val_metrics = validate(model, val_loader, args.lambda_s, device,
                                max_steps=args.max_val_steps, epoch=epoch,
-                               warmup_epochs=args.warmup_epochs)
+                               warmup_epochs=args.warmup_epochs,
+                               anchor_weight=args.anchor_weight)
         elapsed = time.time() - t0
 
         logger.info(
