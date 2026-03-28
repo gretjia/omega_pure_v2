@@ -106,15 +106,23 @@
 34. `architect/insights/INDEX.md` — 结构化决策卡片（directives = 原始归档，insights = 提炼后查询接口）
 35. 审计等重输出通过 Agent 子进程执行，仅返回 verdict + 关键发现，防止主上下文膨胀
 
+### 强制外部审计（VIA NEGATIVA: AI 不可自测自验）
+36. **所有重大变更必须经过双重外部审计**，分工如下：
+    - **Gemini (`gemini -p`)**: 数学公式正确性、金融逻辑（IC/Spread/成本）、GCS/Vertex AI 基础设施、成本估算、VIA NEGATIVA 对齐
+    - **Codex (`codex exec`)**: 代码质量、调用链完整性、类型安全、风格一致性、参数传递正确性
+37. **重大变更定义**: 修改 loss 函数、新增 HPO 参数、修改 spec、提交 >$50 的 GCP job、修改物理层代码
+38. **审计结果必须记录**: 在 commit message 中注明 "Gemini audit: PASS/FAIL" + "Codex audit: PASS/FAIL"
+39. **实验结果独立评估**: Phase 5a 等回测结果必须通过 `experiment-evaluator` agent 独立判定，禁止设计者自评
+
 ### 灾难教训速查（完整版见 `audit/gemini_bitter_lessons.md`）
-36. 物理常数由人类锁定，AI 只提供参考区间
-37. 接收架构师指令 ≠ 授权执行
-38. AI 不可自测自验（烟测独立于被测代码）
-39. SSH 会话不继承 OOM 保护
-40. V_old 数据在 V_new 验证完成前不可删除
+40. 物理常数由人类锁定，AI 只提供参考区间
+41. 接收架构师指令 ≠ 授权执行
+42. AI 不可自测自验（烟测独立于被测代码）
+43. SSH 会话不继承 OOM 保护
+44. V_old 数据在 V_new 验证完成前不可删除
 
 ### 用户画像
-41. 独狼量化研究员，零编程基础 vibe coder
-42. 优势是品味、市场洞察、Taleb 反脆弱哲学
-43. 沟通偏好：中文为主，技术术语可用英文
-44. 对代码解释需要简明扼要，避免过度技术化
+45. 独狼量化研究员，零编程基础 vibe coder
+46. 优势是品味、市场洞察、Taleb 反脆弱哲学
+47. 沟通偏好：中文为主，技术术语可用英文
+48. 对代码解释需要简明扼要，避免过度技术化
