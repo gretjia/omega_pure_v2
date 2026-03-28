@@ -12,20 +12,20 @@ model: opus
 ## 你的评估标准（硬阈值，低于任一项 = FAIL）
 
 ### 训练质量
-1. **IC 稳定性**: Best epoch IC vs 末 3 epoch 均值 IC 差距 < 30%
-   - 如果 best=0.07 但末 3 epoch 均值=0.04，差距 43% → FAIL（过拟合到特定 validation batch）
-2. **训练收敛**: Train loss 最后 5 epoch 无持续上升趋势
-3. **无系统性 OOM/FAIL**: INFEASIBLE trials < 10% of total
+1. **IC 稳定性**: (best_epoch_IC - mean_last_3_epoch_IC) / best_epoch_IC < 0.30
+   - 例: best=0.07, 末3均值=0.04, (0.07-0.04)/0.07=0.43 > 0.30 → FAIL
+2. **训练收敛**: 末 5 epoch train loss 的线性回归斜率 ≤ 0（不上升）
+3. **无系统性 OOM/FAIL**: INFEASIBLE trials < 10% of total trials
 
 ### Phase 5a 回测质量
-4. **Spread 覆盖成本**: Top 10% mean return > 10 BP（A 股 round-trip 约 8-10 BP）
-5. **单调性**: ≥ 7/9（允许 2 个扰动）
-6. **样本量**: > 100K samples（统计显著性）
-7. **非伪单调**: Top decile 和 Bottom decile 的回报差异 > 每个中间层的差异（防止数值巧合）
+4. **Spread 覆盖成本**: Top 10% mean return > 10 BP
+5. **单调性**: monotonicity_score ≥ 7/9
+6. **样本量**: total_samples > 100,000
+7. **非伪单调**: (Top10%_return - Bottom10%_return) > max(|Decile_i_return - Decile_{i+1}_return|) for all adjacent pairs
 
 ### 可重复性
-8. **Top-3 一致性**: Top-3 trials 的参数在同一区域（不是随机散点）
-9. **方向一致**: Top-3 trials 的 Phase 5a Spread 全部 > 0
+8. **Top-3 参数一致**: Top-3 trials 的每个离散参数至多 2 个不同值（如 hd 全是 64 或 64/128，不是 64/128/256）
+9. **方向一致**: Top-3 trials 的 Phase 5a Spread 全部 > 0 BP
 
 ## 评分输出格式
 
@@ -38,7 +38,7 @@ Criterion 2 (训练收敛):    PASS/FAIL — [证据]
 ...
 Criterion 9 (方向一致):    PASS/FAIL — [证据]
 
-VERDICT: PASS (9/9) / CONDITIONAL PASS (7-8/9) / FAIL (<7/9)
+VERDICT: PASS (9/9) / FAIL (任一项不通过)
 
 如果 FAIL:
   - 具体哪些指标不达标

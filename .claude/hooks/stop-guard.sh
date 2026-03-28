@@ -15,18 +15,21 @@ cat > /dev/null
 CORE_FILES="omega_epiplexity_plus_core.py omega_axioms.py architect/current_spec.yaml train.py"
 DIRTY_CORE=""
 
-for f in $CORE_FILES; do
-    if [ -f "$f" ] && ! git diff --quiet -- "$f" 2>/dev/null; then
-        DIRTY_CORE="$DIRTY_CORE $f"
-    fi
-    if [ -f "$f" ] && ! git diff --cached --quiet -- "$f" 2>/dev/null; then
-        DIRTY_CORE="$DIRTY_CORE $f (staged)"
-    fi
-done
+# Guard: skip git checks if git is not available (Codex finding #4)
+if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null; then
+    for f in $CORE_FILES; do
+        if [ -f "$f" ] && ! git diff --quiet -- "$f" 2>/dev/null; then
+            DIRTY_CORE="$DIRTY_CORE $f"
+        fi
+        if [ -f "$f" ] && ! git diff --cached --quiet -- "$f" 2>/dev/null; then
+            DIRTY_CORE="$DIRTY_CORE ${f}[staged]"
+        fi
+    done
 
-for f in $(git diff --name-only 2>/dev/null | grep -E 'tools/.*(etl|forge)'); do
-    DIRTY_CORE="$DIRTY_CORE $f"
-done
+    for f in $(git diff --name-only 2>/dev/null | grep -E 'tools/.*(etl|forge)'); do
+        DIRTY_CORE="$DIRTY_CORE $f"
+    done
+fi
 
 # === Part 2: Handover state reminder (P0 upgrade) ===
 echo ""
@@ -64,8 +67,9 @@ echo "  Uncommitted files: $(git diff --name-only 2>/dev/null | wc -l) modified,
 
 # Check for running GCP jobs (lightweight)
 if command -v gcloud &>/dev/null; then
-    RUNNING_JOBS=$(gcloud ai custom-jobs list --region=us-central1 --filter="state=JOB_STATE_RUNNING" --format="value(name)" 2>/dev/null | wc -l)
-    RUNNING_HPO=$(gcloud ai hp-tuning-jobs list --region=us-central1 --filter="state=JOB_STATE_RUNNING" --format="value(name)" 2>/dev/null | wc -l)
+    # Internal timeout to guarantee 30s SLA (Codex finding #2)
+    RUNNING_JOBS=$(timeout 10 gcloud ai custom-jobs list --region=us-central1 --filter="state=JOB_STATE_RUNNING" --format="value(name)" 2>/dev/null | wc -l)
+    RUNNING_HPO=$(timeout 10 gcloud ai hp-tuning-jobs list --region=us-central1 --filter="state=JOB_STATE_RUNNING" --format="value(name)" 2>/dev/null | wc -l)
     if [ "$RUNNING_JOBS" -gt 0 ] || [ "$RUNNING_HPO" -gt 0 ]; then
         echo "  ☁ Running GCP jobs: ${RUNNING_JOBS} custom + ${RUNNING_HPO} HPO"
         echo "  → Record job IDs in handover before ending!"
