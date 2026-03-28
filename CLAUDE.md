@@ -106,23 +106,19 @@
 37. `architect/insights/INDEX.md` — 结构化决策卡片（directives = 原始归档，insights = 提炼后查询接口）
 38. 审计等重输出通过 Agent 子进程执行，仅返回 verdict + 关键发现，防止主上下文膨胀
 
-### 强制外部审计（VIA NEGATIVA: AI 不可自测自验）
-39. **所有重大变更必须经过双重外部审计**，分工如下：
-    - **Gemini (`gemini -p`)**: 数学公式正确性、金融逻辑（IC/Spread/成本）、GCS/Vertex AI 基础设施、成本估算、VIA NEGATIVA 对齐
-    - **Codex (`codex exec`)**: 代码质量、调用链完整性、类型安全、风格一致性、参数传递正确性
-40. **重大变更定义**: 修改 loss 函数、新增 HPO 参数、修改 spec、提交 >$50 的 GCP job、修改物理层代码
-41. **审计结果必须记录**: 在 commit message 中注明 "Gemini audit: PASS/FAIL" + "Codex audit: PASS/FAIL"
-42. **实验结果独立评估**: Phase 5a 等回测结果必须通过 `experiment-evaluator` agent 独立判定，禁止设计者自评
+### 外部审计（VIA NEGATIVA: AI 不可自测自验）
+39. 外部审计分工建议：**Gemini (`gemini -p`)** 管数学/金融/GCS，**Codex (`codex exec`)** 管代码质量。用户决定何时调用
+40. 评估实验结果时注意自评偏差 — 设计者评估自己的结果天然乐观，考虑用独立 agent 或外部工具复核
 
 ### 灾难教训速查（完整版见 `audit/gemini_bitter_lessons.md`）
-43. 物理常数由人类锁定，AI 只提供参考区间
-44. 接收架构师指令 ≠ 授权执行
-45. AI 不可自测自验（烟测独立于被测代码）
-46. SSH 会话不继承 OOM 保护
-47. V_old 数据在 V_new 验证完成前不可删除
+41. 物理常数由人类锁定，AI 只提供参考区间
+42. 接收架构师指令 ≠ 授权执行
+43. AI 不可自测自验（烟测独立于被测代码）
+44. SSH 会话不继承 OOM 保护
+45. V_old 数据在 V_new 验证完成前不可删除
 
 ### 用户画像
-48. 独狼量化研究员，零编程基础 vibe coder
-49. 优势是品味、市场洞察、Taleb 反脆弱哲学
-50. 沟通偏好：中文为主，技术术语可用英文
-51. 对代码解释需要简明扼要，避免过度技术化
+46. 独狼量化研究员，零编程基础 vibe coder
+47. 优势是品味、市场洞察、Taleb 反脆弱哲学
+48. 沟通偏好：中文为主，技术术语可用英文
+49. 对代码解释需要简明扼要，避免过度技术化
