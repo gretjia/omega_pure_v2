@@ -45,7 +45,18 @@ def load_predictions(path):
 
 
 def is_limit_locked(bid_p1, ask_p1, threshold=0.001):
-    """Detect price limit: spread ≈ 0 means locked."""
+    """Detect price limit: spread ≈ 0 means order book locked (best-effort heuristic).
+
+    A-share limit detection without previous close price:
+    When a stock hits limit-up, ask side is empty (ask_p ≈ bid_p or 0).
+    When a stock hits limit-down, bid side is empty (bid_p ≈ ask_p or 0).
+    We detect this as spread_ratio < threshold.
+
+    Note: This is a best-effort heuristic. Exact limit detection requires
+    previous close + limit band (±10% main board, ±20% ChiNext/STAR).
+    The shard data does not contain previous close, so we use spread-lock
+    as a proxy. False negatives are possible for stocks near but not at limits.
+    """
     if bid_p1 <= 0 or ask_p1 <= 0:
         return True
     spread_ratio = abs(ask_p1 - bid_p1) / max(bid_p1, 1e-8)
@@ -83,7 +94,7 @@ def main():
     # Simulation
     # ============================================================
 
-    portfolio = {}  # symbol -> {entry_date, entry_pred, entry_idx, peak_ret}
+    portfolio = {}  # symbol -> {entry_date, entry_pred, entry_target_bp, peak_ret}
     daily_returns = []
     trades = []  # Closed trades
     daily_nav = 1.0
@@ -104,14 +115,14 @@ def main():
         # ---- Step 1: Check exits (T+1 lock + limit-down) ----
         to_close = []
         for sym, pos in list(portfolio.items()):
-            idx = today_symbols.get(sym)
-            if idx is None:
-                continue  # Stock not in today's data, hold
-
-            target_ret = data["target_bp"][idx]
+            # F1 FIX: PnL uses entry_target_bp (the forward return bound to
+            # the entry signal sample), NOT exit-day's current target_bp.
+            # ETL binds target = VWAP(N+1+H) - VWAP(N+1) to each sample at
+            # emission time, so entry_target_bp IS the realized return for
+            # that specific signal's 20-bar horizon.
+            entry_target = pos["entry_target_bp"]
 
             # T+1 check: can only sell if NOT bought today
-            # (positions are added at end of day, so any existing pos was bought on a prior day)
             is_t1_met = (date > pos["entry_date"])
 
             if not is_t1_met:
@@ -120,43 +131,36 @@ def main():
                 continue
 
             # Iron Rule 2: Limit-down = can't sell
-            bid_p1 = data["bid_p1"][idx]
-            ask_p1 = data["ask_p1"][idx]
-            if is_limit_locked(bid_p1, ask_p1) and target_ret < -500:
-                # Likely limit-down (extreme negative + locked spread)
-                limit_filter_count += 1
-                continue
+            # Check today's LOB for this stock (if available)
+            idx = today_symbols.get(sym)
+            if idx is not None:
+                bid_p1 = data["bid_p1"][idx]
+                ask_p1 = data["ask_p1"][idx]
+                if is_limit_locked(bid_p1, ask_p1) and entry_target < 0:
+                    # Spread locked + negative return → likely limit-down
+                    limit_filter_count += 1
+                    continue
 
-            # Check exit conditions
-            # Track peak return for trailing stop
-            pos["peak_ret"] = max(pos.get("peak_ret", 0), target_ret)
-            drawdown_from_peak = target_ret - pos["peak_ret"]
-
-            should_exit = False
-            exit_reason = ""
-
-            # Natural horizon: model's target IS the 20-bar forward return
-            # Since we hold T+1, we realize this return
-            should_exit = True
+            # Exit: T+1 met → realize the entry signal's forward return
             exit_reason = "natural_horizon"
 
-            # Trailing stop override
-            if target_ret < args.trailing_stop_pct * 100:  # -10% = -1000 BP
+            # Trailing stop: if entry_target is extreme loss
+            if entry_target < args.trailing_stop_pct * 100:  # -10% = -1000 BP
                 exit_reason = "trailing_stop"
 
-            if should_exit:
-                # PnL = target return - exit cost
-                trade_pnl = target_ret - half_cost
-                trades.append({
-                    "symbol": sym,
-                    "entry_date": pos["entry_date"],
-                    "exit_date": date,
-                    "pred_bp": pos["entry_pred"],
-                    "pnl_bp": trade_pnl,
-                    "exit_reason": exit_reason,
-                })
-                to_close.append(sym)
-                day_pnl += trade_pnl
+            # PnL = entry signal's forward target - exit cost
+            trade_pnl = entry_target - half_cost
+            trades.append({
+                "symbol": sym,
+                "entry_date": pos["entry_date"],
+                "exit_date": date,
+                "pred_bp": pos["entry_pred"],
+                "actual_bp": entry_target,
+                "pnl_bp": trade_pnl,
+                "exit_reason": exit_reason,
+            })
+            to_close.append(sym)
+            day_pnl += trade_pnl
 
         for sym in to_close:
             del portfolio[sym]
@@ -173,8 +177,8 @@ def main():
             ask_p1 = data["ask_p1"][idx]
             macro_v_d = data["macro_v_d"][idx]
 
-            # Iron Rule 3: Limit-up = can't buy
-            if is_limit_locked(bid_p1, ask_p1) and pred_bp > 500:
+            # Iron Rule 3: Limit-up = can't buy (spread locked = order book frozen)
+            if is_limit_locked(bid_p1, ask_p1):
                 limit_filter_count += 1
                 continue
 
@@ -193,13 +197,15 @@ def main():
         n_select = min(n_select, args.max_positions - len(portfolio))
         selected = candidates[:n_select]
 
-        # Open new positions (signal-weighted)
+        # Open new positions
         for idx, pred_bp in selected:
             sym = data["symbol"][idx]
+            # F1 FIX: Store entry_target_bp at open time — this is the
+            # forward VWAP return bound to THIS specific signal sample by ETL.
             portfolio[sym] = {
                 "entry_date": date,
                 "entry_pred": pred_bp,
-                "entry_idx": idx,
+                "entry_target_bp": data["target_bp"][idx],  # Bound at entry!
                 "peak_ret": 0.0,
             }
             day_pnl -= half_cost  # Entry cost

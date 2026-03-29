@@ -168,19 +168,29 @@ def main():
     all_shards = sorted(glob.glob(os.path.join(args.shard_dir, "omega_shard_*.tar")))
     log.info(f"Total shards: {len(all_shards)}")
 
-    # Resume support
+    # F4 FIX: Columnar accumulation + chunked parquet writes to avoid OOM.
+    # Instead of 9.96M dicts in a list, we accumulate columns and flush
+    # to parquet chunk files every checkpoint_interval shards.
+    col_symbol, col_date, col_shard = [], [], []
+    col_pred, col_target = [], []
+    col_bid, col_ask, col_mvd = [], [], []
+    chunk_files = []
+    chunk_dir = args.output + ".chunks"
+    os.makedirs(chunk_dir, exist_ok=True)
+
     progress_path = args.output + ".progress.pkl"
-    results = []
     start_shard = 0
     z_sparsity_accum = []
+    samples_written = 0
 
     if args.resume and os.path.exists(progress_path):
         with open(progress_path, "rb") as f:
             saved = pickle.load(f)
-        results = saved["results"]
         start_shard = saved["next_shard"]
         z_sparsity_accum = saved.get("z_sparsity", [])
-        log.info(f"Resumed from shard {start_shard}, {len(results)} samples cached")
+        chunk_files = saved.get("chunk_files", [])
+        samples_written = saved.get("samples_written", 0)
+        log.info(f"Resumed from shard {start_shard}, {samples_written} samples in {len(chunk_files)} chunks")
 
     # Import WebDataset
     import webdataset as wds
@@ -257,21 +267,19 @@ def main():
 
         targets_np = np.array(batch_targets)
 
-        # Collect results
+        # F4 FIX: Columnar accumulation (no dict-per-sample)
         for i in range(len(batch_symbols)):
             bid_p1, ask_p1, mvd = batch_meta[i]
-            results.append({
-                "symbol": batch_symbols[i],
-                "date": date_str,
-                "shard_idx": shard_num,
-                "pred_bp": float(pred_bp[i]) if pred_bp.ndim > 0 else float(pred_bp),
-                "target_bp": float(targets_np[i]),
-                "bid_p1": bid_p1,
-                "ask_p1": ask_p1,
-                "macro_v_d": mvd,
-            })
+            col_symbol.append(batch_symbols[i])
+            col_date.append(date_str)
+            col_shard.append(shard_num)
+            col_pred.append(float(pred_bp[i]) if pred_bp.ndim > 0 else float(pred_bp))
+            col_target.append(float(targets_np[i]))
+            col_bid.append(bid_p1)
+            col_ask.append(ask_p1)
+            col_mvd.append(mvd)
 
-        samples_total = len(results)
+        samples_total = samples_written + len(col_symbol)
 
         # Progress logging
         if (shard_i + 1) % 50 == 0:
@@ -285,43 +293,60 @@ def main():
                      f"ETA: {eta_h:.1f}h | "
                      f"z_sparsity: {avg_sparsity:.3f}")
 
-        # Checkpoint
-        if (shard_i + 1) % args.checkpoint_interval == 0:
+        # F4 FIX: Flush to parquet chunk every checkpoint_interval shards
+        if (shard_i + 1) % args.checkpoint_interval == 0 and col_symbol:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+
+            chunk_path = os.path.join(chunk_dir, f"chunk_{len(chunk_files):04d}.parquet")
+            table = pa.table({
+                "symbol": col_symbol, "date": col_date, "shard_idx": col_shard,
+                "pred_bp": col_pred, "target_bp": col_target,
+                "bid_p1": col_bid, "ask_p1": col_ask, "macro_v_d": col_mvd,
+            })
+            pq.write_table(table, chunk_path)
+            chunk_files.append(chunk_path)
+            samples_written += len(col_symbol)
+            col_symbol, col_date, col_shard = [], [], []
+            col_pred, col_target = [], []
+            col_bid, col_ask, col_mvd = [], [], []
+
+            # Save lightweight progress (no data, just pointers)
             tmp_path = progress_path + ".tmp"
             with open(tmp_path, "wb") as f:
                 pickle.dump({
-                    "results": results,
                     "next_shard": shard_i + 1,
                     "z_sparsity": z_sparsity_accum,
+                    "chunk_files": chunk_files,
+                    "samples_written": samples_written,
                 }, f, protocol=4)
             os.replace(tmp_path, progress_path)
-            log.info(f"Checkpoint saved at shard {shard_i+1}")
+            log.info(f"Chunk {len(chunk_files)} saved ({samples_written:,} samples total)")
 
-    # Write final output as parquet
-    log.info(f"Writing {len(results):,} predictions...")
-
-    try:
+    # Flush remaining data
+    if col_symbol:
         import pyarrow as pa
         import pyarrow.parquet as pq
 
+        chunk_path = os.path.join(chunk_dir, f"chunk_{len(chunk_files):04d}.parquet")
         table = pa.table({
-            "symbol": [r["symbol"] for r in results],
-            "date": [r["date"] for r in results],
-            "shard_idx": [r["shard_idx"] for r in results],
-            "pred_bp": [r["pred_bp"] for r in results],
-            "target_bp": [r["target_bp"] for r in results],
-            "bid_p1": [r["bid_p1"] for r in results],
-            "ask_p1": [r["ask_p1"] for r in results],
-            "macro_v_d": [r["macro_v_d"] for r in results],
+            "symbol": col_symbol, "date": col_date, "shard_idx": col_shard,
+            "pred_bp": col_pred, "target_bp": col_target,
+            "bid_p1": col_bid, "ask_p1": col_ask, "macro_v_d": col_mvd,
         })
-        os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
-        pq.write_table(table, args.output)
-    except ImportError:
-        # Fallback: JSON
-        fallback = args.output.replace(".parquet", ".json")
-        with open(fallback, "w") as f:
-            json.dump(results, f)
-        log.info(f"PyArrow not available, saved as JSON: {fallback}")
+        pq.write_table(table, chunk_path)
+        chunk_files.append(chunk_path)
+        samples_written += len(col_symbol)
+
+    # Merge all chunks into final parquet
+    log.info(f"Merging {len(chunk_files)} chunks ({samples_written:,} samples)...")
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+    tables = [pq.read_table(cf) for cf in chunk_files]
+    merged = pa.concat_tables(tables)
+    pq.write_table(merged, args.output)
 
     # Summary
     avg_sparsity = np.mean(z_sparsity_accum) if z_sparsity_accum else 0

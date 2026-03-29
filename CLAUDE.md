@@ -10,8 +10,8 @@
 - 数据规模：2.2TB raw L1 ticks → Volume-Clocked tensors
 
 ### 核心张量
-- 形状：`[B, 160, 10, 7]` — Batch × Time(VolumeSteps) × Spatial(LOBDepth) × Features
-- Features: `[Bid_P, Bid_V, Ask_P, Ask_V, Close, SRL_Residual, Epiplexity]`
+- 形状：`[B, 160, 10, 10]` — Batch × Time(VolumeSteps) × Spatial(LOBDepth) × Features
+- Features: `[Bid_P, Bid_V, Ask_P, Ask_V, Close, reserved, reserved, ΔP, macro_V_D, macro_σ_D]`
 - 完整规范见 `architect/current_spec.yaml`
 
 ### 文件地图

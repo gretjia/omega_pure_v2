@@ -33,6 +33,18 @@ def main():
     with open(results_path) as f:
         r = json.load(f)
 
+    # W3 FIX: Load M3 z_core sparsity from inference meta file
+    meta_candidates = [
+        os.path.join(args.results_dir, "predictions.parquet.meta.json"),
+        os.path.join(args.results_dir, "..", "predictions.parquet.meta.json"),
+    ]
+    for mp in meta_candidates:
+        if os.path.exists(mp):
+            with open(mp) as f:
+                meta = json.load(f)
+            r["z_core_sparsity_pct"] = meta.get("z_core_sparsity_pct")
+            break
+
     # Header
     print("=" * 80)
     print("OMEGA PURE V3 — PHASE 7 SIMULATION REPORT")
