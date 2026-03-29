@@ -160,8 +160,8 @@ def main():
             prediction = model(manifold, c_friction)
             pred_bp = prediction.squeeze().cpu() * TARGET_STD + TARGET_MEAN
 
-            all_preds.append(pred_bp.numpy())
-            all_targets.append(target.numpy())
+            all_preds.append(pred_bp.numpy().copy())
+            all_targets.append(target.numpy().copy())
             n_samples += target.shape[0]
 
             if (batch_i + 1) % 100 == 0:
