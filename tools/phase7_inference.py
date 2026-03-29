@@ -139,8 +139,8 @@ def main():
     args = parser.parse_args()
 
     device = torch.device("cpu")
-    torch.set_num_threads(4)
-    log.info(f"Device: {device}, threads: 4")
+    torch.set_num_threads(16)  # linux1 has 32 cores, use 16 for inference
+    log.info(f"Device: {device}, threads: 16")
 
     # Load date map
     with open(args.date_map) as f:
@@ -252,18 +252,25 @@ def main():
         if not batch_manifolds:
             continue
 
-        # Batch inference
-        manifold_batch = torch.stack(batch_manifolds).to(device)
-        c_batch = torch.tensor(batch_c_frictions, dtype=torch.float32).unsqueeze(-1).to(device)
+        # Mini-batch inference (avoid CPU L3 cache thrashing with full shard [5000,...])
+        manifold_all = torch.stack(batch_manifolds).to(device)
+        c_all = torch.tensor(batch_c_frictions, dtype=torch.float32).unsqueeze(-1).to(device)
 
+        pred_parts = []
         with torch.no_grad():
-            preds = model(manifold_batch, c_batch)
-            pred_bp = (preds.squeeze().cpu() * TARGET_STD + TARGET_MEAN).numpy().copy()
+            for mb_start in range(0, len(manifold_all), args.batch_size):
+                mb_end = min(mb_start + args.batch_size, len(manifold_all))
+                mb = manifold_all[mb_start:mb_end]
+                cb = c_all[mb_start:mb_end]
+                p = model(mb, cb)
+                pred_parts.append(p.cpu())
 
-            # z_core sparsity
-            if model._z_core is not None:
-                batch_sparsity = compute_z_sparsity(model._z_core)
-                z_sparsity_accum.append(batch_sparsity)
+                # z_core sparsity (sample from last mini-batch)
+                if model._z_core is not None:
+                    z_sparsity_accum.append(compute_z_sparsity(model._z_core))
+
+            preds = torch.cat(pred_parts)
+            pred_bp = (preds.squeeze() * TARGET_STD + TARGET_MEAN).numpy().copy()
 
         targets_np = np.array(batch_targets)
 
