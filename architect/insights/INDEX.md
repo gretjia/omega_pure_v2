@@ -28,6 +28,11 @@
 | INS-016 | cg 微观结构保护 — Volume-Clock 不可二次粗粒化 | 物理 | 2026-03-26 | L2 更新 | 已生效 |
 | INS-017 | 先锋定标战役 — T16 全量收敛 + Std(ŷ) 截面监控 | 训练 | 2026-03-27 | NONE | **完成: FAIL** |
 | INS-018 | 横截面相对论 — MSE→IC Loss + 绝对收益→截面Z-score | 训练 | 2026-03-28 | L2 更新 | 待确认 |
+| INS-019 | 隐式压缩胜利 — hd=64 物理瓶颈 >> λ_s 显式惩罚 | 架构 | 2026-03-29 | NONE | 已生效 |
+| INS-020 | 大统一因果链 — SRL→Topology→Entropy→Epiplexity | 物理 | 2026-03-29 | NONE | 已生效 |
+| INS-021 | INS-011 废弃 — 日内约束→中长期波段 (Swing Trading) | 架构 | 2026-03-29 | L2 更新 | **时间尺度被 INS-022 修正** |
+| INS-022 | 时空换算修正 — 20 bars = 0.4 天，非"数天到数周" | 物理 | 2026-03-29 | L2 更新 | 待确认 |
+| INS-023 | T+1 模拟三铁律 — 物理锁 + 涨停买不进 + 跌停卖不出 | 架构 | 2026-03-29 | L2 更新 | 待确认 |
 
 ---
 
@@ -49,3 +54,12 @@
 | INS-012 | phase4_hpo_authorization | — |
 | INS-013 | phase4_hpo_authorization | — |
 | INS-014 | phase4_ashare_swing_tracker | — |
+| INS-015 | bayesian_recon_and_cg_microstructure | — |
+| INS-016 | bayesian_recon_and_cg_microstructure | — |
+| INS-017 | vanguard_convergence_protocol | — |
+| INS-018 | cross_sectional_relativity | — |
+| INS-019 | compression_is_intelligence_phase7_golive | — |
+| INS-020 | compression_is_intelligence_phase7_golive | — |
+| INS-021 | compression_is_intelligence_phase7_golive | — |
+| INS-022 | spacetime_correction_phase7_golive_v2 | — |
+| INS-023 | spacetime_correction_phase7_golive_v2 | — |

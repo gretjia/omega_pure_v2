@@ -4,7 +4,9 @@ title: 回测改为严格日内 — LOB 微观 Alpha 不可扛隔夜
 category: architecture
 date: 2026-03-24
 axiom_impact: UPDATE_REQUIRED
-status: pending_user_confirm
+status: SUPERSEDED
+superseded_by: INS-021, INS-022, INS-023
+superseded_reason: "核心论点是检测主力建仓元订单惯性（T+1隔夜波段），非秒级微观Alpha。20 bars = 0.4天，T+1强制隔夜。"
 source_directive: 2026-03-24_mean_collapse_diagnosis_and_phase4_6_audit.md
 source_gdoc: null
 ---

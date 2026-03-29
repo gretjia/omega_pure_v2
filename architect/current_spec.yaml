@@ -1,6 +1,6 @@
 # OMEGA PURE 架构规范 — 由架构师联络官维护
-# 最后更新：2026-03-18
-# 更新来源：architect/gdocs/id4, id5, id6 + Codex recursive audit
+# 最后更新：2026-03-29
+# 更新来源：INS-019/020/021/022/023 (压缩即智能正名 + 时空修正 + Phase 7 Go-Live)
 # 源文档：Google Docs id.1~id.6 (archived at architect/gdocs/)
 
 version: v3
@@ -148,9 +148,21 @@ hpo:
 # ============================================================
 backtest:
   execution_delay: "N+1 bar VWAP"    # 信号触发后只能在下一根Bar的VWAP成交
-  t_plus_1_exposure: false             # INS-011: 严格日内, LOB Alpha 不可扛隔夜
-  exit_strategy: volume_clocked_intraday  # 基于容量时钟退场 + 收盘前强制平仓 (Time-stop)
-  success_criterion: "asymmetry_payoff_ratio > 3.0 AND expectancy > slippage + fee"
+  holding_horizon: "20 volume-clock bars (~0.4 avg trading days; T+1 forces min 1-day hold)"
+  # 数学推导: 1 bar = 2% ADV → 50 bars/day → 20 bars = 0.4 天 (INS-022)
+  # 策略定位: T+1 隔夜波段 — 捕捉主力长线建仓中的微观执行切片
+  overnight_exposure: true             # T+1 强制隔夜 (物理约束，非自愿选择)
+  t_plus_1_lock: true                  # A股铁律：买入当日不可卖出 (INS-023)
+  limit_up_down_enforcement: true      # 涨停买不进，跌停卖不出 (INS-023)
+  exit_strategy: "volume_clocked_natural_horizon + trailing_stop"
+  # 退出: 20 bars 自然到期，或 trailing stop (-10%) 触发，或信号反转
+  # T+1 未满足时即使触发止损也必须锁过夜，承受真实隔夜跳空
+  cost_model:
+    round_trip_bp: 25                  # 印花税5 + 佣金6 + 滑点7 + 冲击7
+    slippage_model: "linear_impact"    # 冲击成本 ∝ 成交量/ADV
+  success_criterion: "asymmetry_payoff_ratio > 3.0 AND profit_factor > 1.5"
+  # INS-011 (严格日内) SUPERSEDED by INS-021/022/023
+  # 原因: 模型检测主力建仓元订单惯性，T+1 隔夜享受次日溢价冲高
 
 # ============================================================
 # 模型架构层级 (Omega-TIB)

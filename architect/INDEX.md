@@ -17,3 +17,5 @@
 | 2026-03-26 | 贝叶斯火力侦察 + cg 微观结构保护 | [directives/2026-03-26_bayesian_recon_and_cg_microstructure.md](directives/2026-03-26_bayesian_recon_and_cg_microstructure.md) | AXIOM UPDATE REQUIRED — 待用户确认 |
 | 2026-03-27 | 先锋定标战役 (Vanguard Protocol) | [directives/2026-03-27_vanguard_convergence_protocol.md](directives/2026-03-27_vanguard_convergence_protocol.md) | NONE — **完成: FAIL** |
 | 2026-03-28 | 横截面相对论 (Cross-Sectional Relativity) | [directives/2026-03-28_cross_sectional_relativity.md](directives/2026-03-28_cross_sectional_relativity.md) | AXIOM UPDATE REQUIRED — 待用户确认 |
+| 2026-03-29 | 压缩即智能正名 + Phase 7 Go-Live 授权 | [directives/2026-03-29_compression_is_intelligence_phase7_golive.md](directives/2026-03-29_compression_is_intelligence_phase7_golive.md) | AXIOM UPDATE REQUIRED — 被 V2 修正 |
+| 2026-03-29 | 时空换算修正 + Phase 7 Go-Live V2 | [directives/2026-03-29_spacetime_correction_phase7_golive_v2.md](directives/2026-03-29_spacetime_correction_phase7_golive_v2.md) | AXIOM UPDATE REQUIRED — 待用户确认 |
