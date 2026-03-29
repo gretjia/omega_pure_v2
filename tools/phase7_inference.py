@@ -6,8 +6,8 @@ Run T29 model on ALL 1992 shards. Output predictions.parquet with:
 
 Includes z_core hook for M3 (MDL compression efficiency) metric.
 
-Usage (linux1, CPU, via systemd-run):
-  systemd-run --slice=heavy-workload.slice --scope \
+Usage (linux1, auto-detect GPU/CPU, via systemd-run):
+  PYTHONUNBUFFERED=1 systemd-run --slice=heavy-workload.slice --scope \
     python3 phase7_inference.py \
       --checkpoint /omega_pool/phase7/best_t29.pt \
       --shard_dir /omega_pool/wds_shards_v3_full/ \
@@ -23,6 +23,7 @@ import glob
 import json
 import time
 import pickle
+import signal
 import argparse
 import logging
 
@@ -32,6 +33,17 @@ import numpy as np
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
+
+# Emergency checkpoint state for SIGTERM handler
+_emergency = {"save_fn": None}
+
+def _sigterm_handler(signum, frame):
+    log.warning("SIGTERM received — saving emergency checkpoint")
+    if _emergency["save_fn"]:
+        _emergency["save_fn"]()
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, _sigterm_handler)
 
 # Target stats from TRAIN split (no look-ahead)
 TARGET_MEAN = -5.08
@@ -63,7 +75,7 @@ class OmegaTIBInference(torch.nn.Module):
         v_d_macro = x_2d[:, :, 0, 8]
         sigma_d_macro = x_2d[:, :, 0, 9]
 
-        with torch.no_grad(), torch.autocast(device_type="cuda", enabled=False):
+        with torch.no_grad(), torch.autocast(device_type=x_2d.device.type, enabled=False):
             q_metaorder = self.model.srl_inverter(
                 delta_p.float(), sigma_d_macro.float(),
                 v_d_macro.float(), c_friction.float()
@@ -133,13 +145,16 @@ def main():
     parser.add_argument("--window_size_t", type=int, default=32)
     parser.add_argument("--window_size_s", type=int, default=10)
     parser.add_argument("--macro_window", type=int, default=160)
-    parser.add_argument("--checkpoint_interval", type=int, default=200,
-                        help="Save progress every N shards")
-    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--checkpoint_interval", type=int, default=50,
+                        help="Save progress every N shards (default 50 for fast resume)")
+    parser.add_argument("--resume", action="store_true", default=True,
+                        help="Auto-resume from checkpoint if exists")
     args = parser.parse_args()
 
+    # GPU disabled: Radeon 8060S (gfx1150) HIP kernels not compiled for RDNA 3.5 iGPU.
+    # Requires HSA_OVERRIDE_GFX_VERSION=11.0.0 or PyTorch rebuild. Use CPU for now.
     device = torch.device("cpu")
-    torch.set_num_threads(16)  # linux1 has 32 cores, use 16 for inference
+    torch.set_num_threads(16)
     log.info(f"Device: {device}, threads: 16")
 
     # Load date map
@@ -198,11 +213,34 @@ def main():
 
     # Process shards one-by-one for key access
     t0 = time.time()
-    samples_total = len(results)
+    samples_total = samples_written
+    _current_shard_i = [start_shard]  # mutable for closure
+
+    def _save_emergency_checkpoint():
+        """Save whatever we have on SIGTERM/kill."""
+        si = _current_shard_i[0]
+        if col_symbol:
+            import pyarrow as pa, pyarrow.parquet as pq
+            cp = os.path.join(chunk_dir, f"chunk_{len(chunk_files):04d}.parquet")
+            t = pa.table({"symbol": col_symbol, "date": col_date, "shard_idx": col_shard,
+                          "pred_bp": col_pred, "target_bp": col_target,
+                          "bid_p1": col_bid, "ask_p1": col_ask, "macro_v_d": col_mvd})
+            pq.write_table(t, cp)
+            chunk_files.append(cp)
+            sw = samples_written + len(col_symbol)
+        else:
+            sw = samples_written
+        with open(progress_path, "wb") as f:
+            pickle.dump({"next_shard": si, "z_sparsity": z_sparsity_accum,
+                         "chunk_files": chunk_files, "samples_written": sw}, f, protocol=4)
+        log.info(f"Emergency checkpoint saved at shard {si}, {sw:,} samples")
+
+    _emergency["save_fn"] = _save_emergency_checkpoint
 
     for shard_i, shard_path in enumerate(all_shards):
         if shard_i < start_shard:
             continue
+        _current_shard_i[0] = shard_i
 
         shard_num = int(os.path.basename(shard_path).split("_")[-1].split(".")[0])
         date_str = shard_to_date.get(str(shard_num), "unknown")
@@ -257,13 +295,15 @@ def main():
         c_all = torch.tensor(batch_c_frictions, dtype=torch.float32).unsqueeze(-1).to(device)
 
         pred_parts = []
+        use_amp = device.type == "cuda"
         with torch.no_grad():
             for mb_start in range(0, len(manifold_all), args.batch_size):
                 mb_end = min(mb_start + args.batch_size, len(manifold_all))
                 mb = manifold_all[mb_start:mb_end]
                 cb = c_all[mb_start:mb_end]
-                p = model(mb, cb)
-                pred_parts.append(p.cpu())
+                with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
+                    p = model(mb, cb)
+                pred_parts.append(p.float().cpu())
 
                 # z_core sparsity (sample from last mini-batch)
                 if model._z_core is not None:
@@ -358,7 +398,7 @@ def main():
     # Summary
     avg_sparsity = np.mean(z_sparsity_accum) if z_sparsity_accum else 0
     elapsed = time.time() - t0
-    log.info(f"Done: {len(results):,} samples in {elapsed/3600:.1f}h")
+    log.info(f"Done: {samples_written:,} samples in {elapsed/3600:.1f}h")
     log.info(f"M3 z_core avg sparsity: {avg_sparsity:.4f} ({avg_sparsity*100:.1f}%)")
     log.info(f"Output: {args.output}")
 
@@ -366,7 +406,7 @@ def main():
     meta_path = args.output + ".meta.json"
     with open(meta_path, "w") as f:
         json.dump({
-            "total_samples": len(results),
+            "total_samples": samples_written,
             "z_core_sparsity_mean": avg_sparsity,
             "z_core_sparsity_pct": avg_sparsity * 100,
             "elapsed_hours": elapsed / 3600,

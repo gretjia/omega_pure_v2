@@ -1,6 +1,10 @@
-# VIA NEGATIVA — 否定之道日志
+# VIA NEGATIVA — 否定之道日志（已冻结归档）
 
-已证伪路径的永久记录。这些是项目在 V1-V3 演化过程中付出真实代价证明"不能做"的事情。任何未来的 AI agent 或架构变更都不得重蹈这些覆辙。
+> **状态: 已冻结。** 本文件是原始证据存档，不再追加新条目。
+> 活跃经验源已迁移至 **`OMEGA_LESSONS.md`**（元公理 + 操作手册 + 案例库）。
+> 新经验只写入 OMEGA_LESSONS.md。
+
+已证伪路径的永久记录。这些是项目在 V1-V7 演化过程中付出真实代价证明"不能做"的事情。
 
 ---
 
@@ -168,3 +172,43 @@
 - **做了什么**: containerSpec 使用 bash -c "pip install && python3 train.py --固定参数"，Vertex AI 将 HPO 参数追加到 args 列表末尾
 - **为什么失败**: bash -c "cmd" 之后的参数变成 $0, $1 等位置变量，不会传递给 cmd 内部的 python3。所有 trial 实际运行的是完全相同的默认参数
 - **结论**: 必须在 bash -c 脚本末尾加 "$@"，并在 args 列表中追加 "_" 作为 $0 占位符
+
+---
+
+## 推理部署（Phase 7 Bitter Lesson，2026-03-29）
+
+### linux1 CPU 盲目部署 → 预估 2h 实际 55h
+- **证伪时间**: 2026-03-29，linux1-lx
+- **做了什么**: 假设"128GB 统一内存 + 32 核 = 够快"，预估 2h，直接部署 CPU 推理
+- **为什么失败**: (1) 未算数据量（假设 10GB，实际 164GB）。(2) 日志被 nohup stdout 缓冲，40 分钟无输出，只能用 `/proc/io` 追踪。(3) 实际 ETA 55h
+- **结论**: 部署前必须 `du -sh` 算实际数据量，再估算 ETA。日志必须 `PYTHONUNBUFFERED=1`
+
+### linux1 GPU "可用"但实际不兼容 → HIP kernel 崩溃
+- **证伪时间**: 2026-03-29，linux1-lx
+- **做了什么**: `torch.cuda.is_available()=True`，开启 GPU 推理
+- **为什么失败**: AMD AI Max 395 是 RDNA 3.5 iGPU (gfx1150)，PyTorch HIP 只编译了 gfx1100 等目标。`RuntimeError: HIP error: invalid device function`
+- **结论**: `torch.cuda.is_available()=True` 不等于 GPU 真的能用。ROCm iGPU 必须先跑 smoke test（1 batch）验证 kernel 兼容性
+
+### GCS FUSE 当本地磁盘 → Python 优化无效
+- **证伪时间**: 2026-03-29，Vertex AI L4 GPU
+- **做了什么**: 用 ThreadPoolExecutor prefetch + numpy vectorization + AMP 优化推理脚本
+- **为什么失败**: 优化后只提速 17%（467 vs 399 shards/h）。瓶颈不在 Python 循环，而在 GCS FUSE 的 per-shard 网络延迟（每 shard ~80MB，POSIX 模拟层开销大）
+- **结论**: GCS FUSE ≠ 本地磁盘。大数据集推理必须先 staging 到本地 SSD（`diskSpec: {bootDiskType: pd-ssd, bootDiskSizeGb: 数据量×2}`），且 staging 用 `gcloud storage cp -r`（多线程并行），不要用 `cp`（走 FUSE 单线程，~100MB/s，164GB 需 25+ 分钟）
+
+### squeeze() 对单 sample batch → 维度坍塌
+- **证伪时间**: 2026-03-29，Gemini 3.1 Pro 审计发现
+- **做了什么**: `preds.squeeze()` 去除多余维度
+- **为什么失败**: 如果某 shard 恰好只有 1 个 sample，squeeze 将 `[1]` 变成标量 `[]`，后续 `.tolist()` 抛 TypeError
+- **结论**: 永远用 `view(-1)` 替代 `squeeze()`，确保输出维度确定性
+
+### 修复操作不验证就报告成功 → 115/200 shard 仍为空
+- **证伪时间**: 2026-03-28，GCS shard 修复操作
+- **做了什么**: 从 linux1 重传 200 个空 shard 到 GCS，handover 报告 "200/200 完成"
+- **为什么失败**: (1) SSH pipe 上传在 115 个 shard 上又断连，gsutil 写入 0 字节文件（同一 bug 第二次发生）。(2) 修复脚本没做上传后验证（`gsutil ls -l | awk '$1==0'`），盲报成功。(3) 后续训练用 linux1 本地数据所以没发现，Phase 7 推理改用 GCS 时才暴露
+- **结论**: 修复操作本身也需要验证。上传后必须确认 0 空文件。**"修了" ≠ "修好了"，必须有独立验证步骤**
+
+### 不读历史经验就写代码 → 重蹈覆辙
+- **证伪时间**: 2026-03-29，Phase 7 全程
+- **做了什么**: 直接开始写推理脚本，没有回读 VIA_NEGATIVA 和 handover 中的已知教训
+- **为什么失败**: 重复犯了"云资源分配不算就猜"（已在 VIA_NEGATIVA 记录）、"gcsfuse 当真实文件系统用"（已在 VIA_NEGATIVA 记录）等已知错误
+- **结论**: CLAUDE.md 规则 32-33 已强制要求——新代码/新 Phase/新 dev-cycle 前必读 handover Bitter Lesson + VIA_NEGATIVA，不读就写代码 = 违规

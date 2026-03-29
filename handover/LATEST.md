@@ -1,11 +1,10 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-03-29 — **STATUS: Phase 7 代码完成 + 三轮审计通过，待部署 linux1**
+Last Updated: 2026-03-29 — **STATUS: Harness V2 落地 + Phase 7 inference v13 运行中**
 
 ## Current State
-- **Phase 7 四脚本完成 + 三轮审计通过**: Codex (代码对齐) + Gemini (性能/OOM) + omega_axioms (公理)
-- **Spec 变更已执行**: backtest 节重写，公理验证 PASSED
+- **Vertex AI Job `5960500483188588544`** (phase7-inference-v13-robust2): RUNNING on g2-standard-8 + L4 GPU, 800GB pd-ssd
+- **Harness V2 已落地**: 3 safe wrapper 脚本 + 2 新 hook + OMEGA_LESSONS.md + CLAUDE.md 精简 + 回归测试套件
 - **旗舰模型**: T29 (hd=64, 19.7K params) — 压缩即智能
-- **时空修正 (INS-022)**: 20 bars = 0.4 天。OMEGA 是 T+1 隔夜波段模型
 
 ## Phase 6 HPO 最终结果
 
@@ -16,64 +15,66 @@ Best: **T36 IC=+0.0667** | Flagship: **T29 IC=+0.0661 (hd=64, 单调性 8/9)**
 | T36 (hd=128) | +0.067 | 12.55 BP | 7/9 | 14.56 BP | +4.56 BP |
 | T29 (hd=64) | +0.066 | 11.45 BP | 8/9 | 14.37 BP | +4.37 BP |
 
-## Changes This Session (3 commits)
-- `7f8e795` feat: Phase 7 — spec重写 + 5 insights (INS-019~023) + 4 脚本 + CLAUDE.md
-- `6186f9c` fix: Codex 审计修复 — F1(入场target结算) F2(涨跌停) F3(张量10ch) F4(分段写入) W3(M3链路)
-- `afbc726` perf: Gemini 审计修复 — mini-batch 512 + 16 threads
+## Changes This Session
+- **Harness V2 完整落地**（用户发起 Phase 7 灾难尸检 → Codex 审计 plan → 执行 → Codex 审计代码 → 修 2 bug）
+  - Layer 1: `gcp/safe_upload.sh`, `gcp/safe_build_and_canary.sh`, `gcp/safe_submit.sh`, `tests/test_known_bugs.py`
+  - Layer 2: `.claude/hooks/pre-deploy-gate.sh` (阻止无 canary 部署), `.claude/hooks/post-upload-verify.sh` (自动验证上传)
+  - Layer 3: `OMEGA_LESSONS.md` (唯一经验源, 6 元公理 Ω1-Ω6 + 23 案例), CLAUDE.md 53→33 条, VIA_NEGATIVA 冻结归档
+- **upload_shards.sh 废弃**: 重命名为 `.DEPRECATED_UNSAFE`（SSH pipe 空文件 bug 的温床）
+- **dev-cycle SKILL 升级**: 9→10 阶段，新增 Stage 0 Pre-mortem（列 3 方案 + 失败模式）
+- **Codex 审计发现 2 bug**: manifest 缺 type 字段 + hook 整数比较错误 → 已修复
 
 ## Key Decisions
-1. **INS-011 废弃**: "严格日内"→ T+1 隔夜波段 (INS-021)
-2. **时空修正**: 20 bars = 0.4 天，非"数天到数周" (INS-022 VETO)
-3. **T29 旗舰**: hd=64 物理瓶颈 = 更纯 Alpha (INS-019)
-4. **25BP 成本**: 印花税5+佣金6+滑点7+冲击7
-5. **T+1 三铁律**: 物理锁+涨停买不进+跌停卖不出 (INS-023)
-6. **F1 修复**: simulate 用入场 target 结算 (Codex audit)
-7. **性能优化**: batch 5000→512 + threads 4→16 (Gemini audit)
+1. **Harness V2 设计哲学**: "物理约束 > 软性惩罚" — wrapper 脚本比文档规则更有效（类比 hd=64 瓶颈 > λ_s 正则化）
+2. **外部审计保留**: 上次压缩错误地弱化了外部审计，这次 Ω5 明确为公理级要求
+3. **经验统一到 OMEGA_LESSONS.md**: VIA_NEGATIVA 冻结，LATEST.md 去经验化，4 文件→1 入口
 
-## Next Steps: Phase 7 部署
-1. SCP T29 checkpoint: `gsutil cp gs://omega-pure-data/checkpoints/phase6_icloss/trial_29/best.pt`
-2. SCP 脚本到 linux1: `scp tools/phase7_*.py omega_epiplexity_plus_core.py omega_webdataset_loader.py linux1-lx:/omega_pool/phase7/`
-3. linux1 运行 date_mapper (~10 sec)
-4. linux1 运行 inference (~2h, systemd-run --slice=heavy-workload.slice)
-5. linux1 运行 simulate (~5 min)
-6. SCP 结果回 omega-vm, 运行 report
+## Next Steps
+1. **等待 v13 job 完成** — 监控: `gcloud ai custom-jobs describe 5960500483188588544 --region=us-central1 --format="value(state)"`
+2. 推理完成后 → `phase7_simulate.py` → `phase7_report.py` → 成功标准: 不对称比>3.0 AND pf>1.5
+3. **HK shard 修复**: 193 个空 shard 修复进程可能仍在 HK 后台运行（nohup）
+4. **下次部署必须用 Harness V2 流程**: `safe_build_and_canary.sh` → `safe_submit.sh`
+
+**监控命令**:
+```
+gcloud logging read "resource.type=ml_job AND resource.labels.job_id=5960500483188588544" --limit=5 --format="value(textPayload)" --order=desc
+```
 
 ## Warnings
-- **T29 checkpoint**: `gs://omega-pure-data/checkpoints/phase6_icloss/trial_29/best.pt`
-- **linux1 GPU 不可用**: HIP kernel error, CPU-only
+- **GCS 193 个空 shard**: linux1 本地完好，v13 用 robust skip 处理。HK 修复可能仍在进行
+- **Harness V2 未 commit**: 所有变更在工作区，待用户确认后 commit
 - **涨跌停检测是 best-effort**: 基于 spread-lock 启发式，无昨收数据
 - **日期映射是近似值**: 基于 parquet 行数比例，±1-2 天误差
 
-## Audit Summary (三轮)
+## Audit Summary
 | 审计 | 工具 | 结果 |
 |------|------|------|
-| 代码对齐 | Codex (gpt-5.4) | 4 FAIL → 全部修复 |
-| 性能/OOM | Gemini | 1 WARNING → 已修复, 0 OOM risk |
-| 公理验证 | omega_axioms.py | ALL PASSED |
+| Harness V2 Plan 审计 | Codex (gpt-5.4) | 3 CRITICAL + 5 MISSING → 全部吸收 |
+| Harness V2 Code 审计 | Codex (gpt-5.4) | 2 bug (manifest type + hook integer) → 已修复 |
+| Phase 7 代码 | Codex + Gemini + omega_axioms | 前 session 已通过 |
 
 ## Remote Node Status
-- 本次会话未涉及远程节点（代码编写+审计阶段）
-- linux1 上次状态: ONLINE, 32 cores, 64GB RAM, /omega_pool 7% used
+- linux1-lx: SSH 超时（Tailscale 可能掉线）
+- Vertex AI: Job `5960500483188588544` RUNNING
+- HK (43.161.252.57): 可能有 shard 修复 nohup 进程运行中
 
 ## Machine-Readable State
 ```yaml
 phase: 7
-status: "code_complete_audited_pending_deployment"
+status: "vertex_ai_inference_v13_running"
+vertex_job: "5960500483188588544"
+harness: "v2"
+harness_files:
+  safe_scripts: [gcp/safe_upload.sh, gcp/safe_build_and_canary.sh, gcp/safe_submit.sh]
+  hooks: [.claude/hooks/pre-deploy-gate.sh, .claude/hooks/post-upload-verify.sh]
+  lessons: OMEGA_LESSONS.md
+  tests: tests/test_known_bugs.py
+  manifest: gcp/manifest.jsonl
+  deprecated: [gcp/upload_shards.sh.DEPRECATED_UNSAFE]
 flagship_model: {trial: 29, ic: 0.0661, params: {hd: 64, wt: 32, lr: 3.2e-4, lambda_s: 1e-7, wu: 2, aw: 1e-3, bs: 128}}
 flagship_checkpoint: "gs://omega-pure-data/checkpoints/phase6_icloss/trial_29/best.pt"
-
-time_scale: {bars_per_day: 50, payoff_bars: 20, payoff_days: 0.4, strategy: "T+1 overnight momentum"}
-backtest: {cost_bp: 25, t1_lock: true, limit_enforcement: true, trailing_stop: -10%, success: "asymmetry>3.0 AND pf>1.5"}
-
-scripts: [phase7_date_mapper.py, phase7_inference.py, phase7_simulate.py, phase7_report.py]
-audits: {codex: "4F fixed", gemini_perf: "1W fixed", axioms: "ALL PASS"}
-commits: ["7f8e795", "6186f9c", "afbc726"]
-insights: [INS-019, INS-020, INS-021, INS-022, INS-023]
+meta_axioms: [Ω1_只信实测, Ω2_先量化后行动, Ω3_测试环境等于生产环境, Ω4_可执行大于可记忆, Ω5_生产者不等于验证者, Ω6_数据在哪计算在哪]
 ```
 
 ## Architect Insights (本次会话)
-- INS-019 隐式压缩胜利: hd=64 >> λ_s
-- INS-020 大统一因果链: SRL→Topology→Entropy→Epiplexity
-- INS-021 INS-011 废弃: 日内→T+1 隔夜波段
-- INS-022 时空修正: 20 bars = 0.4 天 (VETO)
-- INS-023 T+1 三铁律: 物理锁+涨停+跌停
+- **Harness V2 设计原理**: hd=64 瓶颈 > λ_s 正则化 → wrapper 脚本 > 文档规则 → 物理约束 > 软性惩罚。知行分离是灾难根因，不是知识不足。

@@ -8,6 +8,11 @@
             "type": "command",
             "command": ".claude/hooks/block-destructive.sh",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": ".claude/hooks/pre-deploy-gate.sh",
+            "timeout": 10
           }
         ]
       }
@@ -20,6 +25,16 @@
             "type": "command",
             "command": ".claude/hooks/post-edit-axiom-check.sh",
             "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/post-upload-verify.sh",
+            "timeout": 15
           }
         ]
       }

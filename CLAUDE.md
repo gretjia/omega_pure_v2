@@ -2,132 +2,85 @@
 
 ## WHAT: 项目定义
 
-这是一个量化金融研究项目，使用 Finite Window Topological Attention 和 MDL 压缩从 A股 L1 tick 数据中提取机构主力行为信号。
+量化金融研究项目：Finite Window Topological Attention + MDL 压缩，从 A股 L1 tick 数据提取机构主力行为信号。
 
-### 技术栈
-- Python 3.10+, PyTorch, PyArrow, WebDataset, NumPy, Numba
-- 训练目标：GCP Vertex AI (L4/A100 GPU cluster)
-- 数据规模：2.2TB raw L1 ticks → Volume-Clocked tensors
+**技术栈**: Python 3.10+, PyTorch, PyArrow, WebDataset, NumPy, Numba | GCP Vertex AI (L4/A100) | 2.2TB raw → Volume-Clocked tensors
 
-### 核心张量
-- 形状：`[B, 160, 10, 10]` — Batch × Time(VolumeSteps) × Spatial(LOBDepth) × Features
-- Features: `[Bid_P, Bid_V, Ask_P, Ask_V, Close, reserved, reserved, ΔP, macro_V_D, macro_σ_D]`
-- 完整规范见 `architect/current_spec.yaml`
+**核心张量**: `[B, 160, 10, 10]` — 完整规范见 `architect/current_spec.yaml`
 
-### 文件地图
+**文件地图**:
 | 文件 | 角色 |
 |------|------|
 | `omega_epiplexity_plus_core.py` | 数学核心（SRL反演 + 拓扑注意力 + MDL损失） |
 | `omega_webdataset_loader.py` | WebDataset 流式加载器 |
-| `tools/omega_etl_v3_topo_forge.py` | V3 ETL 管线（原始数据→张量） |
-| `tools/etl_lazy_sink_linux_optimized.py` | V2 ETL（已弃用但保留参考） |
-| `tools/empirical_calibration.py` | 物理常数标定脚本 |
+| `tools/omega_etl_v3_topo_forge.py` | V3 ETL 管线 |
 | `architect/current_spec.yaml` | 当前架构规范（动态公理源） |
 | `omega_axioms.py` | 公理断言模块 |
+| `OMEGA_LESSONS.md` | **唯一经验源**（元公理 + 操作手册 + 案例库） |
 
 ---
 
 ## WHY: 核心哲学
 
-### Taleb 反脆弱
-- 尾部事件是信号，不是噪音
-- 不对称收益比 > 3.0 是唯一的成功标准
-- 小额试错 + 尾部暴利 = 正期望
+**Taleb 反脆弱**: 尾部事件是信号 | 不对称比 > 3.0 | 小额试错 + 尾部暴利
 
-### 压缩即智能（核心论点）
-- MDL (Minimum Description Length): 用最短的描述长度解释数据
-- 损失函数 = H_T (预测残差) + λ_s × S_T (结构复杂度)
-- 模型被迫丢弃噪音，只保留可压缩的主力规则
-- **隐式压缩 > 显式压缩**：hd=64 物理瓶颈（19.7K 参数窄门）比 λ_s 正则化更有效（INS-019）
-- 四维因果链：SRL（照出冰山单）→ Topology（描绘几何形状）→ Time-bounded Entropy（时间滤波）→ Epiplexity（铅板过滤高熵噪音）
+**压缩即智能**: MDL = H_T + λ_s × S_T | hd=64 物理瓶颈 > λ_s 正则化（INS-019）| 隐式压缩 > 显式压缩
 
-### 主力行为检测
-- 目标：捕捉 A 股机构主力在个股上长线建仓/拉升/派发过程中的**微观执行切片**
-- SRL 反演提取隐藏的元订单（metaorder）流 — 大资金 TWAP/VWAP 拆单留下的低熵痕迹
-- Volume-Clock：1 bar = 2% ADV → 50 bars/天 → 20 bars 持仓 ≈ 0.4 天（INS-022）
-- 策略定位：**T+1 隔夜波段** — 用今天 3 天的盘口 X 光片，预测明天的建仓惯性溢价
-- Taleb 哲学：低胜率可接受（>35%），关键是抓住主力拉升时的肥尾收益（不对称比 > 3.0）
+**主力行为检测**: SRL 反演提取元订单流 → T+1 隔夜波段 | 低胜率可接受(>35%)，关键是肥尾不对称比
 
-### Karpathy 极简美学
-- 一个文件能解决的不拆成两个
-- 代码行数是负债，不是资产
-- 简单 > 聪明
-
-### Via Negativa（否定之道）
-- 已证伪的路径记录在 `VIA_NEGATIVA.md`，永不重蹈
-- 知道"什么不能做"比"什么能做"更有价值
+**Karpathy 极简**: 代码行数是负债 | 简单 > 聪明
 
 ---
 
 ## HOW: 不可违反的规则
 
+### 元公理（Ω1-Ω6，详见 `OMEGA_LESSONS.md`）
+1. **Ω1 只信实测** — 报告/状态/ETA 必须由命令输出生成
+2. **Ω2 先量化后行动** — `du -sh` / `df -h` / 带宽实测，然后才承诺资源
+3. **Ω3 测试环境=生产环境** — 本地 smoke 永不授权生产部署，canary 必须目标环境
+4. **Ω4 可执行 > 可记忆** — 已知最优方法固化为 wrapper 脚本（`gcp/safe_*.sh`）
+5. **Ω5 生产者 ≠ 验证者** — 外部审计不可删除（Codex 管代码，Gemini 管数学）
+6. **Ω6 数据在哪计算在哪** — 大数据不搬运
+
 ### 物理公理（永恒，Layer 1）
-1. δ = 0.5 — 平方根法则指数，宇宙拓扑常数，严禁修改或设为可学习参数
-2. c — **已降级为 Layer 2** (per-stock 动态标定值，非永恒常数)。c_default=0.842 仅为 TSE 回退值。A股 c_i 通过 `tools/omega_srl_friction_calibrator.py` 实证标定
-3. 空间轴不可被拍扁 — 张量必须保持 `[B, T, S, F]` 四维结构
-4. 数值稳定性 — 输出不可包含 NaN 或 Inf
+7. δ = 0.5 — 平方根法则指数，严禁修改或设为可学习参数
+8. 空间轴不可被拍扁 — 张量必须保持 `[B, T, S, F]` 四维结构
+9. 数值稳定性 — 输出不可包含 NaN 或 Inf
+10. c — Layer 2 per-stock 动态标定值。c_default=0.842 仅为回退值
 
 ### 架构公理（可演进，Layer 2，从 `architect/current_spec.yaml` 读取）
-5. 张量形状当前为 `[B, 160, 10, 7]`（以 spec 文件为准）
-6. vol_threshold 冷启动默认值 = 50000
-7. window_size = 160（ACF 衰减上限）
-8. stride = 20（环形缓冲区步长）
-9. adv_fraction = 0.02（动态阈值 = ADV × 此值）
+11. 张量形状当前为 `[B, 160, 10, 7]`（以 spec 文件为准）
+12. vol_threshold 冷启动默认值 = 50000 | window_size = 160 | stride = 20 | adv_fraction = 0.02
 
 ### 破坏性操作红线
-10. **删除/覆盖数据文件**（含 parquet/tar shard）→ 必须人工确认，无例外
-11. **远程推送**（git push, scp 到生产节点）→ 必须人工确认
-12. **修改 architect/current_spec.yaml** → 必须人工确认
-13. **同时运行多个 ETL 实例** → 禁止（单实例锁）
+13. **删除/覆盖数据文件** → 必须人工确认，无例外
+14. **远程推送** → 必须人工确认
+15. **修改 architect/current_spec.yaml** → 必须人工确认
 
-### 强制预检清单（部署任何东西之前）
-14. 目标节点 SSH 连通性验证
-15. 磁盘空间 > 20% 可用
-16. 内存检查（无 OOM 风险）
-17. `ps aux | grep python` — 无重复实例
-18. 确认正确的节点（linux1 vs windows1 vs omega-vm）
-19. 确认正确的 systemd slice（heavy-workload.slice）
-
-### 云资源与训练部署
-20. **云资源分配先算后申请** — 磁盘/内存/配额必须计算实际需求 + 2x 安全余量，禁止猜测
-21. **失败后排查根因** — 连续失败时分析 WHY 而非回退到次优方案
-22. **checkpoint = 随时可中断优化** — 慢速运行的 job 如果有 checkpoint，应主动建议中断改进再 resume，不被沉没成本绑架
+### 强制工作流（由 Hook + 脚本强制执行）
+16. **新代码/新 Phase** → 走 `/dev-cycle`（含 Pre-mortem + 外部审计）
+17. **Docker 构建 + 部署** → 走 `gcp/safe_build_and_canary.sh` + `gcp/safe_submit.sh`
+18. **上传到 GCS** → 走 `gcp/safe_upload.sh`（旧 upload_shards.sh 已废弃）
+19. **部署到远程节点** → 先 `/pre-flight`，重计算走 `heavy-workload.slice`
+20. **Cron 报告** → 从 `gcp/manifest.jsonl` 读取 Job ID + Docker tag，不自造名字
 
 ### 工程规范
-23. 重计算必须通过 `systemd-run --slice=heavy-workload.slice` 启动
-24. 禁止紧密循环中的 `gc.collect()`
-25. 禁止无条件 `use_threads=True`，必须先基准测试
-26. ETL 脚本必须有单实例文件锁（fcntl.LOCK_EX）
-27. PyArrow 读取必须用 `iter_batches`，禁止 `.collect()` 全量加载
-28. batch_size 默认 500000，可通过环境变量 OMEGA_ETL_BATCH_SIZE 覆盖
-29. **断点续传是强制要求** — >1h 批处理必须实现 checkpoint（OOM/断连/重启时零工作损失）
-
-### 硬件拓扑与 SSH（详见 `handover/HARDWARE_TOPOLOGY.md`）
-30. 四节点：omega-vm（控制，16GB，无GPU）→ linux1-lx / windows1-w1（计算，AMD AI Max 395，128GB）→ zephrymac-studio（架构师，M4，32GB）
-31. SSH 别名：`ssh linux1-lx` | `ssh windows1-w1` | `ssh zephrymac-studio`
+21. 禁止紧密循环 `gc.collect()` | 禁止无条件 `use_threads=True`
+22. ETL 单实例锁（fcntl.LOCK_EX） | PyArrow `iter_batches` 禁止 `.collect()`
+23. 断点续传强制（>1h 批处理必须 checkpoint）
+24. `PYTHONUNBUFFERED=1` 用于所有 nohup/后台任务
 
 ### 上下文管理
-32. `handover/LATEST.md` — 当前项目状态的单一真相源
-33. `VIA_NEGATIVA.md` — 已证伪路径（新 agent 必读）
-34. `audit/` — 灾难复盘存档
-35. `architect/current_spec.yaml` — 当前架构规范
-36. `architect/INDEX.md` — 架构师指令时间线
-37. `architect/insights/INDEX.md` — 结构化决策卡片（directives = 原始归档，insights = 提炼后查询接口）
-38. 审计等重输出通过 Agent 子进程执行，仅返回 verdict + 关键发现，防止主上下文膨胀
+25. `OMEGA_LESSONS.md` — **唯一经验源**（元公理 + 操作手册 + 案例库）
+26. `handover/LATEST.md` — 当前项目状态（纯状态，不含经验）
+27. `VIA_NEGATIVA.md` — 已冻结归档（原始证据，不再追加）
+28. `architect/current_spec.yaml` — 架构规范 | `architect/INDEX.md` — 指令时间线
 
-### 外部审计（VIA NEGATIVA: AI 不可自测自验）
-39. 外部审计分工建议：**Gemini (`gemini -p`)** 管数学/金融/GCS，**Codex (`codex exec`)** 管代码质量。用户决定何时调用
-40. 评估实验结果时注意自评偏差 — 设计者评估自己的结果天然乐观，考虑用独立 agent 或外部工具复核
-
-### 灾难教训速查（完整版见 `audit/gemini_bitter_lessons.md`）
-41. 物理常数由人类锁定，AI 只提供参考区间
-42. 接收架构师指令 ≠ 授权执行
-43. AI 不可自测自验（烟测独立于被测代码）
-44. SSH 会话不继承 OOM 保护
-45. V_old 数据在 V_new 验证完成前不可删除
+### 硬件拓扑（详见 `handover/HARDWARE_TOPOLOGY.md`）
+29. 四节点: omega-vm(控制) → linux1-lx / windows1-w1(计算) → zephrymac-studio(架构师)
+30. SSH 别名: `ssh linux1-lx` | `ssh windows1-w1` | `ssh zephrymac-studio`
 
 ### 用户画像
-46. 独狼量化研究员，零编程基础 vibe coder
-47. 优势是品味、市场洞察、Taleb 反脆弱哲学
-48. 沟通偏好：中文为主，技术术语可用英文
-49. 对代码解释需要简明扼要，避免过度技术化
+31. 独狼量化研究员，零编程基础 vibe coder
+32. 优势: 品味、市场洞察、Taleb 哲学
+33. 中文为主，技术术语可英文，简明扼要

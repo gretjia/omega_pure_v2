@@ -11,5 +11,5 @@ FROM us-docker.pkg.dev/vertex-ai/training/pytorch-gpu.2-2.py310:latest
 RUN pip install --no-cache-dir webdataset cloudml-hypertune
 
 # Copy training scripts (eliminates ~1 min gcloud storage cp on every restart)
-COPY train.py backtest_5a.py omega_epiplexity_plus_core.py omega_webdataset_loader.py /app/
+COPY train.py backtest_5a.py phase7_inference.py omega_epiplexity_plus_core.py omega_webdataset_loader.py /app/
 WORKDIR /app

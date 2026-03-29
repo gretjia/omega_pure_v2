@@ -1,6 +1,6 @@
 ---
 name: dev-cycle
-description: 完整开发周期 — Plan/Audit/Fix/Code/Audit/Fix/Axiom/ExternalAudit/Summary 九阶段自动编排
+description: 完整开发周期 — PreMortem/Plan/Audit/Fix/Code/Audit/Fix/Axiom/ExternalAudit/Summary 十阶段自动编排
 user-invocable: true
 ---
 
@@ -16,15 +16,35 @@ user-invocable: true
 
 如果没有提供描述，询问用户要做什么。
 
-## 六阶段流程
+## 十阶段流程
 
 每个阶段间有 PASS/FAIL 门禁。FAIL 时循环修复，不跳过。
+
+### Stage 0: PRE-MORTEM（Ω4 + Ω2）
+
+**在写任何代码之前**，强制执行：
+
+1. 读取 `OMEGA_LESSONS.md` 中相关场景的操作手册
+2. 列出 **3 个可能的实现方案**（不是 1 个）
+3. 对每个方案列出 **2-3 个可能的失败模式**
+4. 选择最优方案并说明理由
+5. 执行 Ω2 量化：`du -sh` 数据量、`df -h` 磁盘、预估 ETA
+
+输出：
+```
+=== STAGE 0: PRE-MORTEM ===
+方案 A: ... → 失败风险: ...
+方案 B: ... → 失败风险: ...
+方案 C: ... → 失败风险: ...
+选择: 方案 X，理由: ...
+量化: 数据 Xg GB, 磁盘 Y GB, 预估 ETA Z h
+```
 
 ### Stage 1: PLAN
 
 1. 读取 `architect/current_spec.yaml` 获取当前规范
 2. 读取 `architect/INDEX.md` 检查是否有待执行的架构师指令
-3. 读取 `VIA_NEGATIVA.md` 确保计划不重蹈覆辙
+3. 读取 `OMEGA_LESSONS.md` 确保计划不重蹈覆辙（案例库 C-001 至 C-023）
 4. 进入 Plan Mode（使用 EnterPlanMode 工具）
 5. 草拟实现计划，包括：
    - 需要修改的文件列表
