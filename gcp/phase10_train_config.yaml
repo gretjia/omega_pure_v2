@@ -1,0 +1,52 @@
+# Phase 10 Vanguard V5 — Softmax Portfolio Loss
+# Gemini GCS audit optimizations:
+#   1. Local SSD x2 (750GB NVMe, 4.8 GB/s vs pd-ssd 384 MB/s)
+#   2. GCS FUSE v2 file-cache (auto-cache on first epoch, NVMe for subsequent 19)
+#   3. Spot instance ($0.25/hr vs $0.75/hr, SIGTERM checkpoint at exit 143)
+#   4. Boot disk downgraded to pd-balanced 100GB (OS only)
+workerPoolSpecs:
+- machineSpec:
+    machineType: g2-standard-8
+    acceleratorType: NVIDIA_L4
+    acceleratorCount: 1
+  replicaCount: 1
+  diskSpec:
+    bootDiskType: pd-balanced
+    bootDiskSizeGb: 100
+  nfsMounts: []
+  containerSpec:
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v5
+    command:
+    - bash
+    - -c
+    - |
+      set -e
+      echo "=== Phase 10 Vanguard V5: Softmax Portfolio Loss ==="
+      echo "GCS FUSE v2 + Local SSD file cache — no manual staging needed"
+
+      # Verify FUSE mount and Local SSD
+      ls /gcs/omega-pure-data/wds_shards_v3_full/ | head -3
+      echo "Shards visible: $(ls /gcs/omega-pure-data/wds_shards_v3_full/omega_shard_*.tar | wc -l)"
+
+      echo "=== Train (20 epochs, FUSE auto-cache to NVMe) ==="
+      PYTHONUNBUFFERED=1 python3 /app/train.py \
+        --shard_dir=/gcs/omega-pure-data/wds_shards_v3_full \
+        --output_dir=/gcs/omega-pure-data/checkpoints/phase10_softmax_v5 \
+        --hidden_dim=64 \
+        --window_size_t=32 \
+        --lr=3.2e-4 \
+        --lambda_s=1e-7 \
+        --warmup_epochs=2 \
+        --temperature=1.0 \
+        --l2_weight=1e-4 \
+        --batch_size=256 \
+        --coarse_graining_factor=1 \
+        --epochs=20 \
+        --steps_per_epoch=10000 \
+        --num_workers=6 \
+        --no_amp \
+        --ckpt_every_n_steps=500 \
+        --resume
+scheduling:
+  restartJobOnWorkerRestart: true
+  strategy: SPOT

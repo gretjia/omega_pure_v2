@@ -37,7 +37,7 @@ import webdataset as wds
 from torch.utils.data import DataLoader
 
 from omega_epiplexity_plus_core import OmegaMathematicalCompressor
-from omega_webdataset_loader import create_dataloader, dynamic_processor
+from omega_webdataset_loader import create_dataloader, dynamic_processor, fast_npy_decoder
 
 # Optional: Vertex AI HPO metric reporting
 try:
@@ -263,13 +263,13 @@ def create_val_dataloader(wds_url, batch_size, macro_window,
     preprocess_fn = dynamic_processor(macro_window, coarse_graining_factor)
     dataset = (
         wds.WebDataset(wds_url, resampled=False, handler=wds.warn_and_continue)
-        .decode(handler=wds.warn_and_continue)
+        .map(fast_npy_decoder, handler=wds.warn_and_continue)  # Gemini GCS audit
         .map(preprocess_fn, handler=wds.warn_and_continue)
         .batched(batch_size)
     )
     loader_kwargs = dict(batch_size=None, num_workers=num_workers, pin_memory=True)
     if num_workers > 0:
-        loader_kwargs["prefetch_factor"] = 2
+        loader_kwargs["prefetch_factor"] = 4
     return DataLoader(dataset, **loader_kwargs)
 
 
@@ -500,7 +500,8 @@ def main():
     parser.add_argument("--window_size_s", type=_int, default=4)
     parser.add_argument("--hidden_dim", type=_int, default=64)
     # Infra
-    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--num_workers", type=int, default=6,
+                        help="DataLoader workers (Gemini: 6 for 8-vCPU, reserve 2 for main+GPU)")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--max_val_steps", type=int, default=0,
                         help="Max validation steps (0=all, useful for CPU smoke tests)")
@@ -584,13 +585,13 @@ def main():
     _train_ds = (
         wds.WebDataset(train_shards, resampled=True, handler=wds.warn_and_continue)
         .shuffle(1000)
-        .decode(handler=wds.warn_and_continue)
+        .map(fast_npy_decoder, handler=wds.warn_and_continue)  # Gemini GCS audit: -15% CPU
         .map(_train_preprocess, handler=wds.warn_and_continue)
         .batched(args.batch_size)
     )
     _train_kw = dict(batch_size=None, num_workers=args.num_workers, pin_memory=True)
     if args.num_workers > 0:
-        _train_kw["prefetch_factor"] = 2
+        _train_kw["prefetch_factor"] = 4  # Gemini: 4 > 2 for NVMe throughput
     train_loader = DataLoader(_train_ds, **_train_kw)
     val_loader = create_val_dataloader(
         val_shards, args.batch_size, args.macro_window,

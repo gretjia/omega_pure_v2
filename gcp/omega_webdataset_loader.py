@@ -11,11 +11,27 @@ Loader outputs dict with:
   - target: scalar (forward VWAP return in BP)
 """
 
+import io
+
 import webdataset as wds
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import numpy as np
+
+
+def fast_npy_decoder(sample):
+    """Bypass WDS generic decode, strictly parse .npy bytes.
+    Gemini GCS audit: ~15% CPU savings vs wds.decode() which probes
+    all registered decoders (PIL, JSON, etc) for each file.
+    """
+    result = {}
+    for key, value in sample.items():
+        if key.endswith(".npy"):
+            result[key] = np.load(io.BytesIO(value))
+        else:
+            result[key] = value
+    return result
 
 
 def dynamic_processor(macro_window, coarse_graining_factor):
@@ -62,7 +78,7 @@ def create_dataloader(wds_url, batch_size=256, macro_window=160,
     dataset = (
         wds.WebDataset(wds_url, resampled=True)
         .shuffle(1000)
-        .decode()
+        .map(fast_npy_decoder)  # Gemini GCS audit: bypass generic decode, -15% CPU
         .map(preprocess_fn)
         .batched(batch_size)
     )
@@ -70,10 +86,11 @@ def create_dataloader(wds_url, batch_size=256, macro_window=160,
     loader_kwargs = dict(
         batch_size=None,
         num_workers=num_workers,
+        pin_memory=True,
     )
     # prefetch_factor requires num_workers > 0 (PyTorch >= 2.0)
     if num_workers > 0:
-        loader_kwargs["prefetch_factor"] = 2
+        loader_kwargs["prefetch_factor"] = 4  # Gemini: 4 > 2 for NVMe throughput
 
     loader = DataLoader(dataset, **loader_kwargs)
 

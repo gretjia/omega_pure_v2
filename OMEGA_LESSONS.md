@@ -93,6 +93,10 @@
 - **C-026**: pipe 对推理最优（单 pass 556GB），对训练是瓶颈（20 epoch = 11.1TB + 验证 15min > 训练 13min）。训练必须 staging（Ω6）
 - **C-027**: HPO 搜出的超参只对当时的 Loss 有效。换 Loss 后 anchor_weight=0.001→Std_yhat 爆炸。非对称 Loss 需 anchor≥0.01（Ω2: 先量化）
 
+### GCS / 云 I/O
+- **C-028**: pd-ssd 吞吐与容量挂钩（0.48 MB/s per GB）→ 800GB 仅 384 MB/s。训练数据必须用 Local SSD（4.8 GB/s）或 FUSE v2 file-cache（Ω2: 先量化 IOPS）
+- **C-029**: GCS Nearline 看似省钱（$5.5 vs $11/月），但 20 epoch × 556GB = 11.1TB 检索费 $111。训练数据必须 Standard（Ω2: 先量化总成本）
+
 ### AI 治理
 - **C-021**: AI 自己写烟测测自己 → 自洽性掩盖正确性。审计独立于作者（Ω5）
 - **C-022**: 接收架构师指令即执行 → 188GB 数据丢失。指令 ≠ 授权
