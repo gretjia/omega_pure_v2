@@ -1,0 +1,10 @@
+{"type":"canary","canary_status":"PASS","docker_tag":"phase7-v15","canary_job":"4978460677724176384","rate":466,"timestamp":"2026-03-29T18:06:42Z","notes":"pipe streaming, no staging, 100GB disk"}
+{
+  "ts": "2026-03-29T18:08:12Z",
+  "type": "full_job",
+  "job_id": "9032122554822688768",
+  "docker_tag": "phase7-v15",
+  "disk_gb": 100,
+  "data_gb": 580,
+  "display_name": "phase7-inference-v15"
+}

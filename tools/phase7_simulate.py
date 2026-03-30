@@ -44,6 +44,18 @@ def load_predictions(path):
         return dict(result)
 
 
+def get_board_daily_limit_bp(symbol):
+    """Daily price limit in BP by board type.
+
+    Main board (000/001/002/600/601/603/605): ±10% = 1000 BP
+    ChiNext 创业板 (300/301): ±20% = 2000 BP
+    STAR Market 科创板 (688): ±20% = 2000 BP
+    """
+    if symbol[:3] in ('688', '300', '301'):
+        return 2000
+    return 1000
+
+
 def is_limit_locked(bid_p1, ask_p1, threshold=0.001):
     """Detect price limit: spread ≈ 0 means order book locked (best-effort heuristic).
 
@@ -70,6 +82,11 @@ def main():
     parser.add_argument("--long_pctile", type=float, default=0.80)
     parser.add_argument("--max_positions", type=int, default=50)
     parser.add_argument("--trailing_stop_pct", type=float, default=-10.0)
+    parser.add_argument("--board_loss_cap", action="store_true", default=True,
+                        help="Cap per-trade loss at board daily limit × hold days")
+    parser.add_argument("--no_board_loss_cap", dest="board_loss_cap", action="store_false")
+    parser.add_argument("--exclude_boards", nargs="*", default=[],
+                        help="Exclude board prefixes from trading (e.g., 688)")
     parser.add_argument("--adv_floor", type=float, default=0.0)
     parser.add_argument("--train_val_boundary", type=int, default=1594)
     parser.add_argument("--output_dir", required=True)
@@ -88,6 +105,7 @@ def main():
         date_groups[data["date"][i]].append(i)
 
     dates_sorted = sorted(date_groups.keys())
+    date_to_idx = {d: i for i, d in enumerate(dates_sorted)}
     log.info(f"Trading dates: {len(dates_sorted)}")
 
     # ============================================================
@@ -144,18 +162,39 @@ def main():
             # Exit: T+1 met → realize the entry signal's forward return
             exit_reason = "natural_horizon"
 
-            # Trailing stop: if entry_target is extreme loss
-            if entry_target < args.trailing_stop_pct * 100:  # -10% = -1000 BP
+            # Board-aware loss cap: a stock physically cannot move more
+            # than its daily limit per trading day.
+            capped_target = entry_target
+            hold_days = max(1, date_to_idx[date] - date_to_idx[pos["entry_date"]])
+            if args.board_loss_cap:
+                board_limit = get_board_daily_limit_bp(sym)
+                max_possible_loss = -board_limit * hold_days
+                if capped_target < max_possible_loss:
+                    capped_target = max_possible_loss
+
+            # Trailing stop: cap PnL at stop level (if achievable).
+            # For main board (-10% limit), a -10% stop always works.
+            # For 20% boards, overnight gap can pierce -10% stop to
+            # board limit; stop executes at gap-open price.
+            stop_bp = args.trailing_stop_pct * 100  # -10% = -1000 BP
+            if capped_target < stop_bp:
+                # Gap-through: stop couldn't execute at desired level.
+                # Loss is capped at board limit (already applied above).
+                exit_reason = "trailing_stop"
+            elif entry_target < stop_bp and capped_target >= stop_bp:
+                # Board cap brought us above stop — original would have
+                # been a stop-out but board limit is tighter
                 exit_reason = "trailing_stop"
 
-            # PnL = entry signal's forward target - exit cost
-            trade_pnl = entry_target - half_cost
+            # PnL = capped target - exit cost
+            trade_pnl = capped_target - half_cost
             trades.append({
                 "symbol": sym,
                 "entry_date": pos["entry_date"],
                 "exit_date": date,
                 "pred_bp": pos["entry_pred"],
                 "actual_bp": entry_target,
+                "capped_bp": capped_target,
                 "pnl_bp": trade_pnl,
                 "exit_reason": exit_reason,
             })
@@ -171,6 +210,10 @@ def main():
             sym = data["symbol"][idx]
             if sym in portfolio:
                 continue  # Already holding
+
+            # Board exclusion filter
+            if any(sym.startswith(b) for b in args.exclude_boards):
+                continue
 
             pred_bp = data["pred_bp"][idx]
             bid_p1 = data["bid_p1"][idx]

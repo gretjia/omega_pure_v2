@@ -1,23 +1,26 @@
 workerPoolSpecs:
 - machineSpec:
-    machineType: g2-standard-8
-    acceleratorType: NVIDIA_L4
+    machineType: a2-highgpu-1g
+    acceleratorType: NVIDIA_TESLA_A100
     acceleratorCount: 1
   replicaCount: 1
   diskSpec:
     bootDiskType: pd-ssd
-    bootDiskSizeGb: 800
+    bootDiskSizeGb: 100
   containerSpec:
-    imageUri: img
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase7-v16
     command:
-    - bash
-    - -c
+    - python3
+    - /app/phase7_inference.py
     args:
-    - "set -e\necho \"Staging shards to local SSD via gcloud storage cp (parallel)...\"\
-      \nmkdir -p /local_shards\nt0=$(date +%s)\ngcloud storage cp 'gs://omega-pure-data/wds_shards_v3_full/omega_shard_*.tar'\
-      \ /local_shards/\nt1=$(date +%s)\nn=$(ls /local_shards/*.tar | wc -l)\necho\
-      \ \"Staged $n shards in $((t1-t0))s\"\npython3 /app/phase7_inference.py \\\n\
-      \  --checkpoint=/gcs/omega-pure-data/checkpoints/phase6_icloss/trial_29/best.pt\
-      \ \\\n  --shard_dir=/local_shards \\\n  --date_map=/gcs/omega-pure-data/phase7/shard_date_map.json\
-      \ \\\n  --output=/gcs/omega-pure-data/phase7/predictions.parquet \\\n  --hidden_dim=64\
-      \ --window_size_t=32 --batch_size=512 \\\n  --checkpoint_interval=100 --prefetch=4\n"
+    - --checkpoint=/gcs/omega-pure-data/checkpoints/phase6_icloss/trial_29/best.pt
+    - --shard_dir=gs://omega-pure-data/wds_shards_v3_full
+    - --date_map=/gcs/omega-pure-data/phase7/shard_date_map.json
+    - --output=/gcs/omega-pure-data/phase7/predictions.parquet
+    - --hidden_dim=64
+    - --window_size_t=32
+    - --batch_size=1024
+    - --checkpoint_interval=50
+    - --prefetch=8
+scheduling:
+  strategy: SPOT
