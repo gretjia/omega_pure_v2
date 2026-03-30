@@ -201,12 +201,18 @@ class VolumeBlockInputMasking(nn.Module):
         B, T, S, F = x_2d.shape
         masked_x = x_2d.clone()
 
-        for i in range(B):
-            mask_len = random.randint(self.min_bars, self.max_bars)
-            max_start = T - mask_len - self.keep_last
-            if max_start > 0:
-                start_idx = random.randint(0, max_start)
-                masked_x[i, start_idx:start_idx + mask_len, :, :] = 0.0
+        # Vectorized masking (Gemini audit: Python for-loop is perf killer for small models)
+        mask_lens = torch.randint(self.min_bars, self.max_bars + 1, (B,), device=x_2d.device)
+        max_starts = T - mask_lens - self.keep_last
+        valid = max_starts > 0
+
+        starts = torch.zeros(B, device=x_2d.device, dtype=torch.long)
+        if valid.any():
+            starts[valid] = (torch.rand(valid.sum(), device=x_2d.device) * max_starts[valid].float()).long()
+
+        idx = torch.arange(T, device=x_2d.device).unsqueeze(0).expand(B, T)
+        in_mask = (idx >= starts.unsqueeze(1)) & (idx < (starts + mask_lens).unsqueeze(1)) & valid.unsqueeze(1)
+        masked_x[in_mask.unsqueeze(-1).unsqueeze(-1).expand_as(masked_x)] = 0.0
 
         return masked_x
 
@@ -303,7 +309,7 @@ def create_val_dataloader(wds_url, batch_size, macro_window,
         .map(preprocess_fn, handler=wds.warn_and_continue)
         .batched(batch_size)
     )
-    loader_kwargs = dict(batch_size=None, num_workers=num_workers)
+    loader_kwargs = dict(batch_size=None, num_workers=num_workers, pin_memory=True)
     if num_workers > 0:
         loader_kwargs["prefetch_factor"] = 2
     return DataLoader(dataset, **loader_kwargs)
@@ -355,7 +361,8 @@ def load_checkpoint(path, model, optimizer, scaler, device, scheduler=None):
 def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                     grad_clip, device, epoch, steps_per_epoch, global_step,
                     use_amp, warmup_epochs=2, overfit_batch=None, scheduler=None,
-                    start_step=0, ckpt_path=None, ckpt_every=0, anchor_weight=0.01):
+                    start_step=0, ckpt_path=None, ckpt_every=0, anchor_weight=0.01,
+                    downside_dampening=1.0):
     model.train()
     running = {"total": 0.0, "h_t": 0.0, "s_t": 0.0, "fvu": 0.0, "count": 0}
     loader_iter = iter(loader) if overfit_batch is None else None
@@ -393,7 +400,7 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                     total_loss, h_t, s_t, batch_fvu = compute_robust_loss(
                         prediction, target, z_core, lambda_s, epoch, warmup_epochs,
                         anchor_weight=anchor_weight,
-                        downside_dampening=args.downside_dampening
+                        downside_dampening=downside_dampening
                     )
                 scaler.scale(total_loss).backward()
                 scaler.unscale_(optimizer)
@@ -405,7 +412,7 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                 total_loss, h_t, s_t, batch_fvu = compute_robust_loss(
                     prediction, target, z_core, lambda_s, epoch, warmup_epochs,
                     anchor_weight=anchor_weight,
-                    downside_dampening=args.downside_dampening
+                    downside_dampening=downside_dampening
                 )
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -619,7 +626,7 @@ def main():
         .map(_train_preprocess, handler=wds.warn_and_continue)
         .batched(args.batch_size)
     )
-    _train_kw = dict(batch_size=None, num_workers=args.num_workers)
+    _train_kw = dict(batch_size=None, num_workers=args.num_workers, pin_memory=True)
     if args.num_workers > 0:
         _train_kw["prefetch_factor"] = 2
     train_loader = DataLoader(_train_ds, **_train_kw)
@@ -704,6 +711,7 @@ def main():
             start_step=start_step, ckpt_path=ckpt_path,
             ckpt_every=args.ckpt_every_n_steps,
             anchor_weight=args.anchor_weight,
+            downside_dampening=args.downside_dampening,
         )
 
         val_metrics = validate(model, val_loader, args.lambda_s, device,
