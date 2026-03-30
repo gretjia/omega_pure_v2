@@ -163,6 +163,13 @@ backtest:
   success_criterion: "asymmetry_payoff_ratio > 3.0 AND profit_factor > 1.5"
   # INS-011 (严格日内) SUPERSEDED by INS-021/022/023
   # 原因: 模型检测主力建仓元订单惯性，T+1 隔夜享受次日溢价冲高
+  board_loss_cap: true              # Cap per-trade loss at board daily limit × hold days
+    # Main board: -10%/day, ChiNext/STAR: -20%/day (Phase 8 verified: Sharpe +34%)
+  # Phase 8 sweep results (INS-026/027 tested, not adopted):
+  #   conviction_filter: tested conv=[0,20,30] — no improvement (max_positions already binding)
+  #   regime_filter: tested trailing NAV drawdown — HARMFUL (misses recovery, -11% vs +6%)
+  #   Only board_loss_cap proved beneficial. Asymmetry 1.20 confirmed unreachable at IC=0.028.
+  #   Root cause: execution-layer cannot overcome signal-layer limitation → Phase 9 needed.
 
 # ============================================================
 # 模型架构层级 (Omega-TIB)

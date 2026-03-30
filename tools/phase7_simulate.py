@@ -87,6 +87,18 @@ def main():
     parser.add_argument("--no_board_loss_cap", dest="board_loss_cap", action="store_false")
     parser.add_argument("--exclude_boards", nargs="*", default=[],
                         help="Exclude board prefixes from trading (e.g., 688)")
+    parser.add_argument("--conviction_threshold", type=float, default=0.0,
+                        help="Only buy when pred > daily_median + threshold (INS-026). "
+                             "0 = disabled. Suggested: 20-30 BP.")
+    parser.add_argument("--regime_filter", action="store_true", default=False,
+                        help="Reduce positions when portfolio in drawdown (INS-027). "
+                             "Uses trailing NAV return as stress proxy.")
+    parser.add_argument("--regime_lookback", type=int, default=20,
+                        help="Trailing window (trading days) for regime detection")
+    parser.add_argument("--regime_dd_threshold", type=float, default=-5.0,
+                        help="Trailing return %% below which to reduce positions (default -5%%)")
+    parser.add_argument("--regime_reduction", type=float, default=0.2,
+                        help="Max positions multiplier under stress (0.2 = 20%% capacity)")
     parser.add_argument("--adv_floor", type=float, default=0.0)
     parser.add_argument("--train_val_boundary", type=int, default=1594)
     parser.add_argument("--output_dir", required=True)
@@ -119,6 +131,8 @@ def main():
     equity_curve = []
     limit_filter_count = 0
     t1_lock_count = 0
+    conviction_filter_count = 0
+    regime_trigger_days = 0
 
     for day_i, date in enumerate(dates_sorted):
         indices = date_groups[date]
@@ -205,6 +219,25 @@ def main():
             del portfolio[sym]
 
         # ---- Step 2: New signals ----
+
+        # Regime filter (INS-027): detect market stress via trailing NAV drawdown.
+        # When portfolio's trailing return is deeply negative, model IC is near zero
+        # (Phase 7 Test #4.5: 2023Q3 IC=0.002 during bear market).
+        # Reduce position count to limit exposure during regime breakdown.
+        effective_max_positions = args.max_positions
+        if args.regime_filter and day_i >= args.regime_lookback:
+            lookback_start = max(0, day_i - args.regime_lookback)
+            trailing_ret = (daily_nav / equity_curve[lookback_start]["nav"] - 1) * 100
+            if trailing_ret < args.regime_dd_threshold:
+                effective_max_positions = max(1, int(args.max_positions * args.regime_reduction))
+                regime_trigger_days += 1
+
+        # Conviction filter (INS-026): compute daily pred median
+        daily_pred_median = 0.0
+        if args.conviction_threshold > 0:
+            day_preds = [data["pred_bp"][idx] for idx in indices]
+            daily_pred_median = float(np.median(day_preds))
+
         candidates = []
         for idx in indices:
             sym = data["symbol"][idx]
@@ -225,6 +258,12 @@ def main():
                 limit_filter_count += 1
                 continue
 
+            # Conviction filter: only trade high-conviction signals
+            if args.conviction_threshold > 0:
+                if pred_bp < daily_pred_median + args.conviction_threshold:
+                    conviction_filter_count += 1
+                    continue
+
             # Liquidity filter
             if macro_v_d < args.adv_floor:
                 continue
@@ -234,10 +273,11 @@ def main():
         # Rank by prediction (descending)
         candidates.sort(key=lambda x: -x[1])
 
-        # Top quintile selection
+        # Top quintile selection (with regime-adjusted capacity)
         n_candidates = len(candidates)
         n_select = max(1, int(n_candidates * (1 - args.long_pctile)))
-        n_select = min(n_select, args.max_positions - len(portfolio))
+        n_select = min(n_select, effective_max_positions - len(portfolio))
+        n_select = max(0, n_select)
         selected = candidates[:n_select]
 
         # Open new positions
@@ -333,21 +373,34 @@ def main():
     ic_std = np.std(daily_ics) if daily_ics else 1
     icir = ic_mean / (ic_std + 1e-10)
 
-    # Decile monotonicity
-    all_preds = np.array(data["pred_bp"])
-    all_targets = np.array(data["target_bp"])
-    decile_means = []
-    for d in range(10):
-        lo = np.percentile(all_preds, d * 10)
-        hi = np.percentile(all_preds, (d + 1) * 10)
-        if d == 0:
-            mask = all_preds <= hi
-        elif d == 9:
-            mask = all_preds >= lo
-        else:
-            mask = (all_preds > lo) & (all_preds <= hi)
-        decile_means.append(float(np.mean(all_targets[mask])) if mask.any() else 0)
-    mono_score = sum(1 for i in range(9) if decile_means[i] < decile_means[i+1])
+    # Decile monotonicity — DAILY CROSS-SECTIONAL (INS-026 fix)
+    # Global pooling is wrong due to pred time-drift; must use per-day deciles.
+    daily_decile_accum = [[] for _ in range(10)]
+    daily_mono_scores = []
+    for date in dates_sorted:
+        indices = date_groups[date]
+        if len(indices) < 100:
+            continue
+        preds = np.array([data["pred_bp"][i] for i in indices])
+        targets = np.array([data["target_bp"][i] for i in indices])
+        day_decile = []
+        for d in range(10):
+            lo = np.percentile(preds, d * 10)
+            hi = np.percentile(preds, (d + 1) * 10)
+            if d == 0:
+                mask = preds <= hi
+            elif d == 9:
+                mask = preds >= lo
+            else:
+                mask = (preds > lo) & (preds <= hi)
+            dm = float(np.mean(targets[mask])) if mask.any() else 0
+            day_decile.append(dm)
+            daily_decile_accum[d].append(dm)
+        daily_mono_scores.append(
+            sum(1 for i in range(9) if day_decile[i] < day_decile[i+1]))
+
+    decile_means = [float(np.mean(dd)) if dd else 0 for dd in daily_decile_accum]
+    mono_score = round(np.mean(daily_mono_scores), 2) if daily_mono_scores else 0
     ls_spread = decile_means[9] - decile_means[0]
 
     # Break-even cost scan
@@ -406,7 +459,7 @@ def main():
         "daily_ic_std": round(ic_std, 6),
         "icir": round(icir, 4),
         "long_short_spread_bp": round(ls_spread, 2),
-        "monotonicity": f"{mono_score}/9",
+        "monotonicity": f"{mono_score}/9",  # Daily CS mean, not global
         "decile_means_bp": [round(d, 2) for d in decile_means],
 
         "breakeven_cost_bp": breakeven_cost,
@@ -418,6 +471,10 @@ def main():
 
         "limit_filter_count": limit_filter_count,
         "t1_lock_count": t1_lock_count,
+        "conviction_threshold": args.conviction_threshold,
+        "conviction_filter_count": conviction_filter_count,
+        "regime_filter": args.regime_filter,
+        "regime_trigger_days": regime_trigger_days,
     }
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -460,6 +517,10 @@ def main():
     log.info(f"Limit filters:{limit_filter_count}")
     log.info(f"IS IC:        {np.mean(is_ics):.6f}" if is_ics else "IS IC: N/A")
     log.info(f"OOS IC:       {np.mean(oos_ics):.6f}" if oos_ics else "OOS IC: N/A")
+    if args.conviction_threshold > 0:
+        log.info(f"Conviction:   {conviction_filter_count:,} filtered (threshold={args.conviction_threshold})")
+    if args.regime_filter:
+        log.info(f"Regime days:  {regime_trigger_days}/{len(dates_sorted)}")
     log.info(f"Saved to {args.output_dir}")
 
 
