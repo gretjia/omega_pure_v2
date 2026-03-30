@@ -189,6 +189,7 @@ def main():
     col_symbol, col_date, col_shard = [], [], []
     col_pred, col_target = [], []
     col_bid, col_ask, col_mvd = [], [], []
+    col_z_sparsity = []  # INS-034: per-sample z_sparsity for trading trigger
     chunk_files = []
     chunk_dir = args.output + ".chunks"
     os.makedirs(chunk_dir, exist_ok=True)
@@ -224,7 +225,8 @@ def main():
             cp = os.path.join(chunk_dir, f"chunk_{len(chunk_files):04d}.parquet")
             t = pa.table({"symbol": col_symbol, "date": col_date, "shard_idx": col_shard,
                           "pred_bp": col_pred, "target_bp": col_target,
-                          "bid_p1": col_bid, "ask_p1": col_ask, "macro_v_d": col_mvd})
+                          "bid_p1": col_bid, "ask_p1": col_ask, "macro_v_d": col_mvd,
+                          "z_sparsity": col_z_sparsity})
             pq.write_table(t, cp)
             chunk_files.append(cp)
             sw = samples_written + len(col_symbol)
@@ -295,6 +297,7 @@ def main():
         c_all = torch.tensor(batch_c_frictions, dtype=torch.float32).unsqueeze(-1).to(device)
 
         pred_parts = []
+        z_sparsity_parts = []  # INS-034: per-sample z_sparsity
         use_amp = device.type == "cuda"
         with torch.no_grad():
             for mb_start in range(0, len(manifold_all), args.batch_size):
@@ -305,12 +308,23 @@ def main():
                     p = model(mb, cb)
                 pred_parts.append(p.float().cpu())
 
-                # z_core sparsity (sample from last mini-batch)
+                # INS-034: per-sample z_sparsity (fraction of near-zero activations)
                 if model._z_core is not None:
-                    z_sparsity_accum.append(compute_z_sparsity(model._z_core))
+                    z_core_mb = model._z_core  # [mb_size, T, S, hd//4]
+                    # Per-sample: flatten spatial dims, compute sparsity per sample
+                    z_flat = z_core_mb.view(z_core_mb.size(0), -1)  # [mb_size, T*S*hd//4]
+                    near_zero = (z_flat.abs() < 0.01).float().mean(dim=1)  # [mb_size]
+                    z_sparsity_parts.append(near_zero.cpu().numpy())
+                    # Global accumulation for summary
+                    z_sparsity_accum.append(compute_z_sparsity(z_core_mb))
 
             preds = torch.cat(pred_parts)
             pred_bp = (preds.squeeze() * TARGET_STD + TARGET_MEAN).numpy().copy()
+            # Concatenate per-sample z_sparsity
+            if z_sparsity_parts:
+                z_sparsity_per_sample = np.concatenate(z_sparsity_parts)
+            else:
+                z_sparsity_per_sample = np.zeros(len(batch_symbols))
 
         targets_np = np.array(batch_targets)
 
@@ -325,6 +339,7 @@ def main():
             col_bid.append(bid_p1)
             col_ask.append(ask_p1)
             col_mvd.append(mvd)
+            col_z_sparsity.append(float(z_sparsity_per_sample[i]))
 
         samples_total = samples_written + len(col_symbol)
 
@@ -350,6 +365,7 @@ def main():
                 "symbol": col_symbol, "date": col_date, "shard_idx": col_shard,
                 "pred_bp": col_pred, "target_bp": col_target,
                 "bid_p1": col_bid, "ask_p1": col_ask, "macro_v_d": col_mvd,
+                "z_sparsity": col_z_sparsity,
             })
             pq.write_table(table, chunk_path)
             chunk_files.append(chunk_path)
@@ -357,6 +373,7 @@ def main():
             col_symbol, col_date, col_shard = [], [], []
             col_pred, col_target = [], []
             col_bid, col_ask, col_mvd = [], [], []
+            col_z_sparsity = []
 
             # Save lightweight progress (no data, just pointers)
             tmp_path = progress_path + ".tmp"

@@ -1,6 +1,6 @@
 # OMEGA PURE 架构规范 — 由架构师联络官维护
-# 最后更新：2026-03-29
-# 更新来源：INS-019/020/021/022/023 (压缩即智能正名 + 时空修正 + Phase 7 Go-Live)
+# 最后更新：2026-03-30
+# 更新来源：INS-032/033/034/035 (Pearson 死路宣判 + Softmax Portfolio Loss + Gemini 审计修正)
 # 源文档：Google Docs id.1~id.6 (archived at architect/gdocs/)
 
 version: v3
@@ -81,14 +81,15 @@ target:
 # ============================================================
 training:
   target_model: Omega-TIB   # Topological Information Bottleneck (正名自 SpatioTemporal2DMAE)
-  loss: "Leaky Asymmetric IC Loss + Dampened MSE anchor + MDL (INS-018 + INS-030)"
-  loss_function: "1 - Pearson_IC(pred, asym_target) + anchor_weight * MSE(pred, asym_target_z) + lambda_s * ||z_core||_1"
-  downside_dampening: 0.3    # INS-030: target<0 乘以 0.3 (70% upside focus, 30% regularization)
-  # Phase 9 v1 教训: dampening=0.05 + MSE anchor dampening → catastrophic overfitting
-  # (Train IC=0.18, Val IC=-0.001, Std_yhat explosion). MSE anchor 必须保持对称。
-  lambda_s: 0.001            # Phase 3 值; Phase 6 搜索 [1e-7, 1e-4]
+  loss: "Softmax Portfolio Loss + L2 mean-shift penalty + MDL (INS-033, Gemini-audited)"
+  loss_function: "-sum(softmax(pred/T, dim=cross_section) * target_cs_z) + l2_weight * mean(pred)^2 + lambda_s * ||z_core||_1"
+  # Phase 9 验尸 (INS-032/035): Pearson + dampening = Reward Hacking 死路
+  # Softmax 在截面维度(dim=1)上计算，严禁 pred.view(-1) 全局展平 (Gemini audit)
+  # L2 惩罚 mean(pred)^2 而非 mean(pred^2)，只约束全局平移不破坏个体方差 (Gemini audit)
+  temperature: 1.0           # Softmax 锐度，越低越接近 argmax (INS-033)
+  l2_weight: 1e-4            # 极微弱 L2，取代 MSE anchor (INS-033)
+  lambda_s: 1e-7             # 隐式压缩 >> 显式压缩 (INS-019, 架构师指定)
   lambda_s_warmup: 2         # Phase 3 值; Phase 6 搜索 [2, 3, 5]
-  anchor_weight: 0.01        # Phase 6 搜索 [1e-4, 1e-3, 1e-2, 1e-1] (INS-018)
   masking:
     strategy: block_input    # 输入端 Block-wise Masking (非 MAE 输出重构)
     min_bars: 10             # 最小遮蔽长度
@@ -105,46 +106,48 @@ training:
 hpo:
   engine: google_vizier              # Bayesian optimization
   infrastructure: "A100 Spot (a2-highgpu-1g), 70 trials exploit, 8 parallel (INS-018 Phase 6)"
-  metric: "1-IC (Pearson correlation, reported as best_val_fvu for Vizier compat)"
-  # IC > 0.05 = Alpha confirmed, Phase 5a Spread > 8 BP = tradeable
-  # Phase 6 搜索空间 (INS-018: IC Loss 横截面相对论)
+  metric: "val_portfolio_return (Vizier MAXIMIZE, 直接度量 OOS 组合收益)"
+  # Phase 10: Softmax Portfolio Loss 直接优化组合收益，不再用 IC 作为代理指标
   search_space:
-    learning_rate:                   # IC Loss 梯度量级不同于 Huber
+    learning_rate:                   # Softmax Loss 梯度量级待实测
       type: loguniform
       range: [1e-4, 1e-3]
-    lambda_s:                        # 扩展到 1e-7 (IC Loss 梯度更小，需更弱 MDL)
+    lambda_s:                        # 隐式压缩为主，显式压缩极弱 (INS-019)
       type: loguniform
-      range: [1e-7, 1e-4]
+      range: [1e-8, 1e-5]
     warmup_epochs:                   # Gemini audit: [2,3,5] 配合 epochs=15
       type: choice
       values: [2, 3, 5]
-    hidden_dim:                      # 新增 64 测试小模型效率
+    hidden_dim:                      # 死锁 64 为首选，保留 128 做对照 (INS-033)
       type: choice
-      values: [64, 128, 256]
+      values: [64, 128]
     window_size_t:                   # 保持 RECON 范围
       type: choice
       values: [8, 16, 32]
-    batch_size:                      # 新增: IC Loss 截面统计稳定性
+    temperature:                     # Softmax 锐度 (INS-033, Gemini audit)
       type: choice
-      values: [128, 256, 512]
-    anchor_weight:                   # 新增: MSE 锚点强度 (Gemini: >=1e-4, FP16 安全)
-      type: choice
-      values: [0.0001, 0.001, 0.01, 0.1]
+      values: [0.5, 1.0, 2.0]
+    l2_weight:                       # mean-shift L2 惩罚强度 (Gemini audit: mean(pred)^2)
+      type: loguniform
+      range: [1e-5, 1e-3]
     # LOCKED (not searched):
     # coarse_graining_factor: 1 (INS-016: Volume-Clock 不可二次粗粒化)
     # macro_window: 160 (Phase 3 validated)
     # window_size_s: 10 (full LOB depth)
     # mask_prob: 0.0 (Phase 3 baseline)
     # payoff_horizon: 20 (INS-010: 禁止算法选择目标)
+    # batch_size: 物理参数，不可搜索 (Gemini audit: Softmax下batch_size=候选池大小)
+    # anchor_weight: 已删除 (INS-033: 被 l2_weight 取代)
   fixed_params:
     coarse_graining_factor: 1
     macro_window: 160
     window_size_s: 10
     mask_prob: 0.0
-    epochs: 15                       # IC Loss 需要 post-MDL 稳定时间 (Vanguard V2 peak at epoch 14)
+    batch_size: 256                  # 固定: Softmax 下 batch_size = 截面候选池大小 (Gemini audit)
+    epochs: 15                       # post-MDL 稳定时间 (Vanguard V2 peak at epoch 14)
     steps_per_epoch: 5000
     grad_clip: 1.0
-  success_criterion: "Top-3 trials Phase 5a Spread > 8 BP (扣 10 BP A股成本后正期望)"
+  success_criterion: "Top-3 trials Phase 5a Spread > 8 BP (扣 25 BP A股成本后正期望)"
 
 # ============================================================
 # 回测约束 (The Crucible)

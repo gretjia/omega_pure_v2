@@ -36,11 +36,7 @@ torch.backends.cudnn.allow_tf32 = True
 import webdataset as wds
 from torch.utils.data import DataLoader
 
-from omega_epiplexity_plus_core import (
-    OmegaMathematicalCompressor,
-    compute_epiplexity_mdl_loss,
-    compute_fvu,
-)
+from omega_epiplexity_plus_core import OmegaMathematicalCompressor
 from omega_webdataset_loader import create_dataloader, dynamic_processor
 
 # Optional: Vertex AI HPO metric reporting
@@ -58,8 +54,8 @@ TARGET_STD = 216.24   # BP
 _preemption_state = {
     "model": None, "optimizer": None, "scaler": None, "scheduler": None,
     "epoch": 0, "global_step": 0,
-    "best_fvu": float("inf"),        # Best val FVU (epoch-level)
-    "best_batch_fvu": float("inf"),   # Best train batch FVU (step-level, noisy but >inf)
+    "best_pf_ret": float("-inf"),        # Best val portfolio return (epoch-level)
+    "best_batch_pf_ret": float("-inf"),   # Best train batch portfolio return (step-level)
     "ckpt_path": None,
 }
 
@@ -74,97 +70,61 @@ def _sigterm_handler(signum, frame):
                         s["epoch"], s["global_step"], {"emergency": True},
                         scheduler=s.get("scheduler"))
     if _hpt is not None:
-        # Use best available FVU: val > batch > 999.0 (Vizier rejects inf)
-        report_fvu = s["best_fvu"]
-        if report_fvu == float("inf"):
-            report_fvu = s.get("best_batch_fvu", float("inf"))
-        if report_fvu == float("inf"):
-            report_fvu = 999.0
+        # Use best available portfolio return: val > batch > -999.0 (Vizier rejects inf)
+        report_pf = s["best_pf_ret"]
+        if report_pf == float("-inf"):
+            report_pf = s.get("best_batch_pf_ret", float("-inf"))
+        if report_pf == float("-inf"):
+            report_pf = -999.0
         _hpt.report_hyperparameter_tuning_metric(
-            hyperparameter_metric_tag="best_val_fvu",
-            metric_value=report_fvu, global_step=s["global_step"])
+            hyperparameter_metric_tag="best_val_portfolio_return",
+            metric_value=report_pf, global_step=s["global_step"])
     logger.warning(f"Emergency checkpoint saved (epoch={s['epoch']}, step={s['global_step']}, "
-                   f"fvu={s['best_fvu']:.4f}, batch_fvu={s.get('best_batch_fvu', float('inf')):.4f}). Exiting 143.")
+                   f"pf_ret={s['best_pf_ret']:.4f}, batch_pf_ret={s.get('best_batch_pf_ret', float('-inf')):.4f}). Exiting 143.")
     sys.exit(143)  # 128+SIGTERM(15) — signals abnormal termination for Spot VM restart
 
 
 signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
-def pearson_correlation_loss(y_pred, y_true, eps=1e-8):
-    """INS-018: Pearson IC Loss — optimize cross-sectional ranking, not absolute values."""
-    pred_flat = y_pred.view(-1)
-    true_flat = y_true.view(-1)
-    pred_centered = pred_flat - pred_flat.mean()
-    true_centered = true_flat - true_flat.mean()
-    cov = torch.sum(pred_centered * true_centered)
-    pred_std = torch.sqrt(torch.sum(pred_centered ** 2) + eps)
-    true_std = torch.sqrt(torch.sum(true_centered ** 2) + eps)
-    corr = cov / (pred_std * true_std)
-    return 1.0 - corr, corr
+def softmax_portfolio_loss(pred, target, z_core, lambda_s, epoch,
+                           warmup_epochs=2, temperature=1.0, l2_weight=1e-4):
+    """INS-033: Softmax Portfolio Loss (Gemini plan-audit V2, 2x审计通过)
 
+    Phase 10 Vanguard V5 — 彻底替代 Pearson IC Loss + MSE anchor + dampening.
 
-def asymmetric_pearson_loss(y_pred, y_true, downside_dampening=0.05, eps=1e-8):
-    """INS-030: Leaky Asymmetric Pearson — 95% variance weight on upside targets.
+    数学原理:
+    - Softmax(pred/T) 产生"赢家通吃"的资金权重分布
+    - 预测排名后50%的股票权重趋近0 → 梯度为0 → 自动屏蔽高熵噪音
+    - hd=64 全部脑容量 100% 用于压缩低熵建仓拓扑 (INS-028/033)
 
-    Downside targets (y_true < 0) are dampened by multiplying with downside_dampening.
-    This forces the hd=64 Epiplexity bottleneck to specialize in accumulation (upside)
-    topology compression, discarding high-entropy distribution (downside) noise.
-
-    Leaky design (5% gradient preserved) prevents NaN from all-negative batches.
-    Gemini audit 2026-03-30: gradient-safe, scale-invariant, mean-shift beneficial.
+    Gemini 审计修正:
+    - Batch 内 Z-score target → 消除跨时间市场偏移
+    - L2 penalty: mean(pred)^2 仅约束全局平移，不破坏个体方差
+    - Softmax 在 batch 维度 (dim=0) — Z-score 后 batch ≈ 可比截面
     """
-    target_asymmetric = torch.where(
-        y_true > 0, y_true, y_true * downside_dampening
-    )
-    pred_flat = y_pred.view(-1)
-    target_flat = target_asymmetric.view(-1)
-    pred_centered = pred_flat - pred_flat.mean()
-    target_centered = target_flat - target_flat.mean()
-    cov = torch.sum(pred_centered * target_centered)
-    pred_std = torch.sqrt(torch.sum(pred_centered ** 2) + eps)
-    target_std = torch.sqrt(torch.sum(target_centered ** 2) + eps)
-    corr = cov / (pred_std * target_std)
-    return 1.0 - corr, corr
+    pred_flat = pred.squeeze()  # [B]
 
+    # Batch 内 Z-score: 消除不同时间点的市场整体涨跌差异
+    # 与 spec loss_function 中的 target_cs_z 对齐
+    target_cs_z = (target - target.mean()) / (target.std() + 1e-8)  # [B]
 
-def compute_robust_loss(prediction, target, z_core, lambda_s, epoch,
-                        warmup_epochs=2, anchor_weight=0.01,
-                        downside_dampening=1.0):
-    """INS-018/030: IC Loss + MSE anchor + MDL.
+    # Softmax 资金权重 (数值稳定: 减去 max)
+    pred_stable = pred_flat - pred_flat.max().detach()
+    weights = torch.softmax(pred_stable / temperature, dim=0)  # [B]
 
-    When downside_dampening < 1.0 (Phase 9), uses asymmetric Pearson loss
-    and dampened MSE anchor to consistently suppress negative-tail gradients.
-    Gemini audit finding #4: anchor must also be dampened to prevent MSE
-    from dominating negative-tail gradient when IC gradient is suppressed.
-    """
-    pred = prediction.squeeze()
+    # 组合期望收益: sum(w_i * target_cs_z_i)
+    portfolio_return = torch.sum(weights * target_cs_z)
 
-    # 1. IC Loss: Pearson correlation (symmetric or asymmetric)
-    if downside_dampening < 1.0:
-        ic_loss, ic_val = asymmetric_pearson_loss(pred, target, downside_dampening)
-    else:
-        ic_loss, ic_val = pearson_correlation_loss(pred, target)
+    # L2 mean-shift penalty: 只约束全局平移，不压缩个体方差 (Gemini fix)
+    l2_penalty = l2_weight * (pred_flat.mean() ** 2)
 
-    # 2. MSE anchor: prevent prediction from exploding (scale constraint)
-    # MUST stay symmetric — anchors pred scale to real return distribution.
-    # Gemini Phase 9 audit: dampening MSE anchor was FATAL — removed scale
-    # constraint on negative predictions, causing Std_yhat explosion (0.007→0.093)
-    # and catastrophic overfitting (Train IC=0.18, Val IC=-0.001).
-    target_z = (target - TARGET_MEAN) / TARGET_STD
-    anchor_loss = anchor_weight * F.mse_loss(pred, target_z)
-
-    # 3. MDL warmup: lambda_s=0 for first warmup_epochs
+    # MDL warmup: lambda_s=0 for first warmup_epochs
     lambda_s_eff = lambda_s if epoch >= warmup_epochs else 0.0
     s_t = torch.norm(z_core, p=1, dim=-1).mean()
-    total = ic_loss + anchor_loss + lambda_s_eff * s_t
 
-    # 4. Monitoring: IC (replaces FVU), pred std
-    with torch.no_grad():
-        pred_std = pred.std().item()
-        fvu_compat = 1.0 - ic_val.item()
-
-    return total, ic_loss, s_t, torch.tensor(fvu_compat)
+    total = -portfolio_return + l2_penalty + lambda_s_eff * s_t
+    return total, portfolio_return, s_t
 
 
 logging.basicConfig(
@@ -359,10 +319,10 @@ def load_checkpoint(path, model, optimizer, scaler, device, scheduler=None):
 def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                     grad_clip, device, epoch, steps_per_epoch, global_step,
                     use_amp, warmup_epochs=2, overfit_batch=None, scheduler=None,
-                    start_step=0, ckpt_path=None, ckpt_every=0, anchor_weight=0.01,
-                    downside_dampening=1.0):
+                    start_step=0, ckpt_path=None, ckpt_every=0,
+                    temperature=1.0, l2_weight=1e-4):
     model.train()
-    running = {"total": 0.0, "h_t": 0.0, "s_t": 0.0, "fvu": 0.0, "count": 0}
+    running = {"total": 0.0, "pf_ret": 0.0, "s_t": 0.0, "count": 0}
     loader_iter = iter(loader) if overfit_batch is None else None
     skipped = 0
 
@@ -395,10 +355,9 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
             if use_amp:
                 with torch.autocast(device_type="cuda", dtype=torch.float16):
                     prediction, z_core = model(manifold, c_friction)
-                    total_loss, h_t, s_t, batch_fvu = compute_robust_loss(
+                    total_loss, pf_ret, s_t = softmax_portfolio_loss(
                         prediction, target, z_core, lambda_s, epoch, warmup_epochs,
-                        anchor_weight=anchor_weight,
-                        downside_dampening=downside_dampening
+                        temperature=temperature, l2_weight=l2_weight
                     )
                 scaler.scale(total_loss).backward()
                 scaler.unscale_(optimizer)
@@ -407,10 +366,9 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                 scaler.update()
             else:
                 prediction, z_core = model(manifold, c_friction)
-                total_loss, h_t, s_t, batch_fvu = compute_robust_loss(
+                total_loss, pf_ret, s_t = softmax_portfolio_loss(
                     prediction, target, z_core, lambda_s, epoch, warmup_epochs,
-                    anchor_weight=anchor_weight,
-                    downside_dampening=downside_dampening
+                    temperature=temperature, l2_weight=l2_weight
                 )
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -420,17 +378,16 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
             logger.error("CUDA OOM — parameter space INFEASIBLE for this trial")
             if _hpt is not None:
                 _hpt.report_hyperparameter_tuning_metric(
-                    hyperparameter_metric_tag="best_val_fvu",
-                    metric_value=999.0, global_step=0)
+                    hyperparameter_metric_tag="best_val_portfolio_return",
+                    metric_value=-999.0, global_step=0)
             sys.exit(0)  # Clean exit — prevents infinite restart on Spot VM
 
         if scheduler is not None:
             scheduler.step()
 
         running["total"] += total_loss.item()
-        running["h_t"] += h_t.item()
+        running["pf_ret"] += pf_ret.item()
         running["s_t"] += s_t.item()
-        running["fvu"] += batch_fvu.item()
         running["count"] += 1
         # Track prediction std (cross-sectional variance monitoring, INS-017)
         with torch.no_grad():
@@ -438,17 +395,17 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
             running["pred_std"] = running.get("pred_std", 0.0) + pred_std
         global_step += 1
 
-        # Update preemption state with batch-level FVU (for SIGTERM reporting)
-        fvu_val = batch_fvu.item()
+        # Update preemption state with batch-level portfolio return (for SIGTERM reporting)
+        pf_ret_val = pf_ret.item()
         _preemption_state["global_step"] = global_step
-        if fvu_val < _preemption_state.get("best_batch_fvu", float("inf")):
-            _preemption_state["best_batch_fvu"] = fvu_val
+        if pf_ret_val > _preemption_state.get("best_batch_pf_ret", float("-inf")):
+            _preemption_state["best_batch_pf_ret"] = pf_ret_val
 
         # Step-level checkpoint for Spot VM resilience (~every 3 min)
         if ckpt_path and ckpt_every > 0 and global_step % ckpt_every == 0:
             save_checkpoint(ckpt_path, model, optimizer, scaler,
                             epoch, global_step,
-                            {"step_ckpt": True, "best_fvu": _preemption_state.get("best_fvu", float("inf"))},
+                            {"step_ckpt": True, "best_pf_ret": _preemption_state.get("best_pf_ret", float("-inf"))},
                             scheduler=scheduler)
 
         if step_i % max(1, steps_per_epoch // 10) == 0:
@@ -456,18 +413,16 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
             logger.info(
                 f"Epoch {epoch} Step {step_i}/{steps_per_epoch} | "
                 f"Loss={running['total']/n:.6f} "
-                f"H_T={running['h_t']/n:.6f} "
+                f"PfRet={running['pf_ret']/n:.6f} "
                 f"S_T={running['s_t']/n:.4f} "
-                f"IC={1.0 - running['fvu']/n:.4f} "
                 f"Std_yhat={running.get('pred_std',0)/n:.6f}"
             )
 
     n = max(running["count"], 1)
     avg_metrics = {
         "total": running["total"] / n,
-        "h_t": running["h_t"] / n,
+        "pf_ret": running["pf_ret"] / n,
         "s_t": running["s_t"] / n,
-        "fvu": running["fvu"] / n,
         "steps": running["count"],
     }
     return avg_metrics, global_step
@@ -478,10 +433,10 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
 # ============================================================
 
 def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
-             warmup_epochs=2, anchor_weight=0.01):
+             warmup_epochs=2, temperature=1.0, l2_weight=1e-4):
     model.eval()
     all_preds, all_targets = [], []
-    running = {"total": 0.0, "h_t": 0.0, "s_t": 0.0, "count": 0}
+    running = {"total": 0.0, "pf_ret": 0.0, "s_t": 0.0, "count": 0}
 
     with torch.no_grad():
         for step_i, batch in enumerate(val_loader):
@@ -492,13 +447,13 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
             target = batch["target"].to(device)
 
             prediction, z_core = model(manifold, c_friction)
-            total_loss, h_t, s_t, _ = compute_robust_loss(
+            total_loss, pf_ret, s_t = softmax_portfolio_loss(
                 prediction, target, z_core, lambda_s, epoch, warmup_epochs,
-                anchor_weight=anchor_weight
+                temperature=temperature, l2_weight=l2_weight
             )
             bs = target.size(0)
             running["total"] += total_loss.item() * bs
-            running["h_t"] += h_t.item() * bs
+            running["pf_ret"] += pf_ret.item() * bs
             running["s_t"] += s_t.item() * bs
             running["count"] += bs
             all_preds.append(prediction.squeeze())
@@ -506,22 +461,16 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
 
     n = max(running["count"], 1)
     preds = torch.cat(all_preds)
-    targets = torch.cat(all_targets)
-
-    # INS-018: Rank IC (Pearson Correlation) replaces FVU as primary metric
-    _, ic_val = pearson_correlation_loss(preds, targets)
-    rank_ic = ic_val.item()
 
     # Cross-sectional prediction std (INS-017: Std Expansion monitoring)
     pred_std_bp = preds.std().item() * TARGET_STD
 
     return {
         "total": running["total"] / n,
-        "h_t": running["h_t"] / n,
+        "pf_ret": running["pf_ret"] / n,
         "s_t": running["s_t"] / n,
         "pred_std_bp": pred_std_bp,
-        "fvu": 1.0 - rank_ic,  # backward compat: lower = better IC
-        "rank_ic": rank_ic,
+        "portfolio_return": running["pf_ret"] / n,
         "n_samples": running["count"],
     }
 
@@ -540,7 +489,7 @@ def main():
     parser.add_argument("--steps_per_epoch", type=int, default=10000)
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--lambda_s", type=float, default=0.001)
+    parser.add_argument("--lambda_s", type=float, default=1e-7)
     parser.add_argument("--grad_clip", type=float, default=1.0)
     parser.add_argument("--val_split", type=float, default=0.2)
     # HPO-searchable (lambda x: int(float(x)) handles Vertex AI "128.0" format)
@@ -570,13 +519,11 @@ def main():
     # Spot VM resilience
     parser.add_argument("--ckpt_every_n_steps", type=int, default=0,
                         help="Save checkpoint every N steps (0=epoch-only, 500 recommended for Spot)")
-    # IC Loss (INS-018)
-    parser.add_argument("--anchor_weight", type=float, default=0.01,
-                        help="MSE anchor weight for IC Loss (0.0 to disable)")
-    parser.add_argument("--downside_dampening", type=float, default=0.3,
-                        help="INS-030: Leaky asymmetric target dampening "
-                             "(0.3=70%% upside focus, 1.0=symmetric). "
-                             "Gemini: 0.05 caused catastrophic overfitting; 0.3 preserves regularization")
+    # Softmax Portfolio Loss (INS-033, Phase 10)
+    parser.add_argument("--temperature", type=float, default=1.0,
+                        help="Softmax temperature (lower = sharper, closer to argmax)")
+    parser.add_argument("--l2_weight", type=float, default=1e-4,
+                        help="L2 mean-shift penalty weight (Gemini: mean(pred)^2, not mean(pred^2))")
     parser.add_argument("--no_amp", action="store_true", default=False,
                         help="Disable AMP, use pure FP32/TF32 (Gemini: AMP negative-optimizes tiny models)")
     args = parser.parse_args()
@@ -708,9 +655,9 @@ def main():
                 f"steps/epoch={args.steps_per_epoch}, batch={args.batch_size}, "
                 f"lr={args.lr}, lambda_s={args.lambda_s}, "
                 f"warmup={args.warmup_epochs}, mask_prob={args.mask_prob}, "
-                f"anchor_weight={args.anchor_weight}")
+                f"temperature={args.temperature}, l2_weight={args.l2_weight}")
 
-    best_fvu = _resumed_metrics.get("best_fvu", float("inf"))
+    best_pf_ret = _resumed_metrics.get("best_pf_ret", float("-inf"))
 
     for epoch in range(start_epoch, args.epochs):
         t0 = time.time()
@@ -725,67 +672,70 @@ def main():
             overfit_batch=overfit_batch, scheduler=scheduler,
             start_step=start_step, ckpt_path=ckpt_path,
             ckpt_every=args.ckpt_every_n_steps,
-            anchor_weight=args.anchor_weight,
-            downside_dampening=args.downside_dampening,
+            temperature=args.temperature, l2_weight=args.l2_weight,
         )
 
         val_metrics = validate(model, val_loader, args.lambda_s, device,
                                max_steps=args.max_val_steps, epoch=epoch,
                                warmup_epochs=args.warmup_epochs,
-                               anchor_weight=args.anchor_weight)
+                               temperature=args.temperature,
+                               l2_weight=args.l2_weight)
         elapsed = time.time() - t0
 
         logger.info(
             f"Epoch {epoch} DONE ({elapsed:.0f}s) | "
             f"Train: loss={train_metrics['total']:.6f} "
-            f"H_T={train_metrics['h_t']:.6f} S_T={train_metrics['s_t']:.4f} | "
+            f"PfRet={train_metrics['pf_ret']:.6f} S_T={train_metrics['s_t']:.4f} | "
             f"Val: loss={val_metrics['total']:.6f} "
-            f"IC={val_metrics.get('rank_ic',0):.4f} Std_yhat={val_metrics.get('pred_std_bp',0):.2f}BP "
+            f"PfRet={val_metrics.get('portfolio_return',0):.6f} "
+            f"Std_yhat={val_metrics.get('pred_std_bp',0):.2f}BP "
             f"({val_metrics['n_samples']} samples)"
         )
 
         # Save checkpoint every epoch (including scheduler for Spot VM resume)
         save_checkpoint(ckpt_path, model, optimizer, scaler, epoch + 1,
                         global_step, {"train": train_metrics, "val": val_metrics,
-                                      "best_fvu": best_fvu},
+                                      "best_pf_ret": best_pf_ret},
                         scheduler=scheduler)
 
-        # Save best model by FVU
-        if val_metrics["fvu"] < best_fvu:
-            best_fvu = val_metrics["fvu"]
+        # Save best model by portfolio return (higher = better)
+        val_pf_ret = val_metrics["portfolio_return"]
+        if val_pf_ret > best_pf_ret:
+            best_pf_ret = val_pf_ret
             best_path = os.path.join(args.output_dir, "best.pt")
             save_checkpoint(best_path, model, optimizer, scaler, epoch + 1,
                             global_step, {"train": train_metrics, "val": val_metrics,
-                                          "best_fvu": best_fvu},
+                                          "best_pf_ret": best_pf_ret},
                             scheduler=scheduler)
-            logger.info(f"New best FVU: {best_fvu:.4f}")
+            logger.info(f"New best Portfolio Return: {best_pf_ret:.6f}")
 
-        # Report metric for Vertex AI HPO (Vizier)
+        # Report metric for Vertex AI HPO (Vizier) — MAXIMIZE portfolio return
         if _hpt is not None:
             _hpt.report_hyperparameter_tuning_metric(
-                hyperparameter_metric_tag="best_val_fvu",
-                metric_value=best_fvu,
+                hyperparameter_metric_tag="best_val_portfolio_return",
+                metric_value=best_pf_ret,
                 global_step=epoch,
             )
 
         # Update preemption state (for SIGTERM handler on Spot VMs)
         _preemption_state.update({
             "epoch": epoch + 1, "global_step": global_step,
-            "best_fvu": best_fvu,
+            "best_pf_ret": best_pf_ret,
         })
 
         # Early stopping (MDL-shock aware: wait for warmup + 1 absorption epoch)
+        # Direction reversed: portfolio return should increase, stop if below threshold
         safe_epoch = max(args.early_stop_patience, args.warmup_epochs + 1)
         if args.early_stop_fvu > 0 and epoch >= safe_epoch:
-            if best_fvu > args.early_stop_fvu:
+            if best_pf_ret < args.early_stop_fvu:
                 logger.info(
-                    f"Early stopping: best FVU {best_fvu:.4f} > "
+                    f"Early stopping: best PfRet {best_pf_ret:.6f} < "
                     f"{args.early_stop_fvu} after {epoch + 1} epochs "
                     f"(safe_epoch={safe_epoch})"
                 )
                 break
 
-    logger.info(f"Training complete. Best FVU: {best_fvu:.4f}")
+    logger.info(f"Training complete. Best Portfolio Return: {best_pf_ret:.6f}")
 
 
 if __name__ == "__main__":

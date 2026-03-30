@@ -41,6 +41,10 @@
 | INS-029 | Phase 9 两条路径 — 非对称目标截断 vs 双头阿修罗 | 架构 | 2026-03-30 | L2 更新 | Phase 9 封印 |
 | INS-030 | Leaky Asymmetric Pearson Loss — downside_dampening=0.05 | 训练 | 2026-03-30 | L2 更新 | Phase 9 待执行 |
 | INS-031 | Vanguard V3 Protocol — 锁死底盘换发引擎 | 训练 | 2026-03-30 | NONE | Phase 9 待执行 |
+| INS-032 | Pearson 尺度免疫漏洞 — 非对称 dampening 诱导 Reward Hacking | 训练 | 2026-03-30 | NONE | 已生效 |
+| INS-033 | Softmax Portfolio Loss — 从统计相关性到交易逻辑的范式跃迁 | 训练 | 2026-03-30 | L2 更新 | 待用户确认 |
+| INS-034 | z_sparsity 作为交易扳机 — 高压缩率 = 主力控盘铁证 | 架构 | 2026-03-30 | NONE | 待实现 |
+| INS-035 | Phase 9 非对称 Pearson Loss 终极验尸 — 7 jobs 全败 | 训练 | 2026-03-30 | NONE | 已生效 |
 
 ---
 
@@ -79,3 +83,7 @@
 | INS-029 | compression_paradox_asymmetric_evolution | — |
 | INS-030 | phase9_asymmetric_evolution_leaky_pearson | — |
 | INS-031 | phase9_asymmetric_evolution_leaky_pearson | — |
+| INS-032 | metric_collapse_softmax_portfolio_loss | — |
+| INS-033 | metric_collapse_softmax_portfolio_loss | — |
+| INS-034 | metric_collapse_softmax_portfolio_loss | — |
+| INS-035 | metric_collapse_softmax_portfolio_loss | — |
