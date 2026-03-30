@@ -1,43 +1,44 @@
-# Phase 9 Training Config — Leaky Asymmetric Pearson Loss (INS-030)
-# Hardware: L4 Spot (Gemini audit: A100 overkill for 19.7K params)
-# Data: pipe:gcloud storage cat (no staging, no FUSE)
-# T29 hyperparams LOCKED (INS-031 Vanguard V3 Protocol)
+# Phase 9 Training Config v3 — Fat Node + Local SSD + On-demand
+# Gemini recommendation: 556GB data → 750GB Local SSD, all I/O local
+# No Spot (eliminates preemption during validation)
+# Validation 15min → 1-2min (NVMe vs GCS pipe)
 workerPoolSpecs:
 - machineSpec:
-    machineType: g2-standard-8
+    machineType: g2-standard-24
     acceleratorType: NVIDIA_L4
-    acceleratorCount: 1
+    acceleratorCount: 2
   replicaCount: 1
   diskSpec:
     bootDiskType: pd-ssd
     bootDiskSizeGb: 100
   containerSpec:
-    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase9-v1
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase9-v2
     command:
-    - python3
-    - /app/train.py
-    args:
-    # Data — GCS pipe streaming (no FUSE, no staging)
-    - --shard_dir=gs://omega-pure-data/wds_shards_v3_full
-    - --output_dir=/gcs/omega-pure-data/checkpoints/phase9_asymmetric
-    # T29 locked hyperparams (from Phase 6 HPO trial 29)
-    - --hidden_dim=64
-    - --window_size_t=32
-    - --lr=3.2e-4
-    - --lambda_s=1e-7
-    - --warmup_epochs=2
-    - --anchor_weight=1e-3
-    - --batch_size=128
-    - --coarse_graining_factor=1
-    # Phase 9: asymmetric loss
-    - --downside_dampening=0.3
-    # Training config
-    - --epochs=20
-    - --steps_per_epoch=10000
-    - --num_workers=4
-    - --no_amp
-    # Spot VM resilience
-    - --ckpt_every_n_steps=500
-    - --resume
-scheduling:
-  strategy: SPOT
+    - bash
+    - -c
+    - |
+      set -e
+      echo "=== Stage 1: Pull data to Local SSD (~3 min) ==="
+      mkdir -p /local_ssd/shards
+      gcloud storage cp -r "gs://omega-pure-data/wds_shards_v3_full/omega_shard_*.tar" /local_ssd/shards/ 2>&1 | tail -5
+      echo "Shards on local SSD: $(ls /local_ssd/shards/*.tar | wc -l)"
+
+      echo "=== Stage 2: Train (20 epochs, Local SSD I/O) ==="
+      PYTHONUNBUFFERED=1 python3 /app/train.py \
+        --shard_dir=/local_ssd/shards \
+        --output_dir=/gcs/omega-pure-data/checkpoints/phase9_v3_local_ssd \
+        --hidden_dim=64 \
+        --window_size_t=32 \
+        --lr=3.2e-4 \
+        --lambda_s=1e-7 \
+        --warmup_epochs=2 \
+        --anchor_weight=1e-3 \
+        --batch_size=128 \
+        --coarse_graining_factor=1 \
+        --downside_dampening=0.3 \
+        --epochs=20 \
+        --steps_per_epoch=10000 \
+        --num_workers=12 \
+        --no_amp \
+        --ckpt_every_n_steps=500 \
+        --resume
