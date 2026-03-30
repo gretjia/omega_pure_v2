@@ -91,6 +91,7 @@
 - **C-024**: MSE Anchor dampening → Std_yhat 爆炸 + 过拟合 (Train IC=0.18, Val IC=0)。Anchor 必须对称（Ω1: 实测 val IC）
 - **C-025**: downside_dampening=0.05 → 丢弃 50% 数据 → 19.7K 模型过拟合。最小 0.3（Ω2: 先量化数据量）
 - **C-026**: pipe 对推理最优（单 pass 556GB），对训练是瓶颈（20 epoch = 11.1TB + 验证 15min > 训练 13min）。训练必须 staging（Ω6）
+- **C-027**: HPO 搜出的超参只对当时的 Loss 有效。换 Loss 后 anchor_weight=0.001→Std_yhat 爆炸。非对称 Loss 需 anchor≥0.01（Ω2: 先量化）
 
 ### AI 治理
 - **C-021**: AI 自己写烟测测自己 → 自洽性掩盖正确性。审计独立于作者（Ω5）
