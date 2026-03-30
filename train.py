@@ -104,17 +104,57 @@ def pearson_correlation_loss(y_pred, y_true, eps=1e-8):
     return 1.0 - corr, corr
 
 
+def asymmetric_pearson_loss(y_pred, y_true, downside_dampening=0.05, eps=1e-8):
+    """INS-030: Leaky Asymmetric Pearson — 95% variance weight on upside targets.
+
+    Downside targets (y_true < 0) are dampened by multiplying with downside_dampening.
+    This forces the hd=64 Epiplexity bottleneck to specialize in accumulation (upside)
+    topology compression, discarding high-entropy distribution (downside) noise.
+
+    Leaky design (5% gradient preserved) prevents NaN from all-negative batches.
+    Gemini audit 2026-03-30: gradient-safe, scale-invariant, mean-shift beneficial.
+    """
+    target_asymmetric = torch.where(
+        y_true > 0, y_true, y_true * downside_dampening
+    )
+    pred_flat = y_pred.view(-1)
+    target_flat = target_asymmetric.view(-1)
+    pred_centered = pred_flat - pred_flat.mean()
+    target_centered = target_flat - target_flat.mean()
+    cov = torch.sum(pred_centered * target_centered)
+    pred_std = torch.sqrt(torch.sum(pred_centered ** 2) + eps)
+    target_std = torch.sqrt(torch.sum(target_centered ** 2) + eps)
+    corr = cov / (pred_std * target_std)
+    return 1.0 - corr, corr
+
+
 def compute_robust_loss(prediction, target, z_core, lambda_s, epoch,
-                        warmup_epochs=2, anchor_weight=0.01):
-    """INS-018: IC Loss + MSE anchor + MDL. Replaces Huber on absolute BP."""
+                        warmup_epochs=2, anchor_weight=0.01,
+                        downside_dampening=1.0):
+    """INS-018/030: IC Loss + MSE anchor + MDL.
+
+    When downside_dampening < 1.0 (Phase 9), uses asymmetric Pearson loss
+    and dampened MSE anchor to consistently suppress negative-tail gradients.
+    Gemini audit finding #4: anchor must also be dampened to prevent MSE
+    from dominating negative-tail gradient when IC gradient is suppressed.
+    """
     pred = prediction.squeeze()
 
-    # 1. IC Loss: maximize batch-level Pearson correlation (ranking signal)
-    ic_loss, ic_val = pearson_correlation_loss(pred, target)
+    # 1. IC Loss: Pearson correlation (symmetric or asymmetric)
+    if downside_dampening < 1.0:
+        ic_loss, ic_val = asymmetric_pearson_loss(pred, target, downside_dampening)
+    else:
+        ic_loss, ic_val = pearson_correlation_loss(pred, target)
 
-    # 2. Tiny MSE anchor: prevent prediction from exploding (FP16 safety)
+    # 2. MSE anchor: prevent prediction from exploding (FP16 safety)
+    # Gemini audit #4: dampen anchor target too, so negative-tail gradients
+    # are consistently suppressed across both IC and MSE loss terms.
     target_z = (target - TARGET_MEAN) / TARGET_STD
-    anchor_loss = anchor_weight * F.mse_loss(pred, target_z)
+    if downside_dampening < 1.0:
+        target_z_anchor = torch.where(target > 0, target_z, target_z * downside_dampening)
+    else:
+        target_z_anchor = target_z
+    anchor_loss = anchor_weight * F.mse_loss(pred, target_z_anchor)
 
     # 3. MDL warmup: lambda_s=0 for first warmup_epochs
     lambda_s_eff = lambda_s if epoch >= warmup_epochs else 0.0
@@ -124,9 +164,7 @@ def compute_robust_loss(prediction, target, z_core, lambda_s, epoch,
     # 4. Monitoring: IC (replaces FVU), pred std
     with torch.no_grad():
         pred_std = pred.std().item()
-        # Return ic_val as "fvu" slot for backward compat with logging
-        # Negative IC = we want to maximize, so batch_fvu here = 1 - IC
-        fvu_compat = 1.0 - ic_val.item()  # lower = better IC, same direction as FVU
+        fvu_compat = 1.0 - ic_val.item()
 
     return total, ic_loss, s_t, torch.tensor(fvu_compat)
 
@@ -354,7 +392,8 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                     prediction, z_core = model(manifold, c_friction)
                     total_loss, h_t, s_t, batch_fvu = compute_robust_loss(
                         prediction, target, z_core, lambda_s, epoch, warmup_epochs,
-                        anchor_weight=anchor_weight
+                        anchor_weight=anchor_weight,
+                        downside_dampening=args.downside_dampening
                     )
                 scaler.scale(total_loss).backward()
                 scaler.unscale_(optimizer)
@@ -365,7 +404,8 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                 prediction, z_core = model(manifold, c_friction)
                 total_loss, h_t, s_t, batch_fvu = compute_robust_loss(
                     prediction, target, z_core, lambda_s, epoch, warmup_epochs,
-                    anchor_weight=anchor_weight
+                    anchor_weight=anchor_weight,
+                    downside_dampening=args.downside_dampening
                 )
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -528,6 +568,9 @@ def main():
     # IC Loss (INS-018)
     parser.add_argument("--anchor_weight", type=float, default=0.01,
                         help="MSE anchor weight for IC Loss (0.0 to disable)")
+    parser.add_argument("--downside_dampening", type=float, default=0.05,
+                        help="INS-030: Leaky asymmetric target dampening "
+                             "(0.05=95%% upside focus, 1.0=symmetric Pearson)")
     args = parser.parse_args()
 
     # --- Single instance lock (CLAUDE.md rule #25) ---
