@@ -578,6 +578,8 @@ def main():
     parser.add_argument("--downside_dampening", type=float, default=0.05,
                         help="INS-030: Leaky asymmetric target dampening "
                              "(0.05=95%% upside focus, 1.0=symmetric Pearson)")
+    parser.add_argument("--no_amp", action="store_true", default=False,
+                        help="Disable AMP, use pure FP32/TF32 (Gemini: AMP negative-optimizes tiny models)")
     args = parser.parse_args()
 
     # --- Single instance lock (CLAUDE.md rule #25) ---
@@ -594,8 +596,8 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    use_amp = device.type == "cuda"  # Safe: log1p compresses features to [-30,30], within fp16 range
-    logger.info(f"Device: {device}, AMP: {use_amp}")
+    use_amp = device.type == "cuda" and not args.no_amp
+    logger.info(f"Device: {device}, AMP: {use_amp}, TF32: {torch.backends.cuda.matmul.allow_tf32}")
 
     # Add file handler
     fh = logging.FileHandler(os.path.join(args.output_dir, "train.log"))
@@ -603,14 +605,28 @@ def main():
     logger.addHandler(fh)
 
     # --- Temporal validation split ---
-    all_shards = sorted(glob.glob(os.path.join(args.shard_dir, "omega_shard_*.tar")))
-    if not all_shards:
-        logger.error(f"No shards found in {args.shard_dir}")
-        sys.exit(1)
+    if args.shard_dir.startswith("gs://"):
+        # GCS pipe mode: generate pipe:gcloud storage cat URLs (no FUSE, no staging)
+        # Gemini audit: glob on GCS FUSE triggers 1992 API calls; pipe avoids this entirely
+        import subprocess
+        ls_result = subprocess.run(
+            ["gcloud", "storage", "ls", os.path.join(args.shard_dir, "omega_shard_*.tar")],
+            capture_output=True, text=True, timeout=60
+        )
+        gcs_urls = sorted([u.strip() for u in ls_result.stdout.strip().split("\n") if u.strip()])
+        if not gcs_urls:
+            logger.error(f"No shards found in {args.shard_dir}")
+            sys.exit(1)
+        all_shards = [f"pipe:gcloud storage cat {url}" for url in gcs_urls]
+        logger.info(f"GCS pipe mode: {len(all_shards)} shards via streaming")
+    else:
+        all_shards = sorted(glob.glob(os.path.join(args.shard_dir, "omega_shard_*.tar")))
+        if not all_shards:
+            logger.error(f"No shards found in {args.shard_dir}")
+            sys.exit(1)
 
-    # [Gemini Fix 4] Skip slow gcsfuse getsize; handler auto-skips corrupt shards at read time
     valid_shards = all_shards
-    logger.info(f"Using all {len(valid_shards)} shards (corrupt shards bypassed by handler)")
+    logger.info(f"Using {len(valid_shards)} shards (corrupt shards bypassed by handler)")
     n_train = int(len(valid_shards) * (1 - args.val_split))
     train_shards = valid_shards[:n_train]
     val_shards = valid_shards[n_train:]
