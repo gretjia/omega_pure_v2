@@ -39,6 +39,8 @@
 | INS-027 | 宏观气候雷达 — 熊市 IC≈0 时强制减仓 | 架构 | 2026-03-30 | L2 更新 | Phase 8 待实装 |
 | INS-028 | 压缩悖论 — 建仓=低熵可压缩，派发=高熵不可压缩 | 物理 | 2026-03-30 | NONE | Phase 9 封印 |
 | INS-029 | Phase 9 两条路径 — 非对称目标截断 vs 双头阿修罗 | 架构 | 2026-03-30 | L2 更新 | Phase 9 封印 |
+| INS-030 | Leaky Asymmetric Pearson Loss — downside_dampening=0.05 | 训练 | 2026-03-30 | L2 更新 | Phase 9 待执行 |
+| INS-031 | Vanguard V3 Protocol — 锁死底盘换发引擎 | 训练 | 2026-03-30 | NONE | Phase 9 待执行 |
 
 ---
 
@@ -75,3 +77,5 @@
 | INS-027 | phase7_audit_phase8_deep_fat_tail | — |
 | INS-028 | compression_paradox_asymmetric_evolution | — |
 | INS-029 | compression_paradox_asymmetric_evolution | — |
+| INS-030 | phase9_asymmetric_evolution_leaky_pearson | — |
+| INS-031 | phase9_asymmetric_evolution_leaky_pearson | — |
