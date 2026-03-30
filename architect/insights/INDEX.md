@@ -33,6 +33,12 @@
 | INS-021 | INS-011 废弃 — 日内约束→中长期波段 (Swing Trading) | 架构 | 2026-03-29 | L2 更新 | **时间尺度被 INS-022 修正** |
 | INS-022 | 时空换算修正 — 20 bars = 0.4 天，非"数天到数周" | 物理 | 2026-03-29 | L2 更新 | 待确认 |
 | INS-023 | T+1 模拟三铁律 — 物理锁 + 涨停买不进 + 跌停卖不出 | 架构 | 2026-03-29 | L2 更新 | 待确认 |
+| INS-024 | 绝对零过拟合认证 — OOS/IS IC = 1.00 | 度量 | 2026-03-30 | NONE | 已生效 |
+| INS-025 | 对称 Loss 的数学诅咒 — 模型退化为波动率雷达 | 训练 | 2026-03-30 | NONE | Phase 9 待处理 |
+| INS-026 | 确信度过滤 — |pred-median|>30 BP 时 IC 翻倍至 0.054 | 架构 | 2026-03-30 | L2 更新 | Phase 8 待实装 |
+| INS-027 | 宏观气候雷达 — 熊市 IC≈0 时强制减仓 | 架构 | 2026-03-30 | L2 更新 | Phase 8 待实装 |
+| INS-028 | 压缩悖论 — 建仓=低熵可压缩，派发=高熵不可压缩 | 物理 | 2026-03-30 | NONE | Phase 9 封印 |
+| INS-029 | Phase 9 两条路径 — 非对称目标截断 vs 双头阿修罗 | 架构 | 2026-03-30 | L2 更新 | Phase 9 封印 |
 
 ---
 
@@ -63,3 +69,9 @@
 | INS-021 | compression_is_intelligence_phase7_golive | — |
 | INS-022 | spacetime_correction_phase7_golive_v2 | — |
 | INS-023 | spacetime_correction_phase7_golive_v2 | — |
+| INS-024 | phase7_audit_phase8_deep_fat_tail | — |
+| INS-025 | phase7_audit_phase8_deep_fat_tail | — |
+| INS-026 | phase7_audit_phase8_deep_fat_tail | — |
+| INS-027 | phase7_audit_phase8_deep_fat_tail | — |
+| INS-028 | compression_paradox_asymmetric_evolution | — |
+| INS-029 | compression_paradox_asymmetric_evolution | — |

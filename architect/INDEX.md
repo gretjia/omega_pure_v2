@@ -19,3 +19,5 @@
 | 2026-03-28 | 横截面相对论 (Cross-Sectional Relativity) | [directives/2026-03-28_cross_sectional_relativity.md](directives/2026-03-28_cross_sectional_relativity.md) | AXIOM UPDATE REQUIRED — 待用户确认 |
 | 2026-03-29 | 压缩即智能正名 + Phase 7 Go-Live 授权 | [directives/2026-03-29_compression_is_intelligence_phase7_golive.md](directives/2026-03-29_compression_is_intelligence_phase7_golive.md) | AXIOM UPDATE REQUIRED — 被 V2 修正 |
 | 2026-03-29 | 时空换算修正 + Phase 7 Go-Live V2 | [directives/2026-03-29_spacetime_correction_phase7_golive_v2.md](directives/2026-03-29_spacetime_correction_phase7_golive_v2.md) | AXIOM UPDATE REQUIRED — 待用户确认 |
+| 2026-03-30 | Phase 7 终极审计 + Phase 8 "深海肥尾"重构 | [directives/2026-03-30_phase7_audit_phase8_deep_fat_tail.md](directives/2026-03-30_phase7_audit_phase8_deep_fat_tail.md) | AXIOM UPDATE REQUIRED — 待用户确认 |
+| 2026-03-30 | 压缩悖论 — 多空解耦 + Phase 9 非对称重构 | [directives/2026-03-30_compression_paradox_asymmetric_evolution.md](directives/2026-03-30_compression_paradox_asymmetric_evolution.md) | NONE — Phase 9 封印 |
