@@ -146,15 +146,13 @@ def compute_robust_loss(prediction, target, z_core, lambda_s, epoch,
     else:
         ic_loss, ic_val = pearson_correlation_loss(pred, target)
 
-    # 2. MSE anchor: prevent prediction from exploding (FP16 safety)
-    # Gemini audit #4: dampen anchor target too, so negative-tail gradients
-    # are consistently suppressed across both IC and MSE loss terms.
+    # 2. MSE anchor: prevent prediction from exploding (scale constraint)
+    # MUST stay symmetric — anchors pred scale to real return distribution.
+    # Gemini Phase 9 audit: dampening MSE anchor was FATAL — removed scale
+    # constraint on negative predictions, causing Std_yhat explosion (0.007→0.093)
+    # and catastrophic overfitting (Train IC=0.18, Val IC=-0.001).
     target_z = (target - TARGET_MEAN) / TARGET_STD
-    if downside_dampening < 1.0:
-        target_z_anchor = torch.where(target > 0, target_z, target_z * downside_dampening)
-    else:
-        target_z_anchor = target_z
-    anchor_loss = anchor_weight * F.mse_loss(pred, target_z_anchor)
+    anchor_loss = anchor_weight * F.mse_loss(pred, target_z)
 
     # 3. MDL warmup: lambda_s=0 for first warmup_epochs
     lambda_s_eff = lambda_s if epoch >= warmup_epochs else 0.0
@@ -575,9 +573,10 @@ def main():
     # IC Loss (INS-018)
     parser.add_argument("--anchor_weight", type=float, default=0.01,
                         help="MSE anchor weight for IC Loss (0.0 to disable)")
-    parser.add_argument("--downside_dampening", type=float, default=0.05,
+    parser.add_argument("--downside_dampening", type=float, default=0.3,
                         help="INS-030: Leaky asymmetric target dampening "
-                             "(0.05=95%% upside focus, 1.0=symmetric Pearson)")
+                             "(0.3=70%% upside focus, 1.0=symmetric). "
+                             "Gemini: 0.05 caused catastrophic overfitting; 0.3 preserves regularization")
     parser.add_argument("--no_amp", action="store_true", default=False,
                         help="Disable AMP, use pure FP32/TF32 (Gemini: AMP negative-optimizes tiny models)")
     args = parser.parse_args()

@@ -83,9 +83,9 @@ training:
   target_model: Omega-TIB   # Topological Information Bottleneck (正名自 SpatioTemporal2DMAE)
   loss: "Leaky Asymmetric IC Loss + Dampened MSE anchor + MDL (INS-018 + INS-030)"
   loss_function: "1 - Pearson_IC(pred, asym_target) + anchor_weight * MSE(pred, asym_target_z) + lambda_s * ||z_core||_1"
-  downside_dampening: 0.05   # INS-030: target<0 乘以 0.05 (95% upside focus, 5% leaky gradient)
-  # Phase 7-8 证明对称 Pearson → asymmetry 上限 1.2 (数学不可达 3.0)
-  # Gemini audit: anchor 也必须 dampen (finding #4: MSE 否则在负尾反客为主)
+  downside_dampening: 0.3    # INS-030: target<0 乘以 0.3 (70% upside focus, 30% regularization)
+  # Phase 9 v1 教训: dampening=0.05 + MSE anchor dampening → catastrophic overfitting
+  # (Train IC=0.18, Val IC=-0.001, Std_yhat explosion). MSE anchor 必须保持对称。
   lambda_s: 0.001            # Phase 3 值; Phase 6 搜索 [1e-7, 1e-4]
   lambda_s_warmup: 2         # Phase 3 值; Phase 6 搜索 [2, 3, 5]
   anchor_weight: 0.01        # Phase 6 搜索 [1e-4, 1e-3, 1e-2, 1e-1] (INS-018)

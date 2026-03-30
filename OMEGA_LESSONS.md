@@ -87,6 +87,10 @@
 - **C-019**: float("inf") 报给 Vizier → 全盘 INFEASIBLE。兜底 999.0
 - **C-020**: 不同 HPO 复用同一 checkpoint 目录 → 架构不兼容崩溃。唯一 output dir
 
+### 训练
+- **C-024**: MSE Anchor dampening → Std_yhat 爆炸 + 过拟合 (Train IC=0.18, Val IC=0)。Anchor 必须对称（Ω1: 实测 val IC）
+- **C-025**: downside_dampening=0.05 → 丢弃 50% 数据 → 19.7K 模型过拟合。最小 0.3（Ω2: 先量化数据量）
+
 ### AI 治理
 - **C-021**: AI 自己写烟测测自己 → 自洽性掩盖正确性。审计独立于作者（Ω5）
 - **C-022**: 接收架构师指令即执行 → 188GB 数据丢失。指令 ≠ 授权

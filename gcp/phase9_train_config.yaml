@@ -30,7 +30,7 @@ workerPoolSpecs:
     - --batch_size=128
     - --coarse_graining_factor=1
     # Phase 9: asymmetric loss
-    - --downside_dampening=0.05
+    - --downside_dampening=0.3
     # Training config
     - --epochs=20
     - --steps_per_epoch=10000
