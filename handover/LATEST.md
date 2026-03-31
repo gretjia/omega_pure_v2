@@ -1,86 +1,114 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-03-30 — **STATUS: Phase 9 暂停 — 非对称 Loss 泛化问题待解决**
+Last Updated: 2026-03-31 — **STATUS: Phase 10 训练完成 — Softmax Portfolio Loss 收敛, 待回测**
 
 ## Current State
-- **Phase 8 完成**: board_loss_cap Sharpe +34%, 执行层到达理论极限
-- **Phase 9 进行中但暂停**: 7 个 Vertex AI job 迭代 (v1→v4)，全部停止
-- **核心问题**: Leaky Asymmetric Pearson Loss 导致 val IC 持续下降
-  - v1: dampening=0.05 + MSE anchor dampened → val IC=-0.001 (灾难性过拟合)
-  - v3c: dampening=0.3 + anchor 对称 + anchor_weight=0.001 → val IC 0.006→0.004→0.003 (3 epoch 单调下降)
-  - v4: anchor_weight=0.01 → staging 中被手动停止 (等待架构决策)
-- **旗舰模型**: T29 (hd=64, 19.7K params) — Phase 6 对称版仍是最优 (OOS/IS=1.00)
+- **Phase 10 完成**: Softmax Portfolio Loss 替代 Pearson IC Loss, 20 epoch 训练成功收敛
+- **Best Model**: Epoch 16, Val PfRet=0.210, Std_yhat=5055 BP
+  - Checkpoint: `gs://omega-pure-data/checkpoints/phase10_softmax_v5/best.pt`
+  - 最后 4 epoch (16-19) 稳定在 Val PfRet ≈ 0.207, Std ≈ 4900 BP
+- **Phase 9 废弃**: 非对称 Pearson Loss 被判死刑 (INS-032/035), 7 jobs 全败
+- **旗舰对比待定**: Phase 6 T29 (IC=0.066, OOS/IS=1.00) vs Phase 10 (PfRet=0.210, 不同 metric)
 
-## Changes This Session (14 commits)
-- `738a462` Phase 7 comprehensive report (17-test diagnostic)
-- `f5aa5a6` Architect ingest INS-024~029 (6 insights)
-- `a94447d` Phase 8 simulate 重铸 + 12-run sweep
-- `4c69d04` Phase 8 comprehensive report
-- `77808ee` Architect ingest INS-030~031 (Phase 9 Go-Live)
-- `0b2bf49` Phase 9 Leaky Asymmetric Pearson Loss
-- `6157a3d` Gemini audit: vectorize masking, pin_memory
-- `ea00751` GCS pipe mode + L4 job config
-- `516e536` **FIX**: MSE anchor 恢复对称 (v1 过拟合根因)
-- `f820d11` Fat Node + Local SSD + On-demand
-- `ab3fa20` C-026: pipe 推理最优，训练需 staging
-- `075621d` **FIX**: anchor_weight 0.001→0.01 (v3c val IC 下降)
-- `b694cbf` Phase 9 evidence package (全版本数据)
+## Changes This Session (2 commits + 未提交变更)
+- `02a2fbe` feat: Phase 10 Vanguard V5 — Softmax Portfolio Loss replaces Pearson IC Loss
+- `bbad361` perf: GCS I/O optimizations — FUSE v2 file-cache + fast_npy_decoder + Spot
+- 未提交: CLAUDE.md 热修复纪律 (#21-22), OMEGA_LESSONS C-028~C-034, safe_build/submit 修复, manifest 更新, phase10 YAML 修正, phase7_inference.py 除零修复
 
 ## Key Decisions
-1. **Phase 8 执行层到顶**: asymmetry 1.20 在 IC=0.028 下不可达 3.0
-2. **Phase 9 非对称 Loss**: 方向正确但实现困难
-   - MSE anchor 必须保持对称 (v1 教训)
-   - dampening=0.05 太极端 → 0.3 仍不够
-   - anchor_weight=0.001 (HPO 对称值) 对非对称 Loss 太弱
-3. **Pipe vs Staging**: 推理用 pipe (单 pass)，训练用 staging (多 epoch) — C-026
-4. **Vertex AI 快速迭代**: Custom Job 每次新 VM → 数据重复拉取 → 考虑 Workbench/Filestore
+1. **Pearson IC Loss → Softmax Portfolio Loss**: 架构师裁决 + Gemini 3 轮审计通过 (INS-033)
+   - Softmax "赢家通吃"权重 × batch Z-scored targets
+   - L2 mean-shift penalty: `mean(pred)^2` (Gemini 修正)
+   - 彻底删除 dampening / MSE anchor / Pearson
+2. **On-demand 而非 Spot**: 用户选择, 总费用 ~$9.6
+3. **pd-ssd staging 而非 FUSE v2**: 因 pd-balanced 配置漂移事故 (C-030), 回退到 Phase 9 staging 方案
+4. **z_sparsity per-sample 导出**: INS-034, `tools/phase7_inference.py` 已实现
 
-## Phase 9 训练数据汇总 (7 jobs)
-| Version | dampening | anchor_wt | MSE sym? | Val IC | 结局 |
-|---------|-----------|-----------|----------|--------|------|
-| v1 | 0.05 | 0.001 | **NO** | -0.001 | 灾难性过拟合 |
-| v2b | 0.3 | 0.001 | YES | — | Spot 抢占 |
-| v3c | 0.3 | 0.001 | YES | 0.006→0.004→0.003 | val IC 单调下降 |
-| v4 | 0.3 | **0.01** | YES | — | staging 中停止 |
+## Phase 10 训练数据汇总 (20 epochs, Job 8443272505497485312)
+| Epoch | Val PfRet | Val Std (BP) | 阶段 |
+|-------|-----------|-------------|------|
+| 0-1 | 0.011→0.033 | 435→518 | 冷启动+warmup |
+| 2-3 | 0.166→0.168 | 2518→3208 | 快速学习 Peak 1 |
+| 4-8 | 0.083→0.074 | 4456→5382 | 崩塌+震荡 |
+| 9-10 | 0.186→0.189 | 6372→5801 | 二次学习 Peak 2 |
+| 11-15 | 0.175→0.122 | 3055→4851 | 高方差震荡 |
+| **16-19** | **0.210→0.207** | **5055→4918** | **收敛 (Best=Epoch 16)** |
 
 ## Next Steps (需要架构决策)
-1. **选择迭代方式**:
-   - A) pipe 模式 (0 min 启动, 慢 epoch) — 快速试参数
-   - B) Workbench (持久 VM + GPU) — 最适合迭代
-   - C) Filestore NFS (共享存储) — 生产级
-2. **anchor_weight=0.01 是否足够?** 需要先跑出 val IC 数据
-3. **是否需要更根本的改变?** dampening 可能不是正确的非对称化路径
-4. **递交 PHASE9_EVIDENCE.md 给架构师审计**
+
+### Step 1: 全量推理 (导出 predictions + z_sparsity)
+```bash
+# 脚本: tools/phase7_inference.py
+# 需先下载 best.pt 到本地或用 GCS 路径
+python3 tools/phase7_inference.py \
+  --checkpoint <best.pt 路径> \
+  --shard_dir /omega_pool/wds_shards_v3_full/ \
+  --date_map /omega_pool/phase7/shard_date_map.json \
+  --output phase7_results/phase10_predictions.parquet \
+  --hidden_dim 64 --window_size_t 32 --batch_size 512
+```
+
+### Step 2: 回测模拟 (Phase 8 simulate)
+```bash
+# 脚本: tools/phase7_simulate.py
+python3 tools/phase7_simulate.py \
+  --predictions phase7_results/phase10_predictions.parquet \
+  --cost_bp 25 \
+  --output_dir phase7_results/phase10_results/
+```
+
+### Step 3: 与 Phase 6 T29 对比
+- Phase 6 predictions: `phase7_results/predictions.parquet`
+- Phase 10 predictions: `phase7_results/phase10_predictions.parquet`
+- 回测器输出 Sharpe / asymmetry ratio / profit factor → apple-to-apple 对比
+
+### Step 4: 架构改进 (Phase 10.1)
+- Std_yhat=5055 BP 偏高, L2 mean-shift 对 Softmax 无效 (mean≈0 天然)
+- 修正: `l2_weight * pred.var()` 替代 `l2_weight * pred.mean()**2`, weight 提到 1e-2
+- 递交架构师: Phase 10 证据包 + Std_yhat 问题报告
 
 ## Warnings
-- **Phase 6 T29 对称版仍是最强**: OOS/IS=1.00, 所有非对称尝试均未超越
-- **anchor_weight 必须重新标定**: Phase 6 HPO 的 0.001 对非对称 Loss 无效 (C-027)
-- **每次 Custom Job 重新拉 556GB**: 20 min 浪费 × N 次迭代
-- **Std_yhat 膨胀是系统性的**: Pearson 尺度不变性 + 弱 anchor → 预测值爆炸
+- **Std_yhat=5055 BP 是隐患**: PfRet 和 Std 正相关, 模型可能在"赌大的"而非真正学排序
+- **OOS/IS=1.38 异常**: Val > Train, 可能是 batch Z-score 的统计噪音, 回测前不可信任
+- **费用超支**: 预估 $3 实际 $9.6, 根因: 配置漂移 (C-030) + ETA 未实测校准 (C-033/034)
+- **未提交变更**: CLAUDE.md, OMEGA_LESSONS, safe scripts, manifest 等需 commit
 
 ## Remote Node Status
 本次会话未涉及远程节点（全部在 Vertex AI 上训练）
 
+## Architect Insights (本次会话 — 4 条)
+- INS-032: Pearson 尺度免疫漏洞 — 非对称 dampening 诱导 Reward Hacking
+- INS-033: Softmax Portfolio Loss — 从统计相关性到交易逻辑的范式跃迁
+- INS-034: z_sparsity 作为交易扳机 — 高压缩率 = 主力控盘铁证
+- INS-035: Phase 9 非对称 Pearson Loss 终极验尸 — 7 jobs 全败
+
+## New Lessons (本次会话 — 7 条)
+- C-028: pd-ssd 吞吐与容量挂钩, 训练用 Local SSD 或 FUSE v2
+- C-029: Nearline 检索费陷阱 ($111/20epoch)
+- C-030: 热修复配置漂移 — 只改出错字段, 禁止重写
+- C-031: Vertex AI diskType/diskSize API 约束
+- C-032: checkpoint_interval=0 除零崩溃
+- C-033: ETA 必须用 Epoch 0 实测校准
+- C-034: batch_size 变更必须重新量化 ETA
+
 ## Machine-Readable State
 ```yaml
-phase: 9
-status: "paused_val_ic_declining"
-flagship_model: {trial: 29, ic: 0.0661, params: {hd: 64, wt: 32}}
-phase9_attempts: 7
-phase9_best_val_ic: 0.006
-phase9_issue: "asymmetric loss causes val IC decline + Std_yhat explosion"
-phase9_next: "anchor_weight=0.01 (v4) or architecture change"
-commits_this_session: 14
-insights_this_session: [INS-024, INS-025, INS-026, INS-027, INS-028, INS-029, INS-030, INS-031]
-new_lessons: [C-024, C-025, C-026, C-027]
-reports: [PHASE7_REPORT.md, PHASE8_REPORT.md, PHASE9_EVIDENCE.md]
+phase: 10
+status: "training_complete_pending_backtest"
+best_model:
+  epoch: 16
+  val_pf_ret: 0.2103
+  val_std_yhat_bp: 5055
+  checkpoint: "gs://omega-pure-data/checkpoints/phase10_softmax_v5/best.pt"
+  params: {hd: 64, wt: 32, temperature: 1.0, l2_weight: 1e-4, lambda_s: 1e-7}
+phase10_job: 8443272505497485312
+phase10_cost_usd: 9.6
+phase10_duration_hours: 12.5
+commits_this_session: 2
+uncommitted_changes: true
+insights_this_session: [INS-032, INS-033, INS-034, INS-035]
+new_lessons: [C-028, C-029, C-030, C-031, C-032, C-033, C-034]
+next_step_scripts:
+  inference: "tools/phase7_inference.py"
+  simulate: "tools/phase7_simulate.py"
+  backtest_config: "gcp/phase5a_backtest.yaml"
 ```
-
-## Architect Insights (本次会话 — 8 条)
-- INS-024: 零过拟合认证 — OOS/IS=1.00
-- INS-025: 对称 Loss 数学诅咒 — 模型退化为波动率雷达
-- INS-026: 确信度过滤 — IC 翻倍至 0.054 (simulate 中无效)
-- INS-027: 宏观气候雷达 — 实测有害
-- INS-028: 压缩悖论 — 建仓=低熵，派发=高熵
-- INS-029: Phase 9 两条路径 — 非对称目标截断 vs 双头阿修罗
-- INS-030: Leaky Asymmetric Pearson Loss — dampening=0.3
-- INS-031: Vanguard V3 Protocol — 锁死底盘换发引擎

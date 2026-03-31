@@ -97,6 +97,13 @@
 - **C-028**: pd-ssd 吞吐与容量挂钩（0.48 MB/s per GB）→ 800GB 仅 384 MB/s。训练数据必须用 Local SSD（4.8 GB/s）或 FUSE v2 file-cache（Ω2: 先量化 IOPS）
 - **C-029**: GCS Nearline 看似省钱（$5.5 vs $11/月），但 20 epoch × 556GB = 11.1TB 检索费 $111。训练数据必须 Standard（Ω2: 先量化总成本）
 
+### 配置管理
+- **C-030**: 热修复配置错误时**只改出错字段，禁止重写整个文件**。Phase 10: `pd-balanced` 报错→重写 YAML→静默丢掉 Local SSD→FUSE 裸跑 11h/$9（预期 4h/$3）。修复后必须 diff 原始推荐 vs 修改后（Ω1: 只信实测，不信"我改好了"）
+- **C-031**: Vertex AI `bootDiskType` 只接受 `pd-ssd`/`pd-standard`/`hyperdisk-balanced`，不接受 `pd-balanced`。Canary `bootDiskSizeGb` 最小 100GB（不是 50GB）（Ω2: 先查 API 约束再写配置）
+- **C-032**: `checkpoint_interval=0` 导致 `% 0` 除零崩溃。任何用作除数/模数的参数必须在使用前检查 > 0（Ω1: 测试不能只跑默认值）
+- **C-033**: ETA 计算引用了外部审计的假设值（NVMe 吞吐）但实际部署在 pd-ssd → 预估 4h 实际 12h。ETA 必须用 Epoch 0 实测 pace 校准，不可引用非本次运行的推算（Ω1: 只信实测）
+- **C-034**: batch_size 翻倍（128→256）导致训练 I/O 翻倍，但 ETA 未重新计算。改变任何影响 I/O 吞吐的参数后必须重新量化 ETA（Ω2: 先量化后行动）
+
 ### AI 治理
 - **C-021**: AI 自己写烟测测自己 → 自洽性掩盖正确性。审计独立于作者（Ω5）
 - **C-022**: 接收架构师指令即执行 → 188GB 数据丢失。指令 ≠ 授权

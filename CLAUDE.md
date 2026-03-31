@@ -64,23 +64,30 @@
 19. **部署到远程节点** → 先 `/pre-flight`，重计算走 `heavy-workload.slice`
 20. **Cron 报告** → 从 `gcp/manifest.jsonl` 读取 Job ID + Docker tag，不自造名字
 
+### 热修复纪律（C-030 教训）
+21. **配置报错时只改出错字段**，禁止重写整个文件。修复后必须 `diff` 原始版本，确认无静默丢失
+22. **提交 Vertex AI Job 前**，人工检查 YAML 三项: (1) diskType 合法? (2) 关键性能配置(SSD/staging/cache)在? (3) 参数默认值是否安全(除零/边界)?
+
 ### 工程规范
 21. 禁止紧密循环 `gc.collect()` | 禁止无条件 `use_threads=True`
 22. ETL 单实例锁（fcntl.LOCK_EX） | PyArrow `iter_batches` 禁止 `.collect()`
 23. 断点续传强制（>1h 批处理必须 checkpoint）
 24. `PYTHONUNBUFFERED=1` 用于所有 nohup/后台任务
 
+### 会话退出强制流程
+25. **Session 结束前**，必须将本次会话遇到的**所有 debug、错误、失误**压缩记录到 `OMEGA_LESSONS.md` 案例库（编号递增，每条 ≤ 2 行，归因到 Ω 公理）。包括但不限于：配置错误、API 拒绝、参数遗漏、工程踩坑、费用误判。**不可遗漏，不可延迟到下个 session。**
+
 ### 上下文管理
-25. `OMEGA_LESSONS.md` — **唯一经验源**（元公理 + 操作手册 + 案例库）
-26. `handover/LATEST.md` — 当前项目状态（纯状态，不含经验）
-27. `VIA_NEGATIVA.md` — 已冻结归档（原始证据，不再追加）
-28. `architect/current_spec.yaml` — 架构规范 | `architect/INDEX.md` — 指令时间线
+26. `OMEGA_LESSONS.md` — **唯一经验源**（元公理 + 操作手册 + 案例库）
+27. `handover/LATEST.md` — 当前项目状态（纯状态，不含经验）
+28. `VIA_NEGATIVA.md` — 已冻结归档（原始证据，不再追加）
+29. `architect/current_spec.yaml` — 架构规范 | `architect/INDEX.md` — 指令时间线
 
 ### 硬件拓扑（详见 `handover/HARDWARE_TOPOLOGY.md`）
-29. 四节点: omega-vm(控制) → linux1-lx / windows1-w1(计算) → zephrymac-studio(架构师)
-30. SSH 别名: `ssh linux1-lx` | `ssh windows1-w1` | `ssh zephrymac-studio`
+30. 四节点: omega-vm(控制) → linux1-lx / windows1-w1(计算) → zephrymac-studio(架构师)
+31. SSH 别名: `ssh linux1-lx` | `ssh windows1-w1` | `ssh zephrymac-studio`
 
 ### 用户画像
-31. 独狼量化研究员，零编程基础 vibe coder
-32. 优势: 品味、市场洞察、Taleb 哲学
-33. 中文为主，技术术语可英文，简明扼要
+32. 独狼量化研究员，零编程基础 vibe coder
+33. 优势: 品味、市场洞察、Taleb 哲学
+34. 中文为主，技术术语可英文，简明扼要

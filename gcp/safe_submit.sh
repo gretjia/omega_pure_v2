@@ -16,7 +16,7 @@ PROJECT="gen-lang-client-0250995579"
 REGION="us-central1"
 DATA_BUCKET="gs://omega-pure-data/wds_shards_v3_full/"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-JOB_CONFIG="${SCRIPT_DIR}/phase7_job_config.yaml"
+JOB_CONFIG="${3:-${SCRIPT_DIR}/phase7_job_config.yaml}"  # optional 3rd arg: custom config path
 MANIFEST="${SCRIPT_DIR}/manifest.jsonl"
 DISK_SAFETY_MULTIPLIER=2
 

@@ -1,9 +1,6 @@
-# Phase 10 Vanguard V5 — Softmax Portfolio Loss
-# Gemini GCS audit optimizations:
-#   1. Local SSD x2 (750GB NVMe, 4.8 GB/s vs pd-ssd 384 MB/s)
-#   2. GCS FUSE v2 file-cache (auto-cache on first epoch, NVMe for subsequent 19)
-#   3. Spot instance ($0.25/hr vs $0.75/hr, SIGTERM checkpoint at exit 143)
-#   4. Boot disk downgraded to pd-balanced 100GB (OS only)
+# Phase 10 Vanguard V5 — Softmax Portfolio Loss (On-demand + Local Staging)
+# Strategy: gcloud storage cp 556GB → pd-ssd /tmp/shards (~5min), then 20 epochs local I/O
+# pd-ssd 800GB: 384 MB/s read, sufficient for 19.7K model (I/O > compute)
 workerPoolSpecs:
 - machineSpec:
     machineType: g2-standard-8
@@ -11,9 +8,8 @@ workerPoolSpecs:
     acceleratorCount: 1
   replicaCount: 1
   diskSpec:
-    bootDiskType: pd-balanced
-    bootDiskSizeGb: 100
-  nfsMounts: []
+    bootDiskType: pd-ssd
+    bootDiskSizeGb: 800
   containerSpec:
     imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v5
     command:
@@ -22,15 +18,17 @@ workerPoolSpecs:
     - |
       set -e
       echo "=== Phase 10 Vanguard V5: Softmax Portfolio Loss ==="
-      echo "GCS FUSE v2 + Local SSD file cache — no manual staging needed"
+      echo "=== Stage 1: Pull data to local pd-ssd (~5 min) ==="
+      mkdir -p /tmp/shards
+      t0=$(date +%s)
+      gcloud storage cp "gs://omega-pure-data/wds_shards_v3_full/omega_shard_*.tar" /tmp/shards/ 2>&1 | tail -5
+      t1=$(date +%s)
+      echo "Staged $(ls /tmp/shards/*.tar | wc -l) shards in $((t1-t0))s"
+      df -h /tmp
 
-      # Verify FUSE mount and Local SSD
-      ls /gcs/omega-pure-data/wds_shards_v3_full/ | head -3
-      echo "Shards visible: $(ls /gcs/omega-pure-data/wds_shards_v3_full/omega_shard_*.tar | wc -l)"
-
-      echo "=== Train (20 epochs, FUSE auto-cache to NVMe) ==="
+      echo "=== Stage 2: Train (20 epochs, local I/O) ==="
       PYTHONUNBUFFERED=1 python3 /app/train.py \
-        --shard_dir=/gcs/omega-pure-data/wds_shards_v3_full \
+        --shard_dir=/tmp/shards \
         --output_dir=/gcs/omega-pure-data/checkpoints/phase10_softmax_v5 \
         --hidden_dim=64 \
         --window_size_t=32 \
@@ -47,6 +45,3 @@ workerPoolSpecs:
         --no_amp \
         --ckpt_every_n_steps=500 \
         --resume
-scheduling:
-  restartJobOnWorkerRestart: true
-  strategy: SPOT

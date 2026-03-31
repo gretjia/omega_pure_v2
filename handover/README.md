@@ -19,6 +19,14 @@ Critical handover state, architectural documentation, workflow automation, and e
 - **[`ETL_ENGINEERING_LESSONS.md`](./ETL_ENGINEERING_LESSONS.md)**: OOM deadlocks, cgroup CPU throttling, Python anti-patterns
 - **[`../audit/gemini_bitter_lessons.md`](../audit/gemini_bitter_lessons.md)**: Gemini CLI 48h disaster post-mortem
 
+## Training & Backtest Scripts
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| [`../train.py`](../train.py) | Training loop (Softmax Portfolio Loss) | `python3 train.py --shard_dir ... --epochs 20` |
+| [`../tools/phase7_inference.py`](../tools/phase7_inference.py) | Full inference → predictions + z_sparsity parquet | `python3 tools/phase7_inference.py --checkpoint ... --shard_dir ...` |
+| [`../tools/phase7_simulate.py`](../tools/phase7_simulate.py) | T+1 overnight swing backtest simulator | `python3 tools/phase7_simulate.py --predictions ... --cost_bp 25` |
+| [`../backtest_5a.py`](../backtest_5a.py) | Phase 5a spread backtest | `python3 backtest_5a.py ...` |
+
 ## Methodology & Roadmap
 - **[`EXPERIMENTAL_DESIGN_AND_ROADMAP.md`](./EXPERIMENTAL_DESIGN_AND_ROADMAP.md)**: Derivation of physical constants (vol_threshold, window_size) and Phase 2-4 success criteria
 - **[`V3_SMOKE_TEST_PLAN.md`](./V3_SMOKE_TEST_PLAN.md)**: V3 shard validation and Vertex AI ignition plan

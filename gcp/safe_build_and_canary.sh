@@ -109,7 +109,7 @@ workerPoolSpecs:
     replicaCount: 1
     diskSpec:
       bootDiskType: pd-ssd
-      bootDiskSizeGb: 50
+      bootDiskSizeGb: 100
     containerSpec:
       imageUri: ${IMAGE_TAG}
       command:

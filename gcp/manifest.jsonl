@@ -8,3 +8,6 @@
   "data_gb": 580,
   "display_name": "phase7-inference-v15"
 }
+{"ts":"2026-03-30T14:53:53Z","type":"canary","phase":10,"version":5,"docker_tag":"us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v5","canary_job_id":"projects/269018079180/locations/us-central1/customJobs/3980908962215100416","canary_status":"PASS"}
+{"ts":"2026-03-30T14:54:52Z","type":"full_job","phase":10,"version":5,"job_id":"6354728178304417792","docker_tag":"us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v5","display_name":"phase10-vanguard-v5-softmax"}
+{"ts":"2026-03-30T15:14:02Z","type":"full_job","phase":10,"version":5,"job_id":"8443272505497485312","docker_tag":"us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v5","display_name":"phase10-v5-staging","note":"staging mode, on-demand"}

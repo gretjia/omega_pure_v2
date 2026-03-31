@@ -15,8 +15,8 @@ The clock on the wall is a human illusion; the tape is the only truth. In V3, we
 A heavy-duty, anti-OOM ETL engine that transforms TB-scale raw L1 Ticks into WebDataset `.tar` shards.
 *   **Dynamic Thresholding**: Computes `vol_threshold` per symbol based on rolling ADV.
 *   **Ring Buffer Slicing**: Uses a sliding window (`MACRO_WINDOW=160`, `STRIDE=20`) to capture continuous causal manifolds without tumbling-window truncation.
-*   **Tensor Geometry**: Produces tensors of shape `[160, 10, 7]`.
-*   **Features**: `[Bid_Price, Bid_Vol, Ask_Price, Ask_Vol, Close, SRL_Residual, Epiplexity]`.
+*   **Tensor Geometry**: Produces tensors of shape `[160, 10, 10]`.
+*   **Features**: `[Bid_P, Bid_V, Ask_P, Ask_V, Close, reserved, reserved, ΔP, macro_V_D, macro_σ_D]`.
 
 ### 2. WebDataset Loader (`omega_webdataset_loader.py`)
 A stateless, event-driven dataloader designed for distributed training on GCP Vertex AI.
@@ -30,10 +30,28 @@ The axiomatic engine implementing **Finite Window Topological Attention** and **
 *   **`vol_threshold`**: Derived as `Rolling_ADV / 50` (Targeting ~50 bars per trading day).
 *   **`window_size`**: Locked at `160`, found via Autocorrelation (ACF) decay analysis to be the maximum memory limit of micro-structural signals.
 
-## 🚀 Deployment Roadmap
-1.  **Phase 1: The Data Collapse**: TB-scale Parquet to 188GB+ WDS Shards.
-2.  **Phase 2: HPO Blitzkrieg**: 100x L4 GPU Bayesian search for optimal spatial-temporal scales.
-3.  **Phase 4: The Crucible**: Event-study backtesting with **Asymmetry Payoff Ratio > 3.0**.
+## 🚀 Phase History
+| Phase | Status | Description |
+|-------|--------|-------------|
+| 1 | Done | TB-scale Parquet → 1992 WDS Shards (556GB) |
+| 2-4 | Done | HPO Blitzkrieg — Bayesian search on L4/A100 |
+| 6 | Done | IC Loss HPO — T29 flagship (hd=64, IC=0.066, OOS/IS=1.00) |
+| 7 | Done | Full inference + diagnostic (17-test) |
+| 8 | Done | Backtest simulate — board_loss_cap Sharpe +34% |
+| 9 | Failed | Asymmetric Pearson Loss — 7 jobs, all Reward Hacking |
+| **10** | **Complete** | **Softmax Portfolio Loss — Val PfRet=0.210, pending backtest** |
+
+## 📁 Key Scripts
+| Script | Purpose |
+|--------|---------|
+| `train.py` | Training loop (Softmax Portfolio Loss, Phase 10) |
+| `omega_epiplexity_plus_core.py` | Math core (SRL + FWT + MDL) |
+| `omega_webdataset_loader.py` | WebDataset streaming loader |
+| `tools/omega_etl_v3_topo_forge.py` | ETL: Parquet → WebDataset shards |
+| `tools/phase7_inference.py` | Full inference (exports predictions + z_sparsity) |
+| `tools/phase7_simulate.py` | T+1 overnight swing backtest simulator |
+| `gcp/safe_build_and_canary.sh` | Docker build + 1-shard canary |
+| `gcp/safe_submit.sh` | Full job submission with manifest tracking |
 
 ---
-*For internal AI Agents: Detailed engineering traps and post-mortems are located in `/handover/ETL_ENGINEERING_LESSONS.md`.*
+*For internal AI Agents: Start at [`handover/LATEST.md`](handover/LATEST.md). Engineering post-mortems in [`handover/ETL_ENGINEERING_LESSONS.md`](handover/ETL_ENGINEERING_LESSONS.md). Experience library in [`OMEGA_LESSONS.md`](OMEGA_LESSONS.md).*

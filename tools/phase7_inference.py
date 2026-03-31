@@ -356,7 +356,7 @@ def main():
                      f"z_sparsity: {avg_sparsity:.3f}")
 
         # F4 FIX: Flush to parquet chunk every checkpoint_interval shards
-        if (shard_i + 1) % args.checkpoint_interval == 0 and col_symbol:
+        if args.checkpoint_interval > 0 and (shard_i + 1) % args.checkpoint_interval == 0 and col_symbol:
             import pyarrow as pa
             import pyarrow.parquet as pq
 
