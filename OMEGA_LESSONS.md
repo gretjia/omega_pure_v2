@@ -130,6 +130,9 @@
 - **C-049**: Train-Serve Skew 恶魔（训练目标变更但推理代码未同步更新）。Phase 11c 改输出绝对 BP，推理仍残留 `* TARGET_STD` 反向缩放，导致 20 BP 预测暴涨至 4319 BP，摧毁回测引擎。架构变更（如 Loss 量纲）必须**同步审查全栈文件**，避免前线突变而后勤崩溃（Ω5: 验证链对齐）。
 - **C-050**: 局部修复残留"死代码/幽灵 Bug"。废弃架构级变量（TARGET_STD）或算子（.squeeze()）时，必须 `grep -r` 全栈扫描，不可只改报错行。Gemini 修复遗漏 4 处 .squeeze() + 引入 IndentationError 致 train.py 无法编译（Ω5: 验证者自身也需审计）。
 - **C-051**: 量纲剧变与方差坍缩。更换 Loss（如 Softmax→Pointwise Huber）或移除归一化后，梯度尺度剧变，必须重标定 λ_s 和 Huber δ。Phase 11c δ=50 削峰 + λ_s=1e-3 结构税 → z_core 脑死亡（0.44%），模型输出均值常数 ~30 BP。仪表盘 Std_yhat 被旧代码 *216x 放大为幻觉（Ω1: 只信实测）。
+- **C-052**: **长训练前必须独立烟测**。Phase 11c 跑完 20 epoch (~9h GPU) 才发现模型脑死亡（pred_std=5.6 BP）。长训练（>2h）启动后 E0-E1 完成时必须：(1) 用修复后推理脚本跑 checkpoint（不是训练日志），(2) 断言 pred_std 在物理区间。仪表盘可能被旧 Docker 代码污染，仅靠日志判断健康是自欺欺人（Ω1: 只信实测，Ω3: 测试环境=生产环境）。
+- **C-053**: **Docker 构建时间点 vs 代码修复时间点必须对齐**。Phase 11c Docker `phase11-v3` 在修复 `d744c4d` 之前构建，训练用旧代码（含 `*TARGET_STD`），仪表盘 15 epoch 全是 216x 幻觉。代码修复后必须重建 Docker + canary，"git 上修了"不等于"Docker 里也修了"（Ω3: 测试环境=生产环境）。
+- **C-054**: **范式切换是全栈原子事件，不是单点修改**。Softmax→Pointwise Huber 触发 6 个级联故障（λ_s 量纲、推理缩放、仪表盘幻觉、Docker 错位、HPO 过时、Epiplexity 前提破坏），逐个发现逐个救火，耗 9h GPU + 4h 人力。范式切换必须执行**原子 checklist**：(1) grep 全栈受影响变量, (2) 重标定正则化超参, (3) 重建 Docker + canary, (4) E1 后独立烟测, (5) 更新 spec + HPO, (6) 同步推理/回测脚本。不走 checklist = 埋定时炸弹（Ω4: 可执行>可记忆）。
 
 ### AI 治理
 - **C-021**: AI 自己写烟测测自己 → 自洽性掩盖正确性。审计独立于作者（Ω5）
