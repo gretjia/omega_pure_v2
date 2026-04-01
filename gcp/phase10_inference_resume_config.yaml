@@ -1,0 +1,53 @@
+# Phase 10 Inference RESUME — On-demand (NOT Spot), remaining 292 shards
+# Auto-resumes from gs://omega-pure-data/phase10/phase10_predictions.parquet.progress.pkl
+# Progress: 1700/1992 done, 7,965,812 samples in 17 chunks
+workerPoolSpecs:
+- machineSpec:
+    machineType: g2-standard-8
+    acceleratorType: NVIDIA_L4
+    acceleratorCount: 1
+  replicaCount: 1
+  diskSpec:
+    bootDiskType: pd-ssd
+    bootDiskSizeGb: 1300
+  containerSpec:
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v7
+    command:
+    - bash
+    - -c
+    - |
+      set -e
+      echo "=== Phase 10 Inference RESUME: 292 remaining shards ==="
+      echo "=== Stage 1: Pull data to local pd-ssd ==="
+      mkdir -p /tmp/shards
+      t0=$(date +%s)
+      gcloud storage cp "gs://omega-pure-data/wds_shards_v3_full/omega_shard_*.tar" /tmp/shards/ 2>&1 | tail -5
+      t1=$(date +%s)
+      echo "Staged $(ls /tmp/shards/*.tar | wc -l) shards in $((t1-t0))s"
+
+      echo "=== Stage 2: Resume inference from checkpoint ==="
+      PYTHONUNBUFFERED=1 python3 /app/phase7_inference.py \
+        --checkpoint=/gcs/omega-pure-data/checkpoints/phase10_softmax_v5/best.pt \
+        --shard_dir=/tmp/shards \
+        --date_map=/gcs/omega-pure-data/phase7/shard_date_map.json \
+        --output=/gcs/omega-pure-data/phase10/phase10_predictions.parquet \
+        --hidden_dim=64 \
+        --window_size_t=32 \
+        --window_size_s=4 \
+        --batch_size=512 \
+        --checkpoint_interval=50
+
+      echo "=== Stage 3: Verify final output ==="
+      python3 -c "
+      import pyarrow.parquet as pq
+      t = pq.read_table('/gcs/omega-pure-data/phase10/phase10_predictions.parquet')
+      print(f'Total rows: {t.num_rows:,}')
+      print(f'Columns: {t.column_names}')
+      assert 'z_sparsity' in t.column_names, 'MISSING z_sparsity!'
+      assert t.num_rows > 9_000_000, f'Too few rows: {t.num_rows}'
+      for col in ['pred_bp', 'target_bp', 'z_sparsity']:
+          nulls = t.column(col).null_count
+          assert nulls == 0, f'{col} has {nulls} nulls!'
+      print('ALL CHECKS PASSED')
+      print('INFERENCE_PASS')
+      "

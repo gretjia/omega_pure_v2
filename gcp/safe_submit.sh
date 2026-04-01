@@ -21,7 +21,7 @@ MANIFEST="${SCRIPT_DIR}/manifest.jsonl"
 DISK_SAFETY_MULTIPLIER=2
 
 # ── Args ───────────────────────────────────────────────────────────────
-if [[ $# -ne 2 ]]; then
+if [[ $# -lt 2 ]]; then
     echo "Usage: bash gcp/safe_submit.sh <phase> <version>"
     echo "Example: bash gcp/safe_submit.sh 7 14"
     exit 1
@@ -83,6 +83,36 @@ fi
 
 DOCKER_TAG="$LAST_DOCKER_TAG"
 echo "  Canary PASS confirmed for: ${DOCKER_TAG}"
+echo ""
+
+# ── Step 1.5: C-028 disk type check (Ω4: 可执行 > 可记忆) ────────────
+echo "[Step 1.5] Checking disk type (C-028: must use Local SSD for full jobs)..."
+
+DISK_SIZE_GB="$(python3 -c "
+import yaml
+with open('${JOB_CONFIG}') as f:
+    cfg = yaml.safe_load(f)
+print(cfg['workerPoolSpecs'][0]['diskSpec'].get('bootDiskSizeGb', 0))
+")"
+
+DISK_TYPE="$(python3 -c "
+import yaml
+with open('${JOB_CONFIG}') as f:
+    cfg = yaml.safe_load(f)
+print(cfg['workerPoolSpecs'][0]['diskSpec'].get('bootDiskType', 'UNKNOWN'))
+")"
+
+# C-028: Large pd-ssd boot disk (>500GB) without local SSD reference = data staging on slow disk
+# Small boot disk (<= 500GB) is OK — data may come from FUSE or local SSD
+if [[ "$DISK_SIZE_GB" -gt 500 ]] && [[ "$DISK_TYPE" == "pd-ssd" || "$DISK_TYPE" == "pd-balanced" || "$DISK_TYPE" == "pd-standard" ]]; then
+    echo ""
+    echo "  ⛔ C-028: bootDiskSizeGb=${DISK_SIZE_GB} with ${DISK_TYPE} — likely staging data on slow disk."
+    echo "  Use Local SSD, FUSE direct read, or reduce boot disk to <=500GB."
+    echo ""
+    echo "ABORT: Fix disk config in ${JOB_CONFIG}"
+    exit 1
+fi
+echo "  Disk: ${DISK_TYPE} ${DISK_SIZE_GB}GB — OK"
 echo ""
 
 # ── Step 2: Calculate disk requirement (Ω2: 先量化后行动) ─────────────

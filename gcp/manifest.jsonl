@@ -1,13 +1,11 @@
-{"type":"canary","canary_status":"PASS","docker_tag":"phase7-v15","canary_job":"4978460677724176384","rate":466,"timestamp":"2026-03-29T18:06:42Z","notes":"pipe streaming, no staging, 100GB disk"}
-{
-  "ts": "2026-03-29T18:08:12Z",
-  "type": "full_job",
-  "job_id": "9032122554822688768",
-  "docker_tag": "phase7-v15",
-  "disk_gb": 100,
-  "data_gb": 580,
-  "display_name": "phase7-inference-v15"
-}
-{"ts":"2026-03-30T14:53:53Z","type":"canary","phase":10,"version":5,"docker_tag":"us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v5","canary_job_id":"projects/269018079180/locations/us-central1/customJobs/3980908962215100416","canary_status":"PASS"}
-{"ts":"2026-03-30T14:54:52Z","type":"full_job","phase":10,"version":5,"job_id":"6354728178304417792","docker_tag":"us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v5","display_name":"phase10-vanguard-v5-softmax"}
-{"ts":"2026-03-30T15:14:02Z","type":"full_job","phase":10,"version":5,"job_id":"8443272505497485312","docker_tag":"us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v5","display_name":"phase10-v5-staging","note":"staging mode, on-demand"}
+{"type": "canary", "canary_status": "PASS", "docker_tag": "phase7-v15", "canary_job": "4978460677724176384", "rate": 466, "timestamp": "2026-03-29T18:06:42Z", "notes": "pipe streaming, no staging, 100GB disk"}
+{"ts": "2026-03-29T18:08:12Z", "type": "full_job", "job_id": "9032122554822688768", "docker_tag": "phase7-v15", "disk_gb": 100, "data_gb": 580, "display_name": "phase7-inference-v15"}
+{"ts": "2026-03-30T14:53:53Z", "type": "canary", "phase": 10, "version": 5, "docker_tag": "us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v5", "canary_job_id": "projects/269018079180/locations/us-central1/customJobs/3980908962215100416", "canary_status": "PASS"}
+{"ts": "2026-03-30T14:54:52Z", "type": "full_job", "phase": 10, "version": 5, "job_id": "6354728178304417792", "docker_tag": "us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v5", "display_name": "phase10-vanguard-v5-softmax"}
+{"ts": "2026-03-30T15:14:02Z", "type": "full_job", "phase": 10, "version": 5, "job_id": "8443272505497485312", "docker_tag": "us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v5", "display_name": "phase10-v5-staging", "note": "staging mode, on-demand"}
+{"ts": "2026-03-31T07:53:25Z", "type": "canary", "phase": 10, "version": 6, "docker_tag": "us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v6", "canary_job_id": "projects/269018079180/locations/us-central1/customJobs/6929201013584822272", "canary_status": "PASS", "build_id": "b"}
+{"ts": "2026-03-31T08:13:07Z", "type": "full_job", "job_id": "7954332878765031424", "docker_tag": "us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v6", "disk_gb": 1300, "data_gb": 634, "display_name": "phase10-inference-v6"}
+{"ts": "2026-03-31T08:46:03Z", "type": "canary", "phase": 10, "version": 7, "docker_tag": "us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v7", "canary_job_id": "projects/269018079180/locations/us-central1/customJobs/2048565654910402560", "canary_status": "PASS", "build_id": "b"}
+{"ts": "2026-03-31T09:01:31Z", "type": "full_job", "job_id": "5770227796978696192", "docker_tag": "us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v7", "disk_gb": 1300, "data_gb": 634, "display_name": "phase10-inference-v7"}
+{"ts": "2026-03-31T17:42:45Z", "type": "canary", "phase": 11, "version": 1, "docker_tag": "us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase11-v1", "canary_job_id": "projects/269018079180/locations/us-central1/customJobs/7465877037148798976", "canary_status": "PASS", "build_id": "b"}
+{"ts": "2026-04-01T02:07:25Z", "type": "canary", "phase": 11, "version": 2, "docker_tag": "us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase11-v2", "canary_job_id": "projects/269018079180/locations/us-central1/customJobs/2186919402056712192", "canary_status": "PASS", "build_id": "b"}

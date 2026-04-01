@@ -45,6 +45,19 @@
 | INS-033 | Softmax Portfolio Loss — 从统计相关性到交易逻辑的范式跃迁 | 训练 | 2026-03-30 | L2 更新 | 待用户确认 |
 | INS-034 | z_sparsity 作为交易扳机 — 高压缩率 = 主力控盘铁证 | 架构 | 2026-03-30 | NONE | 待实现 |
 | INS-035 | Phase 9 非对称 Pearson Loss 终极验尸 — 7 jobs 全败 | 训练 | 2026-03-30 | NONE | 已生效 |
+| INS-036 | Softmax 尺度失控 — 方差惩罚或 Logits LayerNorm 物理锁 | 训练 | 2026-03-31 | L2 更新 | 待 P0 回测 |
+| INS-037 | P0 物理熔炉协议 — 回测先行，代码冻结 | 度量 | 2026-03-31 | NONE | 执行中 |
+| INS-038 | 双头阿修罗 V2 — Long Head (Softmax) + Veto Head (BCE) | 架构 | 2026-03-31 | L2 更新 | **推迟到 Phase 12** |
+| INS-039 | Epiplexity Gating — z_sparsity 认知门控, 剥夺高熵赌徒 | 架构 | 2026-03-31 | L2 更新 | **FAILED (P0 negative)** |
+| INS-040 | 方差之枷 — 截面 Z-score 锁死 Std=1.0 (**取代 INS-036**) | 训练 | 2026-03-31 | L2 更新 | 待 P0 Gating 回测 |
+| INS-041 | 压缩即智能实证定律 — 低压缩=负IC (Phase 10 实证) | 物理 | 2026-03-31 | NONE | 已生效 |
+| INS-042 | 非对称目标遮蔽 — clamp(target,min=0) 纯建仓检测 | 训练 | 2026-03-31 | L2 更新 | 待 P0 Gating 回测 |
+| INS-043 | 建仓 Epiplexity Loss — 交叉熵 + 右尾目标 + MDL | 训练 | 2026-03-31 | L2 更新 | 待 P0 Gating 回测 |
+| INS-044 | Spear-First 策略 — 单头建仓优先, Shield 推迟 Phase 12 | 架构 | 2026-03-31 | NONE | 已生效 |
+| INS-045 | P0 终极判决 — Casino Exploit 确认, T=0.1 | 训练 | 2026-03-31 | L2 更新 | **T=0.1 被 INS-047 修正为 0.5** |
+| INS-046 | 勾股漂移 — Z-score 仿射不变性导致 S_T 爆炸 | 物理 | 2026-04-01 | NONE | 已生效 |
+| INS-047 | Detached Straitjacket — detach(std) 斩断仿射黑洞 | 训练 | 2026-04-01 | L2 更新 | 待 Phase 11b |
+| INS-048 | λ_s 动态引力重构 — 1e-7→2e-5 匹配 Softmax 量纲 | 训练 | 2026-04-01 | L2 更新 | 待 Phase 11b |
 
 ---
 
@@ -87,3 +100,16 @@
 | INS-033 | metric_collapse_softmax_portfolio_loss | — |
 | INS-034 | metric_collapse_softmax_portfolio_loss | — |
 | INS-035 | metric_collapse_softmax_portfolio_loss | — |
+| INS-036 | post_phase10_three_campaigns | — |
+| INS-037 | post_phase10_three_campaigns | — |
+| INS-038 | post_phase10_three_campaigns | — |
+| INS-039 | phase11_asura_protocol + phase11_spear_protocol | — |
+| INS-040 | phase11_asura_protocol + phase11_spear_protocol | — |
+| INS-041 | phase11_spear_protocol | — |
+| INS-042 | phase11_spear_protocol | — |
+| INS-043 | phase11_spear_protocol | — |
+| INS-044 | phase11_spear_protocol | — |
+| INS-045 | phase11_spear_final_verdict | — |
+| INS-046 | phase11b_reforged_spear | — |
+| INS-047 | phase11b_reforged_spear | — |
+| INS-048 | phase11b_reforged_spear | — |

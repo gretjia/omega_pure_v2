@@ -27,6 +27,8 @@ import signal
 import argparse
 import logging
 
+import io
+
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -48,6 +50,19 @@ signal.signal(signal.SIGTERM, _sigterm_handler)
 # Target stats from TRAIN split (no look-ahead)
 TARGET_MEAN = -5.08
 TARGET_STD = 216.24
+
+
+def fast_npy_decoder(sample):
+    """Bypass WDS generic decode, strictly parse .npy bytes.
+    ~15% CPU savings vs wds.decode() (from omega_webdataset_loader.py).
+    """
+    result = {}
+    for key, value in sample.items():
+        if key.endswith(".npy"):
+            result[key] = np.load(io.BytesIO(value))
+        else:
+            result[key] = value
+    return result
 
 # ============================================================
 # Model (same as backtest_5a.py, inference-only)
@@ -149,13 +164,24 @@ def main():
                         help="Save progress every N shards (default 50 for fast resume)")
     parser.add_argument("--resume", action="store_true", default=True,
                         help="Auto-resume from checkpoint if exists")
+    parser.add_argument("--shard_start", type=int, default=0,
+                        help="Start shard index (for multi-process parallelism)")
+    parser.add_argument("--shard_end", type=int, default=-1,
+                        help="End shard index exclusive (-1 = all)")
+    parser.add_argument("--num_threads", type=int, default=1,
+                        help="PyTorch CPU threads (1 is fastest for this model)")
+    parser.add_argument("--worker_id", type=int, default=-1,
+                        help="Worker ID for parallel mode (-1 = single process)")
     args = parser.parse_args()
 
-    # GPU disabled: Radeon 8060S (gfx1150) HIP kernels not compiled for RDNA 3.5 iGPU.
-    # Requires HSA_OVERRIDE_GFX_VERSION=11.0.0 or PyTorch rebuild. Use CPU for now.
-    device = torch.device("cpu")
-    torch.set_num_threads(16)
-    log.info(f"Device: {device}, threads: 16")
+    # Auto-detect GPU: use CUDA if available, else CPU
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        log.info(f"Device: {device} ({torch.cuda.get_device_name(0)})")
+    else:
+        device = torch.device("cpu")
+        torch.set_num_threads(args.num_threads)
+        log.info(f"Device: {device}, threads: {args.num_threads}")
 
     # Load date map
     with open(args.date_map) as f:
@@ -181,7 +207,12 @@ def main():
 
     # Discover shards
     all_shards = sorted(glob.glob(os.path.join(args.shard_dir, "omega_shard_*.tar")))
-    log.info(f"Total shards: {len(all_shards)}")
+    total_shards = len(all_shards)
+
+    # Shard range for multi-process parallelism
+    shard_end = args.shard_end if args.shard_end > 0 else total_shards
+    all_shards = all_shards[args.shard_start:shard_end]
+    log.info(f"Total shards: {total_shards}, processing [{args.shard_start}:{shard_end}] = {len(all_shards)}")
 
     # F4 FIX: Columnar accumulation + chunked parquet writes to avoid OOM.
     # Instead of 9.96M dicts in a list, we accumulate columns and flush
@@ -247,10 +278,10 @@ def main():
         shard_num = int(os.path.basename(shard_path).split("_")[-1].split(".")[0])
         date_str = shard_to_date.get(str(shard_num), "unknown")
 
-        # Build dataset for single shard
+        # Build dataset for single shard (fast_npy_decoder: -15% CPU vs generic .decode())
         dataset = (
             wds.WebDataset([shard_path], resampled=False, handler=wds.warn_and_continue)
-            .decode(handler=wds.warn_and_continue)
+            .map(fast_npy_decoder)
         )
 
         # Collect samples from shard
@@ -299,7 +330,7 @@ def main():
         pred_parts = []
         z_sparsity_parts = []  # INS-034: per-sample z_sparsity
         use_amp = device.type == "cuda"
-        with torch.no_grad():
+        with torch.inference_mode():
             for mb_start in range(0, len(manifold_all), args.batch_size):
                 mb_end = min(mb_start + args.batch_size, len(manifold_all))
                 mb = manifold_all[mb_start:mb_end]
@@ -397,6 +428,7 @@ def main():
             "symbol": col_symbol, "date": col_date, "shard_idx": col_shard,
             "pred_bp": col_pred, "target_bp": col_target,
             "bid_p1": col_bid, "ask_p1": col_ask, "macro_v_d": col_mvd,
+            "z_sparsity": col_z_sparsity,
         })
         pq.write_table(table, chunk_path)
         chunk_files.append(chunk_path)

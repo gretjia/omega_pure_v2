@@ -23,3 +23,8 @@
 | 2026-03-30 | 压缩悖论 — 多空解耦 + Phase 9 非对称重构 | [directives/2026-03-30_compression_paradox_asymmetric_evolution.md](directives/2026-03-30_compression_paradox_asymmetric_evolution.md) | NONE — Phase 9 封印 |
 | 2026-03-30 | Phase 9 Go-Live — Leaky Asymmetric Pearson Loss | [directives/2026-03-30_phase9_asymmetric_evolution_leaky_pearson.md](directives/2026-03-30_phase9_asymmetric_evolution_leaky_pearson.md) | AXIOM UPDATE REQUIRED — 待用户确认 |
 | 2026-03-30 | 度量崩塌终极宣判 + Softmax Portfolio Loss | [directives/2026-03-30_metric_collapse_softmax_portfolio_loss.md](directives/2026-03-30_metric_collapse_softmax_portfolio_loss.md) | AXIOM UPDATE REQUIRED — 待用户确认 |
+| 2026-03-31 | Post-Phase 10 三步走 (P0熔炉/P1方差修复/P2双头阿修罗) | [directives/2026-03-31_post_phase10_three_campaigns.md](directives/2026-03-31_post_phase10_three_campaigns.md) | AXIOM UPDATE REQUIRED — P0 完成, Asym=1.30 |
+| 2026-03-31 | Phase 11 阿修罗协议 (Asura Protocol) | [directives/2026-03-31_phase11_asura_protocol.md](directives/2026-03-31_phase11_asura_protocol.md) | AXIOM UPDATE REQUIRED — P2 被 Spear Protocol 取代 |
+| 2026-03-31 | Phase 11 建仓之矛 (Spear Protocol) | [directives/2026-03-31_phase11_spear_protocol.md](directives/2026-03-31_phase11_spear_protocol.md) | AXIOM UPDATE REQUIRED — P0 FAILED, 授权部署 |
+| 2026-03-31 | Phase 11 最终判决 + 部署授权 (Spear Final Verdict) | [directives/2026-03-31_phase11_spear_final_verdict.md](directives/2026-03-31_phase11_spear_final_verdict.md) | AXIOM UPDATE REQUIRED — Phase 11a NaN 崩溃 |
+| 2026-04-01 | Phase 11b 重铸之矛 (Reforged Spear) | [directives/2026-04-01_phase11b_reforged_spear.md](directives/2026-04-01_phase11b_reforged_spear.md) | AXIOM UPDATE REQUIRED — 待 spec 更新确认 |

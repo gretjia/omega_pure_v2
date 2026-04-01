@@ -87,44 +87,59 @@ def _sigterm_handler(signum, frame):
 signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
-def softmax_portfolio_loss(pred, target, z_core, lambda_s, epoch,
-                           warmup_epochs=2, temperature=1.0, l2_weight=1e-4):
-    """INS-033: Softmax Portfolio Loss (Gemini plan-audit V2, 2x审计通过)
+def compute_spear_loss(pred, target, z_core, lambda_s, epoch,
+                       warmup_epochs=2, temperature=0.5):
+    """Phase 11b: The Reforged Spear (INS-046/047/048)
 
-    Phase 10 Vanguard V5 — 彻底替代 Pearson IC Loss + MSE anchor + dampening.
-
-    数学原理:
-    - Softmax(pred/T) 产生"赢家通吃"的资金权重分布
-    - 预测排名后50%的股票权重趋近0 → 梯度为0 → 自动屏蔽高熵噪音
-    - hd=64 全部脑容量 100% 用于压缩低熵建仓拓扑 (INS-028/033)
-
-    Gemini 审计修正:
-    - Batch 内 Z-score target → 消除跨时间市场偏移
-    - L2 penalty: mean(pred)^2 仅约束全局平移，不破坏个体方差
-    - Softmax 在 batch 维度 (dim=0) — Z-score 后 batch ≈ 可比截面
+    修复 Phase 11a 勾股漂移 (Pythagorean Drift) NaN 崩溃:
+    - Detached Straitjacket: clamp(std,min=1.0).detach() 斩断仿射黑洞
+    - T=0.5: 梯度放大从 10x 降到 2x
+    - λ_s=2e-5: 匹配 Softmax Loss 量纲 (160x vs IC Loss)
+    - FP32 safe room: 隔离 FP16 e^11 溢出天花板
     """
+    # 0. FP32 Safe Room (INS-046: S_T>100K 时 fp16 不安全)
+    pred = pred.float()
+    target = target.float()
+    z_core = z_core.float()
+    eps = 1e-8
+
     pred_flat = pred.squeeze()  # [B]
 
-    # Batch 内 Z-score: 消除不同时间点的市场整体涨跌差异
-    # 与 spec loss_function 中的 target_cs_z 对齐
-    target_cs_z = (target - target.mean()) / (target.std() + 1e-8)  # [B]
+    # 1. 目标遮蔽 (Asymmetric Target Blinding, INS-042)
+    target_acc = torch.clamp(target, min=0.0)
+    target_sum = target_acc.sum()
 
-    # Softmax 资金权重 (数值稳定: 减去 max)
-    pred_stable = pred_flat - pred_flat.max().detach()
-    weights = torch.softmax(pred_stable / temperature, dim=0)  # [B]
+    # 2. Detached Straitjacket (INS-047)
+    logit_mean = pred_flat.mean()
+    logit_std = pred_flat.std()
+    # clamp(min=1.0): 防 std→0 时 1/σ 梯度爆炸
+    # .detach(): 斩断勾股漂移 — 梯度不再尺度不变，产生向内压缩引力
+    safe_std = torch.clamp(logit_std, min=1.0).detach()
+    locked_logits = (pred_flat - logit_mean) / safe_std
 
-    # 组合期望收益: sum(w_i * target_cs_z_i)
-    portfolio_return = torch.sum(weights * target_cs_z)
+    # 3. Spear Loss (Accumulation Cross-Entropy, INS-043)
+    if target_sum <= eps:
+        # 熊市: 全跌 batch，切断交叉熵梯度，仅 MDL 惩罚
+        loss_spear = torch.tensor(0.0, device=pred.device, requires_grad=True)
+        pf_ret = torch.tensor(0.0, device=pred.device)
+    else:
+        target_prob = target_acc / (target_sum + eps)
+        # log_softmax: 数值稳定 (LogSumExp 内置)，替代 log(softmax+eps)
+        log_pred_prob = F.log_softmax(locked_logits / temperature, dim=0)
+        loss_spear = -torch.sum(target_prob * log_pred_prob)
+        # pf_ret: 监控指标 (不参与梯度)，用于 best model 选择
+        with torch.no_grad():
+            pred_prob = F.softmax(locked_logits / temperature, dim=0)
+            pf_ret = torch.sum(pred_prob * target)
 
-    # L2 mean-shift penalty: 只约束全局平移，不压缩个体方差 (Gemini fix)
-    l2_penalty = l2_weight * (pred_flat.mean() ** 2)
-
-    # MDL warmup: lambda_s=0 for first warmup_epochs
+    # 4. MDL 压缩 (INS-048: λ_s=2e-5 匹配 Softmax 量纲)
+    # z_core clamp [-20,20]: 紧急防爆墙，防止 S_T→Inf
+    z_core_safe = torch.clamp(z_core, min=-20.0, max=20.0)
     lambda_s_eff = lambda_s if epoch >= warmup_epochs else 0.0
-    s_t = torch.norm(z_core, p=1, dim=-1).mean()
+    s_t = torch.norm(z_core_safe, p=1, dim=-1).mean()
 
-    total = -portfolio_return + l2_penalty + lambda_s_eff * s_t
-    return total, portfolio_return, s_t
+    total = loss_spear + lambda_s_eff * s_t
+    return total, pf_ret, s_t
 
 
 logging.basicConfig(
@@ -320,7 +335,7 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                     grad_clip, device, epoch, steps_per_epoch, global_step,
                     use_amp, warmup_epochs=2, overfit_batch=None, scheduler=None,
                     start_step=0, ckpt_path=None, ckpt_every=0,
-                    temperature=1.0, l2_weight=1e-4):
+                    temperature=0.1):
     model.train()
     running = {"total": 0.0, "pf_ret": 0.0, "s_t": 0.0, "count": 0}
     loader_iter = iter(loader) if overfit_batch is None else None
@@ -355,9 +370,9 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
             if use_amp:
                 with torch.autocast(device_type="cuda", dtype=torch.float16):
                     prediction, z_core = model(manifold, c_friction)
-                    total_loss, pf_ret, s_t = softmax_portfolio_loss(
+                    total_loss, pf_ret, s_t = compute_spear_loss(
                         prediction, target, z_core, lambda_s, epoch, warmup_epochs,
-                        temperature=temperature, l2_weight=l2_weight
+                        temperature=temperature
                     )
                 scaler.scale(total_loss).backward()
                 scaler.unscale_(optimizer)
@@ -366,9 +381,9 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                 scaler.update()
             else:
                 prediction, z_core = model(manifold, c_friction)
-                total_loss, pf_ret, s_t = softmax_portfolio_loss(
+                total_loss, pf_ret, s_t = compute_spear_loss(
                     prediction, target, z_core, lambda_s, epoch, warmup_epochs,
-                    temperature=temperature, l2_weight=l2_weight
+                    temperature=temperature
                 )
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -433,7 +448,7 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
 # ============================================================
 
 def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
-             warmup_epochs=2, temperature=1.0, l2_weight=1e-4):
+             warmup_epochs=2, temperature=0.1):
     model.eval()
     all_preds, all_targets = [], []
     running = {"total": 0.0, "pf_ret": 0.0, "s_t": 0.0, "count": 0}
@@ -447,9 +462,9 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
             target = batch["target"].to(device)
 
             prediction, z_core = model(manifold, c_friction)
-            total_loss, pf_ret, s_t = softmax_portfolio_loss(
+            total_loss, pf_ret, s_t = compute_spear_loss(
                 prediction, target, z_core, lambda_s, epoch, warmup_epochs,
-                temperature=temperature, l2_weight=l2_weight
+                temperature=temperature
             )
             bs = target.size(0)
             running["total"] += total_loss.item() * bs
@@ -489,7 +504,7 @@ def main():
     parser.add_argument("--steps_per_epoch", type=int, default=10000)
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--lambda_s", type=float, default=1e-7)
+    parser.add_argument("--lambda_s", type=float, default=2e-5)
     parser.add_argument("--grad_clip", type=float, default=1.0)
     parser.add_argument("--val_split", type=float, default=0.2)
     # HPO-searchable (lambda x: int(float(x)) handles Vertex AI "128.0" format)
@@ -520,11 +535,11 @@ def main():
     # Spot VM resilience
     parser.add_argument("--ckpt_every_n_steps", type=int, default=0,
                         help="Save checkpoint every N steps (0=epoch-only, 500 recommended for Spot)")
-    # Softmax Portfolio Loss (INS-033, Phase 10)
-    parser.add_argument("--temperature", type=float, default=1.0,
-                        help="Softmax temperature (lower = sharper, closer to argmax)")
-    parser.add_argument("--l2_weight", type=float, default=1e-4,
-                        help="L2 mean-shift penalty weight (Gemini: mean(pred)^2, not mean(pred^2))")
+    # Phase 11b Reforged Spear (INS-047/048)
+    parser.add_argument("--temperature", type=float, default=0.5,
+                        help="Spear Softmax temperature (0.5 = 2x sharpening, detached N(0,1))")
+    parser.add_argument("--l2_weight", type=float, default=0.0,
+                        help="DEPRECATED: replaced by Variance Straitjacket (INS-040). Kept for YAML compat.")
     parser.add_argument("--no_amp", action="store_true", default=False,
                         help="Disable AMP, use pure FP32/TF32 (Gemini: AMP negative-optimizes tiny models)")
     args = parser.parse_args()
@@ -656,7 +671,7 @@ def main():
                 f"steps/epoch={args.steps_per_epoch}, batch={args.batch_size}, "
                 f"lr={args.lr}, lambda_s={args.lambda_s}, "
                 f"warmup={args.warmup_epochs}, mask_prob={args.mask_prob}, "
-                f"temperature={args.temperature}, l2_weight={args.l2_weight}")
+                f"temperature={args.temperature}")
 
     best_pf_ret = _resumed_metrics.get("best_pf_ret", float("-inf"))
 
@@ -673,14 +688,13 @@ def main():
             overfit_batch=overfit_batch, scheduler=scheduler,
             start_step=start_step, ckpt_path=ckpt_path,
             ckpt_every=args.ckpt_every_n_steps,
-            temperature=args.temperature, l2_weight=args.l2_weight,
+            temperature=args.temperature,
         )
 
         val_metrics = validate(model, val_loader, args.lambda_s, device,
                                max_steps=args.max_val_steps, epoch=epoch,
                                warmup_epochs=args.warmup_epochs,
-                               temperature=args.temperature,
-                               l2_weight=args.l2_weight)
+                               temperature=args.temperature)
         elapsed = time.time() - t0
 
         logger.info(

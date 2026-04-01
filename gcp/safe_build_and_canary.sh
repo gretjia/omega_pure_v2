@@ -132,7 +132,7 @@ workerPoolSpecs:
             --date_map=/gcs/omega-pure-data/phase7/shard_date_map.json \
             --output=/tmp/canary_output.parquet \
             --hidden_dim=64 --window_size_t=32 --batch_size=512 \
-            --checkpoint_interval=0 --prefetch=2
+            --checkpoint_interval=0
 
           echo "=== CANARY: Verifying output ==="
           ROW_COUNT=\$(python3 -c "

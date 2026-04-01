@@ -1,0 +1,55 @@
+# Phase 11 Spear Protocol Training — n1-standard-8 + T4 + pd-ssd staging (Spot)
+# C-026: 训练必须 staging (20 epoch = 11.1TB)
+# C-041/C-042: Vertex AI 容器无法 mount Local NVMe (permission denied)
+#   → pd-ssd 1300GB staging 是 Vertex AI 唯一可行方案
+#   → 1300GB pd-ssd 吞吐 = 0.48 * 1300 = 624 MB/s (Phase 10 实测 595 shards/h)
+# Gemini 审计: num_workers=4 (8 vCPU)
+workerPoolSpecs:
+- machineSpec:
+    machineType: n1-standard-8
+    acceleratorType: NVIDIA_TESLA_T4
+    acceleratorCount: 1
+  replicaCount: 1
+  diskSpec:
+    bootDiskType: pd-ssd
+    bootDiskSizeGb: 1300
+  containerSpec:
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase11-v2
+    command:
+    - bash
+    - -c
+    - |
+      set -e
+      echo "=== Phase 11 Spear Protocol: n1 + T4 + pd-ssd staging ==="
+
+      echo "=== Stage 1: Stage shards to pd-ssd boot disk ==="
+      SHARD_DIR=/tmp/shards
+      mkdir -p ${SHARD_DIR}
+
+      t0=$(date +%s)
+      gcloud storage cp "gs://omega-pure-data/wds_shards_v3_full/omega_shard_*.tar" ${SHARD_DIR}/ 2>&1 | tail -5
+      t1=$(date +%s)
+      STAGED=$(ls ${SHARD_DIR}/*.tar | wc -l)
+      echo "Staged ${STAGED} shards in $((t1-t0))s to ${SHARD_DIR}"
+      df -h ${SHARD_DIR}
+
+      echo "=== Stage 2: Phase 11 Spear Training (20 epochs) ==="
+      PYTHONUNBUFFERED=1 python3 /app/train.py \
+        --shard_dir=${SHARD_DIR} \
+        --output_dir=/gcs/omega-pure-data/checkpoints/phase11_spear_v1 \
+        --hidden_dim=64 \
+        --window_size_t=32 \
+        --window_size_s=4 \
+        --lr=3.2e-4 \
+        --lambda_s=2e-5 \
+        --warmup_epochs=2 \
+        --temperature=0.5 \
+        --batch_size=256 \
+        --coarse_graining_factor=1 \
+        --epochs=20 \
+        --steps_per_epoch=5000 \
+        --num_workers=4 \
+        --ckpt_every_n_steps=500 \
+        --resume
+scheduling:
+  strategy: SPOT

@@ -1,0 +1,70 @@
+# Phase 10 Inference — n1-standard-8 + T4 + Local NVMe SSD
+# C-028: Local SSD 4.8 GB/s (NOT pd-ssd for data)
+# C-041: g2 无 Local SSD，改用 n1 + localSsdSpec
+# Boot disk: pd-ssd 200GB (仅 OS), 数据 staging 到 /mnt/localssd (NVMe)
+workerPoolSpecs:
+- machineSpec:
+    machineType: n1-standard-8
+    acceleratorType: NVIDIA_TESLA_T4
+    acceleratorCount: 1
+  replicaCount: 1
+  diskSpec:
+    bootDiskType: pd-ssd
+    bootDiskSizeGb: 200
+  containerSpec:
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase10-v7
+    command:
+    - bash
+    - -c
+    - |
+      set -e
+      echo "=== Phase 10 Inference: n1 + T4 + Local NVMe SSD ==="
+
+      # C-028: Stage to Local NVMe SSD (4.8 GB/s)
+      echo "=== Stage 1: Mount Local SSD + stage shards ==="
+      SHARD_DIR=/tmp/shards
+      for DEV in /dev/nvme0n1 /dev/sdb; do
+        if [[ -b $DEV ]]; then
+          echo "Found local disk: $DEV"
+          mkfs.ext4 -F $DEV 2>/dev/null || true
+          mkdir -p /mnt/localssd
+          mount $DEV /mnt/localssd || continue
+          if mountpoint -q /mnt/localssd; then
+            SHARD_DIR=/mnt/localssd/shards
+            echo "Mounted Local SSD at /mnt/localssd"
+            break
+          fi
+        fi
+      done
+      mkdir -p ${SHARD_DIR}
+
+      t0=$(date +%s)
+      gcloud storage cp "gs://omega-pure-data/wds_shards_v3_full/omega_shard_*.tar" ${SHARD_DIR}/ 2>&1 | tail -5
+      t1=$(date +%s)
+      echo "Staged $(ls ${SHARD_DIR}/*.tar | wc -l) shards in $((t1-t0))s to ${SHARD_DIR}"
+      df -h ${SHARD_DIR}
+
+      echo "=== Stage 2: Inference (GPU auto-detect) ==="
+      PYTHONUNBUFFERED=1 python3 /app/phase7_inference.py \
+        --checkpoint=/gcs/omega-pure-data/checkpoints/phase10_softmax_v5/best.pt \
+        --shard_dir=${SHARD_DIR} \
+        --date_map=/gcs/omega-pure-data/phase7/shard_date_map.json \
+        --output=/gcs/omega-pure-data/phase10/phase10_predictions.parquet \
+        --hidden_dim=64 \
+        --window_size_t=32 \
+        --window_size_s=4 \
+        --batch_size=512 \
+        --checkpoint_interval=50
+
+      echo "=== Stage 3: Verify ==="
+      python3 -c "
+      import pyarrow.parquet as pq
+      t = pq.read_table('/gcs/omega-pure-data/phase10/phase10_predictions.parquet')
+      print(f'Rows: {t.num_rows:,}')
+      print(f'Columns: {t.column_names}')
+      assert 'z_sparsity' in t.column_names, 'MISSING z_sparsity!'
+      assert t.num_rows > 9_000_000, f'Too few rows: {t.num_rows}'
+      for col in ['pred_bp', 'target_bp', 'z_sparsity']:
+          assert t.column(col).null_count == 0, f'{col} has nulls!'
+      print('INFERENCE_PASS')
+      "

@@ -1,0 +1,5 @@
+.env
+reports/*.parquet
+reports/phase8_sweep/
+reports/phase10_gated_results/trades.json
+reports/*/trades.json

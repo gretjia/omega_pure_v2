@@ -100,6 +100,13 @@ def main():
     parser.add_argument("--regime_reduction", type=float, default=0.2,
                         help="Max positions multiplier under stress (0.2 = 20%% capacity)")
     parser.add_argument("--adv_floor", type=float, default=0.0)
+    parser.add_argument("--epiplexity_gate", action="store_true", default=False,
+                        help="INS-039: Filter out low-compression (high-entropy) stocks. "
+                             "Requires z_sparsity column in predictions.")
+    parser.add_argument("--epiplexity_percentile", type=float, default=50.0,
+                        help="Percentile cutoff for epiplexity gating (default 50 = median)")
+    parser.add_argument("--pred_abs_cap", type=float, default=0.0,
+                        help="Cap |pred_bp| to filter inflated logits (0 = disabled, suggested: 1000)")
     parser.add_argument("--train_val_boundary", type=int, default=1594)
     parser.add_argument("--output_dir", required=True)
     args = parser.parse_args()
@@ -238,7 +245,15 @@ def main():
             day_preds = [data["pred_bp"][idx] for idx in indices]
             daily_pred_median = float(np.median(day_preds))
 
+        # INS-039: Epiplexity Gating — compute daily z_sparsity median
+        daily_z_median = 0.0
+        if args.epiplexity_gate and "z_sparsity" in data:
+            day_z = [data["z_sparsity"][idx] for idx in indices]
+            daily_z_median = float(np.percentile(day_z, args.epiplexity_percentile))
+
         candidates = []
+        epiplexity_filter_count_day = 0
+        pred_cap_filter_count_day = 0
         for idx in indices:
             sym = data["symbol"][idx]
             if sym in portfolio:
@@ -252,6 +267,20 @@ def main():
             bid_p1 = data["bid_p1"][idx]
             ask_p1 = data["ask_p1"][idx]
             macro_v_d = data["macro_v_d"][idx]
+
+            # INS-039: Pred absolute cap — cut inflated logits
+            if args.pred_abs_cap > 0 and abs(pred_bp) > args.pred_abs_cap:
+                pred_cap_filter_count_day += 1
+                continue
+
+            # INS-039: Epiplexity Gating — only buy high-compression stocks
+            # HIGH z_sparsity = many near-zero activations = MORE compressed = GOOD
+            # Remove stocks with z_sparsity BELOW median (low compression = high entropy = gambling)
+            if args.epiplexity_gate and "z_sparsity" in data:
+                z_sp = data["z_sparsity"][idx]
+                if z_sp < daily_z_median:
+                    epiplexity_filter_count_day += 1
+                    continue
 
             # Iron Rule 3: Limit-up = can't buy (spread locked = order book frozen)
             if is_limit_locked(bid_p1, ask_p1):
@@ -475,6 +504,9 @@ def main():
         "conviction_filter_count": conviction_filter_count,
         "regime_filter": args.regime_filter,
         "regime_trigger_days": regime_trigger_days,
+        "epiplexity_gate": args.epiplexity_gate,
+        "epiplexity_percentile": args.epiplexity_percentile if args.epiplexity_gate else None,
+        "pred_abs_cap": args.pred_abs_cap if args.pred_abs_cap > 0 else None,
     }
 
     os.makedirs(args.output_dir, exist_ok=True)

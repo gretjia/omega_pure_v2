@@ -1,6 +1,6 @@
 # OMEGA PURE 架构规范 — 由架构师联络官维护
-# 最后更新：2026-03-30
-# 更新来源：INS-032/033/034/035 (Pearson 死路宣判 + Softmax Portfolio Loss + Gemini 审计修正)
+# 最后更新：2026-04-01
+# 更新来源：INS-046/047/048 (Phase 11b Reforged Spear — Detached Straitjacket + λ_s=2e-5 + T=0.5)
 # 源文档：Google Docs id.1~id.6 (archived at architect/gdocs/)
 
 version: v3
@@ -81,14 +81,23 @@ target:
 # ============================================================
 training:
   target_model: Omega-TIB   # Topological Information Bottleneck (正名自 SpatioTemporal2DMAE)
-  loss: "Softmax Portfolio Loss + L2 mean-shift penalty + MDL (INS-033, Gemini-audited)"
-  loss_function: "-sum(softmax(pred/T, dim=cross_section) * target_cs_z) + l2_weight * mean(pred)^2 + lambda_s * ||z_core||_1"
-  # Phase 9 验尸 (INS-032/035): Pearson + dampening = Reward Hacking 死路
-  # Softmax 在截面维度(dim=1)上计算，严禁 pred.view(-1) 全局展平 (Gemini audit)
-  # L2 惩罚 mean(pred)^2 而非 mean(pred^2)，只约束全局平移不破坏个体方差 (Gemini audit)
-  temperature: 1.0           # Softmax 锐度，越低越接近 argmax (INS-033)
-  l2_weight: 1e-4            # 极微弱 L2，取代 MSE anchor (INS-033)
-  lambda_s: 1e-7             # 隐式压缩 >> 显式压缩 (INS-019, 架构师指定)
+  loss: "Spear Accumulation Loss + Variance Straitjacket + MDL (INS-042/043/045)"
+  loss_function: |
+    target_acc = clamp(target, min=0); target_prob = target_acc / (sum(target_acc) + eps)
+    locked = (raw_logits - mean) / (std + eps)  # Variance Straitjacket
+    if sum(target_acc) > eps:  loss = -sum(target_prob * log(softmax(locked/T) + eps)) + lambda_s * ||z_core||_1
+    else:  loss = lambda_s * ||z_core||_1  # Bear market: MDL only, auto-silence
+  # Phase 11 Spear Protocol: 三重枷锁
+  # 1. target = clamp(raw_target, min=0) → 遮蔽左尾，纯建仓检测 (INS-042)
+  # 2. locked_logits = (raw - mean) / std → 方差锁死 N(0,1) (INS-040)
+  # 3. target_prob = clamp_target / sum(clamp_target) → 交叉熵 (INS-043)
+  # Phase 10 验尸 (INS-045): Logit Inflation Casino Exploit, P0 Gating FAILED
+  # L2 mean-shift 已删除 — 被方差之枷物理替代 (INS-040 supersedes INS-036)
+  temperature: 0.5           # Detached N(0,1) + T=0.5 (INS-047, 梯度放大 2x 非 10x)
+  # l2_weight: DELETED — 被方差之枷替代，不再需要 (INS-040)
+  lambda_s: 2e-5             # 匹配 Softmax Loss (~8) vs IC Loss (~0.05) 的 160x 量纲差 (INS-048)
+  variance_lock: "detached"  # safe_std = clamp(std, min=1.0).detach() — 斩断勾股漂移 (INS-047)
+  loss_precision: "fp32"     # compute_spear_loss 强制 FP32 安全舱 (Phase 11a NaN 教训)
   lambda_s_warmup: 2         # Phase 3 值; Phase 6 搜索 [2, 3, 5]
   masking:
     strategy: block_input    # 输入端 Block-wise Masking (非 MAE 输出重构)
@@ -107,7 +116,7 @@ hpo:
   engine: google_vizier              # Bayesian optimization
   infrastructure: "A100 Spot (a2-highgpu-1g), 70 trials exploit, 8 parallel (INS-018 Phase 6)"
   metric: "val_portfolio_return (Vizier MAXIMIZE, 直接度量 OOS 组合收益)"
-  # Phase 10: Softmax Portfolio Loss 直接优化组合收益，不再用 IC 作为代理指标
+  # Phase 11: Spear Accumulation Loss (INS-043) + 方差之枷 (INS-040) + 目标遮蔽 (INS-042)
   search_space:
     learning_rate:                   # Softmax Loss 梯度量级待实测
       type: loguniform
@@ -124,12 +133,10 @@ hpo:
     window_size_t:                   # 保持 RECON 范围
       type: choice
       values: [8, 16, 32]
-    temperature:                     # Softmax 锐度 (INS-033, Gemini audit)
+    temperature:                     # Detached Straitjacket 尖锐度 (INS-047)
       type: choice
-      values: [0.5, 1.0, 2.0]
-    l2_weight:                       # mean-shift L2 惩罚强度 (Gemini audit: mean(pred)^2)
-      type: loguniform
-      range: [1e-5, 1e-3]
+      values: [0.3, 0.5, 0.7, 1.0]
+    # l2_weight: DELETED — 被方差之枷替代 (INS-040)
     # LOCKED (not searched):
     # coarse_graining_factor: 1 (INS-016: Volume-Clock 不可二次粗粒化)
     # macro_window: 160 (Phase 3 validated)
@@ -176,6 +183,13 @@ backtest:
   #   regime_filter: tested trailing NAV drawdown — HARMFUL (misses recovery, -11% vs +6%)
   #   Only board_loss_cap proved beneficial. Asymmetry 1.20 confirmed unreachable at IC=0.028.
   #   Root cause: execution-layer cannot overcome signal-layer limitation → Phase 9 needed.
+  # Phase 10 P0 results (INS-039/045):
+  #   epiplexity_gating: FAILED — all configurations worsen performance (INS-039 FAILED)
+  #   Root cause: Corr(z_sparsity, |pred|)=-0.34, filtering high-entropy = filtering profit
+  #   Phase 11 simulation: Top 20% / Max 50, NO gating (standard cross-sectional, gating disabled)
+  # Phase 11 acceptance targets:
+  #   PRIMARY: Val Std_yhat (locked_logits) ≈ 1.0 (方差之枷验证)
+  #   SECONDARY: Asymmetry > 1.30 (Phase 10 baseline) AND z_sparsity-IC correlation > 0 (扭转)
 
 # ============================================================
 # 模型架构层级 (Omega-TIB)

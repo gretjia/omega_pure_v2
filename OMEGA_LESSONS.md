@@ -39,6 +39,12 @@
 - Step 4: Canary PASS → 写入 `gcp/manifest.jsonl` → 允许全量提交
 - **禁止**: 直接 `gcloud ai custom-jobs create`（pre-deploy-gate hook 会阻止）
 
+### 生成 Vertex AI 推理 Job Config
+**用**: `bash gcp/gen_inference_config.sh <checkpoint> <output> [--hd N] [--wt N] [--ws N] [--spot]`
+- 自动内嵌: Local NVMe SSD(C-028) + GPU auto-detect(C-039) + checkpoint_interval>0(C-032)
+- **禁止**: 手写 gcp/*.yaml（lesson-enforcer.sh hook 会拦截 pd-ssd 写入）
+- 三层防御: (1) gen_config 模板 → (2) lesson-enforcer.sh PreToolUse hook → (3) safe_submit.sh diskType 硬检查
+
 ### 新代码开发
 **用**: `/dev-cycle <任务描述>`
 - Stage 0（新增）: Pre-mortem — 列 3 个方案 + 失败模式 + 选最优
@@ -103,6 +109,19 @@
 - **C-032**: `checkpoint_interval=0` 导致 `% 0` 除零崩溃。任何用作除数/模数的参数必须在使用前检查 > 0（Ω1: 测试不能只跑默认值）
 - **C-033**: ETA 计算引用了外部审计的假设值（NVMe 吞吐）但实际部署在 pd-ssd → 预估 4h 实际 12h。ETA 必须用 Epoch 0 实测 pace 校准，不可引用非本次运行的推算（Ω1: 只信实测）
 - **C-034**: batch_size 翻倍（128→256）导致训练 I/O 翻倍，但 ETA 未重新计算。改变任何影响 I/O 吞吐的参数后必须重新量化 ETA（Ω2: 先量化后行动）
+
+### CPU 推理性能
+- **C-035**: PyTorch CPU `set_num_threads(16)` 导致严重线程争用：16线程=23 samples/s, 1线程=131 samples/s (5.7x差距)。小模型 CPU 推理必须先 benchmark 线程数（Ω2: 先量化后行动）
+- **C-036**: 8进程并行推理在内存带宽受限机器上比单进程更慢（87→70 shards/h）。多进程不等于加速，必须实测（Ω1: 只信实测）
+- **C-037**: Phase 10 checkpoint window_size=(32,4) 但推理脚本默认 window_size_s=10 → state_dict shape mismatch。checkpoint 和推理参数必须从同一 config 读取（Ω4: 可执行>可记忆）
+- **C-038**: `phase7_inference.py` final flush 缺少 `z_sparsity` 列 → PyArrow concat_tables 会直接崩溃（schema不一致报错）。多处写同一 schema 时，所有写入点必须同步维护（Ω5: code review）
+- **C-039**: `device = torch.device("cpu")` 硬编码导致 Vertex AI L4 GPU 空转、CPU 跑 23h/$25。设备选择必须 auto-detect `torch.cuda.is_available()`，不可硬编码（Ω6: 计算匹配硬件）
+- **C-040**: 推理 job 多次用 pd-ssd（C-028 已禁）+ gen_config 模板硬编码 bootDiskSizeGb=200（装不下 556GB shard）。**修正: lesson-enforcer.sh hook 已部署拦截 pd-ssd 写入; gen_config.sh 模板已固化 1300GB**（Ω4: 可执行>可记忆）
+- **C-041**: Vertex AI 容器**所有机型**均无法 mount Local NVMe SSD（permission denied，非仅 g2）。Vertex AI API 只支持 bootDisk (pd-ssd/pd-standard)，不支持 localSsdSpec。训练 staging 唯一方案: pd-ssd 大容量 boot disk（Ω2: 先查 API 规格再写配置）
+
+### 训练稳定性
+- **C-042**: Z-score 标准化是仿射不变的 → 梯度与权重正交 → 勾股漂移: W² 单调膨胀 → S_T 爆炸 → NaN。修复: std 必须 `.detach()` + `clamp(min=1.0)`（Ω1: Phase 11a 5 epoch 全部 NaN 实测确认）
+- **C-043**: λ_s 必须与 Loss 量纲匹配。IC Loss≈0.05 时 λ_s=1e-7 可行，Softmax Loss≈10 时 λ_s 需 ≥2e-5 (200x)。换 Loss 后必须重新标定 λ_s（Ω2: 先量化量纲差）
 
 ### AI 治理
 - **C-021**: AI 自己写烟测测自己 → 自洽性掩盖正确性。审计独立于作者（Ω5）
