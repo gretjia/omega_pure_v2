@@ -81,20 +81,21 @@ target:
 # ============================================================
 training:
   target_model: Omega-TIB   # Topological Information Bottleneck (正名自 SpatioTemporal2DMAE)
-  loss: "Pointwise Spear (Huber δ=50) + MDL (INS-049/050/051)"
+  loss: "Pointwise Spear (Huber δ=200) + MDL (INS-049/050/051/054/055)"
   loss_function: |
-    target_acc = clamp(target, min=0)                    # Asymmetric Target Blinding (INS-042)
-    loss_spear = huber_loss(pred, target_acc, delta=50)  # Pointwise — 零跨 Batch 依赖 (INS-049)
-    total = loss_spear + lambda_s * ||z_core||_1         # MDL Compression
-  # Phase 11c Pointwise Spear: 彻底废除跨 Batch 归一化
+    target_acc = clamp(target, min=0)                      # Asymmetric Target Blinding (INS-042)
+    loss_spear = huber_loss(pred, target_acc, delta=200)   # Pointwise — δ=200 释放肥尾梯度 (INS-055)
+    total = loss_spear + lambda_s * ||z_core||_1           # MDL Compression
+  # Phase 11d Resuscitated Spear: 修复 Phase 11c 方差坍缩 (INS-054)
   # 1. target = clamp(raw_target, min=0) → 遮蔽左尾，纯建仓检测 (INS-042, 继承)
-  # 2. Pointwise Huber Loss (delta=50 BP) → 绝对 BP 尺度锚定 (INS-051)
+  # 2. Pointwise Huber Loss (delta=200 BP) → 97.6% 样本 MSE 梯度，仅 2.4% 极端线性保护 (INS-055)
   # 3. 无 Softmax/Z-score/Pearson — 乱序 WebDataset 免疫时空错位 (INS-049)
-  # Phase 10/11a/11b 验尸: Softmax = 宏观 Beta 走私 + L1≈0 脑死亡 (INS-049/050)
+  # Phase 11c 验尸: δ=50 + λ_s=1e-3 → z_core 脑死亡 (0.44%), pred_std=5.6 BP (INS-054)
   # temperature: DELETED — 无 Softmax (INS-051 supersedes INS-047)
   # variance_lock: DELETED — 无 Z-score (INS-051 supersedes INS-040)
   # l2_weight: DELETED — 被方差之枷替代，后被 Pointwise Spear 替代
-  lambda_s: 1e-3             # 匹配 Huber Loss 量纲 (~几十到几百) (INS-051, Gemini WARN: 首轮实测校准)
+  lambda_s: 1e-4             # Phase 11d Config A default (INS-055, Config B=1e-5 via CLI)
+  huber_delta: 200           # Phase 11d: 4x from 50→200, 释放肥尾 MSE 梯度 (INS-055)
   loss_precision: "fp32"     # compute_spear_loss 强制 FP32 安全舱 (Phase 11a NaN 教训)
   lambda_s_warmup: 2         # Phase 3 值; Phase 6 搜索 [2, 3, 5]
   masking:
@@ -119,9 +120,9 @@ hpo:
     learning_rate:                   # Huber Loss 梯度量级待实测
       type: loguniform
       range: [1e-4, 1e-3]
-    lambda_s:                        # Huber 量纲 (~几十到几百)，MDL 需更大 λ_s (INS-051)
+    lambda_s:                        # Phase 11d: 降低 10-100x 解除方差坍缩 (INS-055)
       type: loguniform
-      range: [1e-4, 1e-2]
+      range: [1e-5, 1e-3]
     warmup_epochs:                   # Gemini audit: [2,3,5] 配合 epochs=15
       type: choice
       values: [2, 3, 5]

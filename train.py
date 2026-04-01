@@ -86,12 +86,11 @@ signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
 def compute_spear_loss(pred, target, z_core, lambda_s, epoch,
-                       warmup_epochs=2, **kwargs):
-    """Phase 11c: The Pointwise Spear (INS-049/050/051)
+                       warmup_epochs=2, huber_delta=200.0, **kwargs):
+    """Phase 11d: The Resuscitated Spear (INS-054/055)
 
-    彻底废除跨 Batch 归一化 (Softmax/Z-score)，斩断宏观 Beta 走私。
+    Phase 11c→11d: δ=50→200 释放肥尾梯度, λ_s=1e-3→1e-4 解除 z_core 死刑。
     Pointwise Huber Loss 锚定绝对 BP 尺度，免疫时空错位。
-    Gemini 审计: 5 PASS / 2 WARN (lambda_s 量纲待首轮实测校准)。
     """
     # 0. FP32 Safe Room (继承 INS-046: fp16 溢出防护)
     pred = pred.float().view(-1)   # [B]
@@ -103,10 +102,9 @@ def compute_spear_loss(pred, target, z_core, lambda_s, epoch,
     #    纯建仓检测: 下跌/噪音归零，只保留右尾
     target_acc = torch.clamp(target, min=0.0)
 
-    # 2. Pointwise Huber Loss (delta=50 BP) — 零跨 Batch 依赖
-    #    |error|<50: MSE 级严苛锁定; |error|>=50: L1 防梯度爆炸
-    #    彻底击碎 6956 BP logit 膨胀赌场 (INS-049)
-    loss_spear = F.huber_loss(pred, target_acc, delta=50.0)
+    # 2. Pointwise Huber Loss — 零跨 Batch 依赖
+    #    Phase 11d: δ=200 释放 97.6% 样本的 MSE 二次方梯度 (INS-055)
+    loss_spear = F.huber_loss(pred, target_acc, delta=huber_delta)
 
     # 3. MDL Compression (warmup 保留: 先学信号再压缩)
     z_core_safe = torch.clamp(z_core, min=-20.0, max=20.0)
@@ -330,7 +328,7 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                     grad_clip, device, epoch, steps_per_epoch, global_step,
                     use_amp, warmup_epochs=2, overfit_batch=None, scheduler=None,
                     start_step=0, ckpt_path=None, ckpt_every=0,
-                    temperature=0.1):
+                    temperature=0.1, huber_delta=200.0):
     model.train()
     running = {"total": 0.0, "pf_ret": 0.0, "s_t": 0.0, "count": 0}
     loader_iter = iter(loader) if overfit_batch is None else None
@@ -367,7 +365,7 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                     prediction, z_core = model(manifold, c_friction)
                     total_loss, pf_ret, s_t = compute_spear_loss(
                         prediction, target, z_core, lambda_s, epoch, warmup_epochs,
-                        temperature=temperature
+                        huber_delta=huber_delta, temperature=temperature
                     )
                 scaler.scale(total_loss).backward()
                 scaler.unscale_(optimizer)
@@ -378,7 +376,7 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                 prediction, z_core = model(manifold, c_friction)
                 total_loss, pf_ret, s_t = compute_spear_loss(
                     prediction, target, z_core, lambda_s, epoch, warmup_epochs,
-                    temperature=temperature
+                    huber_delta=huber_delta, temperature=temperature
                 )
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -443,7 +441,7 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
 # ============================================================
 
 def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
-             warmup_epochs=2, temperature=0.1):
+             warmup_epochs=2, temperature=0.1, huber_delta=200.0):
     model.eval()
     all_preds, all_targets = [], []
     running = {"total": 0.0, "pf_ret": 0.0, "s_t": 0.0, "count": 0}
@@ -459,7 +457,7 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
             prediction, z_core = model(manifold, c_friction)
             total_loss, pf_ret, s_t = compute_spear_loss(
                 prediction, target, z_core, lambda_s, epoch, warmup_epochs,
-                temperature=temperature
+                huber_delta=huber_delta, temperature=temperature
             )
             bs = target.size(0)
             running["total"] += total_loss.item() * bs
@@ -474,6 +472,12 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
 
     # Cross-sectional prediction std (INS-017: Std Expansion monitoring)
     pred_std_bp = preds.std().item()
+
+    # Variance Collapse Sentinel (INS-054: detect brain death early)
+    if pred_std_bp < 10.0 and preds.numel() > 10:
+        logger.error(f"VARIANCE COLLAPSE: pred_std={pred_std_bp:.2f} BP < 10.0. Brain death detected.")
+    elif pred_std_bp < 30.0:
+        logger.warning(f"LOW VARIANCE: pred_std={pred_std_bp:.2f} BP. Nearing collapse.")
 
     return {
         "total": running["total"] / n,
@@ -499,7 +503,9 @@ def main():
     parser.add_argument("--steps_per_epoch", type=int, default=10000)
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--lambda_s", type=float, default=1e-3)
+    parser.add_argument("--lambda_s", type=float, default=1e-4)
+    parser.add_argument("--huber_delta", type=float, default=200.0,
+                        help="Huber loss delta (BP). Phase 11c=50, Phase 11d=200 (INS-055)")
     parser.add_argument("--grad_clip", type=float, default=1.0)
     parser.add_argument("--val_split", type=float, default=0.2)
     # HPO-searchable (lambda x: int(float(x)) handles Vertex AI "128.0" format)
@@ -683,12 +689,14 @@ def main():
             start_step=start_step, ckpt_path=ckpt_path,
             ckpt_every=args.ckpt_every_n_steps,
             temperature=args.temperature,
+            huber_delta=args.huber_delta,
         )
 
         val_metrics = validate(model, val_loader, args.lambda_s, device,
                                max_steps=args.max_val_steps, epoch=epoch,
                                warmup_epochs=args.warmup_epochs,
-                               temperature=args.temperature)
+                               temperature=args.temperature,
+                               huber_delta=args.huber_delta)
         elapsed = time.time() - t0
 
         logger.info(

@@ -1,0 +1,30 @@
+workerPoolSpecs:
+- machineSpec:
+    machineType: n1-standard-8
+    acceleratorType: NVIDIA_TESLA_T4
+    acceleratorCount: 1
+  replicaCount: 1
+  diskSpec:
+    bootDiskType: pd-ssd
+    bootDiskSizeGb: 1300
+  containerSpec:
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase11d-v1
+    command:
+    - bash
+    - -c
+    - "set -e\necho \"=== Phase 11d Config A: Resuscitated Spear ===\"\necho \"lambda_s=1e-4,\
+      \ huber_delta=200 (INS-055)\"\necho \"Fix: Phase 11c variance collapse (pred_std=5.6\
+      \ BP, z_core brain death)\"\n\necho \"=== Stage 1: Stage shards to pd-ssd boot\
+      \ disk ===\"\nSHARD_DIR=/tmp/shards\nmkdir -p ${SHARD_DIR}\n\nt0=$(date +%s)\n\
+      gcloud storage cp \"gs://omega-pure-data/wds_shards_v3_full/omega_shard_*.tar\"\
+      \ ${SHARD_DIR}/ 2>&1 | tail -5\nt1=$(date +%s)\nSTAGED=$(ls ${SHARD_DIR}/*.tar\
+      \ | wc -l)\necho \"Staged ${STAGED} shards in $((t1-t0))s to ${SHARD_DIR}\"\n\
+      df -h ${SHARD_DIR}\n\necho \"=== Stage 2: Phase 11d Config A Training (20 epochs)\
+      \ ===\"\nPYTHONUNBUFFERED=1 python3 /app/train.py \\\n  --shard_dir=${SHARD_DIR}\
+      \ \\\n  --output_dir=/gcs/omega-pure-data/checkpoints/phase11d_A_v1 \\\n  --hidden_dim=64\
+      \ \\\n  --window_size_t=32 \\\n  --window_size_s=4 \\\n  --lr=3.2e-4 \\\n  --lambda_s=1e-4\
+      \ \\\n  --huber_delta=200.0 \\\n  --warmup_epochs=2 \\\n  --batch_size=256 \\\n\
+      \  --coarse_graining_factor=1 \\\n  --epochs=20 \\\n  --steps_per_epoch=5000 \\\n\
+      \  --num_workers=4 \\\n  --ckpt_every_n_steps=500 \\\n  --no_amp \\\n  --resume\n"
+scheduling:
+  strategy: SPOT

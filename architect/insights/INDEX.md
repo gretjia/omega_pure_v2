@@ -62,7 +62,9 @@
 | INS-050 | L1 脑死亡陷阱 — z_sparsity 语义翻转修正 | 物理 | 2026-04-01 | NONE | active |
 | INS-051 | 点对点建仓之矛 — Pointwise Huber Loss 替代 Softmax 交叉熵 | 训练 | 2026-04-01 | L2 更新 | 待用户确认 |
 | INS-052 | Train-Serve Skew — 216x 尺度放大镜幽灵 | 物理 | 2026-04-01 | NONE | active |
-| INS-053 | 净网回测协议 — 绝对 BP 标尺验证 + Epiplexity 扭转验证 | 度量 | 2026-04-01 | NONE | pending_e20_completion |
+| INS-053 | 净网回测协议 — 绝对 BP 标尺验证 + Epiplexity 扭转验证 | 度量 | 2026-04-01 | NONE | **superseded by INS-054/055** |
+| INS-054 | 方差坍缩 — Huber δ=50 + λ_s=1e-3 导致特征脑死亡 | 训练 | 2026-04-01 | L2 更新 | active |
+| INS-055 | Phase 11d 双轨复苏 — λ_s 降 10-100x + δ 放宽 4x | 训练 | 2026-04-01 | L2 更新 | pending_deployment |
 
 ---
 
@@ -123,3 +125,5 @@
 | INS-051 | phase11c_pointwise_spear | — |
 | INS-052 | train_serve_skew_resolution | — |
 | INS-053 | train_serve_skew_resolution | — |
+| INS-054 | phase11d_resuscitation_protocol | — |
+| INS-055 | phase11d_resuscitation_protocol | — |
