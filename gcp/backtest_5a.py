@@ -5,7 +5,6 @@ Pure statistical test — no T+1, no trading simulation.
 Answers: "Does the model predict the correct direction?"
 
 Uses T16 best.pt (FVU=0.998896) on validation shards.
-TARGET_MEAN/STD from train split only (no look-ahead).
 
 Usage (Vertex AI):
   python3 backtest_5a.py \
@@ -34,8 +33,7 @@ from omega_epiplexity_plus_core import OmegaMathematicalCompressor
 from omega_webdataset_loader import dynamic_processor
 
 # Target stats from TRAIN split only (no look-ahead bias)
-TARGET_MEAN = -5.08   # BP
-TARGET_STD = 216.24   # BP
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
