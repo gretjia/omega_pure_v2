@@ -104,13 +104,17 @@ print(cfg['workerPoolSpecs'][0]['diskSpec'].get('bootDiskType', 'UNKNOWN'))
 
 # C-028: Large pd-ssd boot disk (>500GB) without local SSD reference = data staging on slow disk
 # Small boot disk (<= 500GB) is OK — data may come from FUSE or local SSD
+# C-041: Vertex AI cannot mount Local NVMe SSD — training staging on pd-ssd is the ONLY option
 if [[ "$DISK_SIZE_GB" -gt 500 ]] && [[ "$DISK_TYPE" == "pd-ssd" || "$DISK_TYPE" == "pd-balanced" || "$DISK_TYPE" == "pd-standard" ]]; then
     echo ""
-    echo "  ⛔ C-028: bootDiskSizeGb=${DISK_SIZE_GB} with ${DISK_TYPE} — likely staging data on slow disk."
-    echo "  Use Local SSD, FUSE direct read, or reduce boot disk to <=500GB."
+    echo "  ⚠️  C-028: bootDiskSizeGb=${DISK_SIZE_GB} with ${DISK_TYPE} — large persistent disk for staging."
+    echo "  C-041: Vertex AI cannot mount Local NVMe SSD. For training, pd-ssd staging is the only option."
     echo ""
-    echo "ABORT: Fix disk config in ${JOB_CONFIG}"
-    exit 1
+    read -r -p "  This is expected for training jobs. Continue? [y/N] " confirm
+    if [[ "${confirm,,}" != "y" ]]; then
+        echo "Aborted by user."
+        exit 1
+    fi
 fi
 echo "  Disk: ${DISK_TYPE} ${DISK_SIZE_GB}GB — OK"
 echo ""

@@ -350,7 +350,7 @@ def main():
                     z_sparsity_accum.append(compute_z_sparsity(z_core_mb))
 
             preds = torch.cat(pred_parts)
-            pred_bp = (preds.squeeze() * TARGET_STD + TARGET_MEAN).numpy().copy()
+            pred_bp = preds.view(-1).numpy().copy()
             # Concatenate per-sample z_sparsity
             if z_sparsity_parts:
                 z_sparsity_per_sample = np.concatenate(z_sparsity_parts)

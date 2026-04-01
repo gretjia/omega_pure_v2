@@ -158,7 +158,7 @@ def main():
             target = batch["target"]  # keep on CPU
 
             prediction = model(manifold, c_friction)
-            pred_bp = prediction.squeeze().cpu() * TARGET_STD + TARGET_MEAN
+            pred_bp = prediction.view(-1).cpu()
 
             all_preds.append(pred_bp.numpy().copy())
             all_targets.append(target.numpy().copy())
