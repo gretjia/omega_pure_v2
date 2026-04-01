@@ -47,7 +47,9 @@ def _sigterm_handler(signum, frame):
 
 signal.signal(signal.SIGTERM, _sigterm_handler)
 
-
+# Target stats from TRAIN split (no look-ahead)
+TARGET_MEAN = -5.08
+TARGET_STD = 216.24
 
 
 def fast_npy_decoder(sample):

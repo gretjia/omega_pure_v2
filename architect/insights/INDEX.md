@@ -61,8 +61,6 @@
 | INS-049 | 跨期 Batch 毒药 — 乱序 WebDataset 封杀 Batch 维度归一化 | 训练 | 2026-04-01 | L2 更新 | active |
 | INS-050 | L1 脑死亡陷阱 — z_sparsity 语义翻转修正 | 物理 | 2026-04-01 | NONE | active |
 | INS-051 | 点对点建仓之矛 — Pointwise Huber Loss 替代 Softmax 交叉熵 | 训练 | 2026-04-01 | L2 更新 | 待用户确认 |
-| INS-052 | Train-Serve Skew — 216x 尺度放大镜幽灵 | 物理 | 2026-04-01 | NONE | active |
-| INS-053 | 净网回测协议 — 绝对 BP 标尺验证 + Epiplexity 扭转验证 | 度量 | 2026-04-01 | NONE | pending_e20_completion |
 
 ---
 
@@ -121,5 +119,3 @@
 | INS-049 | phase11c_pointwise_spear | — |
 | INS-050 | phase11c_pointwise_spear | — |
 | INS-051 | phase11c_pointwise_spear | — |
-| INS-052 | train_serve_skew_resolution | — |
-| INS-053 | train_serve_skew_resolution | — |

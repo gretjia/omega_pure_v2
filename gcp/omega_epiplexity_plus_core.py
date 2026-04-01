@@ -192,7 +192,7 @@ def compute_epiplexity_mdl_loss(prediction: torch.Tensor, target: torch.Tensor,
     H_T = MSE(prediction, target) — time-bounded entropy (unpredictable noise)
     S_T = ||z_core||₁ — structure description length (Epiplexity)
     """
-    h_t = F.mse_loss(prediction.view(-1), target)
+    h_t = F.mse_loss(prediction.squeeze(), target)
     s_t = torch.norm(z_core, p=1, dim=-1).mean()
     total_mdl = h_t + lambda_s * s_t
     return total_mdl, h_t, s_t

@@ -29,4 +29,3 @@
 | 2026-03-31 | Phase 11 最终判决 + 部署授权 (Spear Final Verdict) | [directives/2026-03-31_phase11_spear_final_verdict.md](directives/2026-03-31_phase11_spear_final_verdict.md) | AXIOM UPDATE REQUIRED — Phase 11a NaN 崩溃 |
 | 2026-04-01 | Phase 11b 重铸之矛 (Reforged Spear) | [directives/2026-04-01_phase11b_reforged_spear.md](directives/2026-04-01_phase11b_reforged_spear.md) | AXIOM UPDATE REQUIRED — 待 spec 更新确认 |
 | 2026-04-01 | Phase 11c 点对点建仓之矛 (Pointwise Spear) | [directives/2026-04-01_phase11c_pointwise_spear.md](directives/2026-04-01_phase11c_pointwise_spear.md) | AXIOM UPDATE REQUIRED — 待用户确认 |
-| 2026-04-01 | Train-Serve Skew 216x 修复 + 全面验证协议 | [directives/2026-04-01_train_serve_skew_resolution.md](directives/2026-04-01_train_serve_skew_resolution.md) | NONE — 工程对齐，无 spec 变更 |
