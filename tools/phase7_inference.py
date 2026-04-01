@@ -168,6 +168,10 @@ def main():
                         help="PyTorch CPU threads (1 is fastest for this model)")
     parser.add_argument("--worker_id", type=int, default=-1,
                         help="Worker ID for parallel mode (-1 = single process)")
+    parser.add_argument("--val_only", action="store_true",
+                        help="Only process validation shards (last val_split fraction)")
+    parser.add_argument("--val_split", type=float, default=0.2,
+                        help="Fraction of shards reserved for validation (default 0.2)")
     args = parser.parse_args()
 
     # Auto-detect GPU: use CUDA if available, else CPU
@@ -214,6 +218,14 @@ def main():
     else:
         all_shards = sorted(glob.glob(os.path.join(args.shard_dir, "omega_shard_*.tar")))
     total_shards = len(all_shards)
+
+    # Val-only mode: only process validation shards (same split as train.py)
+    if args.val_only:
+        n_train = int(total_shards * (1 - args.val_split))
+        all_shards = all_shards[n_train:]
+        log.info(f"Val-only mode: {total_shards} total, skipping first {n_train} train shards, "
+                 f"processing {len(all_shards)} val shards")
+        total_shards = len(all_shards)
 
     # Shard range for multi-process parallelism
     shard_end = args.shard_end if args.shard_end > 0 else total_shards
