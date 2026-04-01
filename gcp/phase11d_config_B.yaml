@@ -1,7 +1,7 @@
 workerPoolSpecs:
 - machineSpec:
-    machineType: n1-standard-8
-    acceleratorType: NVIDIA_TESLA_T4
+    machineType: g2-standard-8
+    acceleratorType: NVIDIA_L4
     acceleratorCount: 1
   replicaCount: 1
   diskSpec:
@@ -24,7 +24,7 @@ workerPoolSpecs:
       \ \\\n  --hidden_dim=64 \\\n  --window_size_t=32 \\\n  --window_size_s=4 \\\n\
       \  --lr=3.2e-4 \\\n  --lambda_s=1e-5 \\\n  --huber_delta=200.0 \\\n  --warmup_epochs=2\
       \ \\\n  --batch_size=256 \\\n  --coarse_graining_factor=1 \\\n  --epochs=20 \\\n\
-      \  --steps_per_epoch=5000 \\\n  --num_workers=4 \\\n  --ckpt_every_n_steps=500\
+      \  --steps_per_epoch=5000 \\\n  --num_workers=6 \\\n  --ckpt_every_n_steps=500\
       \ \\\n  --no_amp \\\n  --resume\n"
 scheduling:
   strategy: SPOT
