@@ -128,6 +128,7 @@
 - **C-047**: Spot SIGTERM 期间 torch.save 直写 /gcs/ FUSE → FUSE 缓存来不及 flush → checkpoint 损坏(0 byte)。修复: 先写本地 /tmp staging → shutil.copy2 到 FUSE → os.sync() 强制刷盘（Ω4: Gemini 审计发现）
 - **C-048**: 训练 I/O 策略决策树: (1) 推理(单 pass) → pipe 模式(100GB disk, Phase 7 实测 466 shards/h); (2) 训练(多 epoch) → pd-ssd staging(1300GB, C-026); (3) FUSE file-cache + resampled=True → cache thrashing 灾难（Ω2: 先量化 I/O 模式再选方案）
 - **C-049**: Train-Serve Skew 恶魔（训练目标变更但推理代码未同步更新）。Phase 11c 改输出绝对 BP，推理仍残留 `* TARGET_STD` 反向缩放，导致 20 BP 预测暴涨至 4319 BP，摧毁回测引擎。架构变更（如 Loss 量纲）必须**同步审查全栈文件**，避免前线突变而后勤崩溃（Ω5: 验证链对齐）。
+- **C-050**: 局部修复残留"死代码/幽灵 Bug"。废弃架构级变量（TARGET_STD）或算子（.squeeze()）时，必须 `grep -r` 全栈扫描，不可只改报错行。Gemini 修复遗漏 4 处 .squeeze() + 引入 IndentationError 致 train.py 无法编译（Ω5: 验证者自身也需审计）。
 
 ### AI 治理
 - **C-021**: AI 自己写烟测测自己 → 自洽性掩盖正确性。审计独立于作者（Ω5）

@@ -46,10 +46,6 @@ try:
 except ImportError:
     _hpt = None
 
-# Global target stats (from Phase 2 smoke test: 9.96M samples)
-TARGET_MEAN = -5.08   # BP
-TARGET_STD = 216.24   # BP
-
 # --- Spot VM preemption state (SIGTERM handler saves checkpoint) ---
 _preemption_state = {
     "model": None, "optimizer": None, "scaler": None, "scheduler": None,
@@ -98,8 +94,8 @@ def compute_spear_loss(pred, target, z_core, lambda_s, epoch,
     Gemini 审计: 5 PASS / 2 WARN (lambda_s 量纲待首轮实测校准)。
     """
     # 0. FP32 Safe Room (继承 INS-046: fp16 溢出防护)
-    pred = pred.float().squeeze()   # [B]
-    target = target.float().squeeze()
+    pred = pred.float().view(-1)   # [B]
+    target = target.float().view(-1)
     z_core = z_core.float()
     eps = 1e-8
 
@@ -405,7 +401,7 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
         running["count"] += 1
         # Track prediction std (cross-sectional variance monitoring, INS-017)
         with torch.no_grad():
-            pred_std = prediction.squeeze().std().item()
+            pred_std = prediction.view(-1).std().item()
             running["pred_std"] = running.get("pred_std", 0.0) + pred_std
         global_step += 1
 
@@ -470,7 +466,7 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
             running["pf_ret"] += pf_ret.item() * bs
             running["s_t"] += s_t.item() * bs
             running["count"] += bs
-            all_preds.append(prediction.squeeze())
+            all_preds.append(prediction.view(-1))
             all_targets.append(target)
 
     n = max(running["count"], 1)
@@ -752,6 +748,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
-
     main()

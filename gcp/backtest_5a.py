@@ -33,10 +33,6 @@ from torch.utils.data import DataLoader
 from omega_epiplexity_plus_core import OmegaMathematicalCompressor
 from omega_webdataset_loader import dynamic_processor
 
-# Target stats from TRAIN split only (no look-ahead bias)
-TARGET_MEAN = -5.08   # BP
-TARGET_STD = 216.24   # BP
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
