@@ -477,7 +477,7 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
     preds = torch.cat(all_preds)
 
     # Cross-sectional prediction std (INS-017: Std Expansion monitoring)
-    pred_std_bp = preds.std().item() * TARGET_STD
+    pred_std_bp = preds.std().item()
 
     return {
         "total": running["total"] / n,
@@ -752,4 +752,6 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
+
     main()
