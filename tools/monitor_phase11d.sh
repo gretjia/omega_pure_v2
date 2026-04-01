@@ -51,4 +51,10 @@ done
 echo ""
 if $ALL_DONE; then
     echo "=== BOTH JOBS FINISHED ==="
+    echo ""
+    echo "⚠️  POST-FLIGHT TODO (C-055):"
+    echo "  1. 跑全量 val 烟测 (--val_only)"
+    echo "  2. 实测 pred_std 与 D9-D0 spread 映射关系"
+    echo "  3. 用数据重新标定方差哨兵阈值（当前 10/30 BP 是粗估）"
+    echo "  4. 十分位 Alpha 分解 (Epiplexity 公理验证)"
 fi
