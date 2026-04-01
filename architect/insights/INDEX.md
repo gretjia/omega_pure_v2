@@ -65,6 +65,7 @@
 | INS-053 | 净网回测协议 — 绝对 BP 标尺验证 + Epiplexity 扭转验证 | 度量 | 2026-04-01 | NONE | **superseded by INS-054/055** |
 | INS-054 | 方差坍缩 — Huber δ=50 + λ_s=1e-3 导致特征脑死亡 | 训练 | 2026-04-01 | L2 更新 | active |
 | INS-055 | Phase 11d 双轨复苏 — λ_s 降 10-100x + δ 放宽 4x | 训练 | 2026-04-01 | L2 更新 | pending_deployment |
+| INS-056 | 19.7K 极小模型严禁多卡 DDP — Scale-Up Only | 架构 | 2026-04-01 | NONE | active |
 
 ---
 
@@ -127,3 +128,4 @@
 | INS-053 | train_serve_skew_resolution | — |
 | INS-054 | phase11d_resuscitation_protocol | — |
 | INS-055 | phase11d_resuscitation_protocol | — |
+| INS-056 | phase11d_io_audit_and_gpu_ruling | — |
