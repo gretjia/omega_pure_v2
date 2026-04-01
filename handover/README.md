@@ -2,22 +2,52 @@
 
 Critical handover state, architectural documentation, workflow automation, and engineering post-mortems.
 
+---
+
+## Path Finder — AI Agent 快速导航
+
+> **新 Agent 进场顺序**: CLAUDE.md → LATEST.md → 按任务查下表
+
+| 你要做什么 | 先读这些 |
+|-----------|---------|
+| 理解项目核心物理 | [`CLAUDE.md`](../CLAUDE.md) §WHY + [`VIA_NEGATIVA.md`](../VIA_NEGATIVA.md) + [`architect/insights/INS-019`](../architect/insights/INS-019_implicit_compression_victory.md) + [`INS-020`](../architect/insights/INS-020_topology_epiplexity_unification.md) |
+| 修改损失函数 | [`architect/insights/INS-033`](../architect/insights/INS-033_softmax_portfolio_loss_paradigm_shift.md) (Softmax Portfolio Loss) + [`INS-035`](../architect/insights/INS-035_phase9_asymmetric_pearson_postmortem.md) (Pearson 验尸) + [`reports/audits_and_insights/`](../reports/audits_and_insights/) |
+| 修改 SRL / 拓扑注意力 | [`architect/insights/INS-005`](../architect/insights/INS-005_srl_c_calibration.md) (c 标定) + [`reports/audits_and_insights/id4`](../reports/audits_and_insights/id4_srl_friction_calibration.md) + [`id6`](../reports/audits_and_insights/id6_vd_physics_ruling.md) |
+| 修改 ETL / 数据管线 | [`ETL_ENGINEERING_LESSONS.md`](./ETL_ENGINEERING_LESSONS.md) + [`architect/insights/INS-016`](../architect/insights/INS-016_cg_microstructure_protection.md) (cg 不可二次粗粒化) |
+| 回测 / 模拟 | [`architect/insights/INS-023`](../architect/insights/INS-023_t1_simulation_iron_rules.md) (T+1 三铁律) + [`INS-022`](../architect/insights/INS-022_spacetime_correction_20bars_04days.md) (时空换算) + [`reports/phase10/`](../reports/phase10/) |
+| 训练调参 | [`architect/current_spec.yaml`](../architect/current_spec.yaml) + [`OMEGA_LESSONS.md`](../OMEGA_LESSONS.md) 案例库 (C-xxx) + [`architect/insights/INS-036`](../architect/insights/INS-036_softmax_scale_explosion_variance_fix.md)~[`048`](../architect/insights/INS-048_lambda_s_recalibration.md) |
+| 部署到 GCP / 远程节点 | [`HARDWARE_TOPOLOGY.md`](./HARDWARE_TOPOLOGY.md) + [`GCP_PRICING_REFERENCE.md`](./GCP_PRICING_REFERENCE.md) + `gcp/safe_*.sh` 脚本 |
+| 追溯某个 Phase 的决策 | [`architect/INDEX.md`](../architect/INDEX.md) (指令时间线) + [`reports/phase{N}/`](../reports/) + [`architect/insights/INDEX.md`](../architect/insights/INDEX.md) |
+| 理解项目演进全貌 | [`reports/`](../reports/) 按 phase3→6→7→8→9→10 顺序 + [`reports/audits_and_insights/omega_core_insights.md`](../reports/audits_and_insights/omega_core_insights.md) |
+
+---
+
 ## Start Here
 - **[`LATEST.md`](./LATEST.md)**: Single Source of Truth — current status, file map, next steps, rules for next agent
-- **[`agent_manuals.md`](./agent_manuals.md)**: AI Agent 完整操作手册 — 新 agent 上手指南（工作流、工具链、安全红线）
 - **[`../CLAUDE.md`](../CLAUDE.md)**: Project constitution (auto-loaded by Claude CLI every session)
-- **[`../VIA_NEGATIVA.md`](../VIA_NEGATIVA.md)**: Falsified paths — what NOT to do (must read before making changes)
+- **[`../OMEGA_LESSONS.md`](../OMEGA_LESSONS.md)**: 唯一经验源 — 元公理 + 操作手册 + 案例库 (C-001~C-03x)
+- **[`../VIA_NEGATIVA.md`](../VIA_NEGATIVA.md)**: Falsified paths — what NOT to do (frozen archive)
 
-## Architecture
+## Architecture & Insights
 - **[`../architect/current_spec.yaml`](../architect/current_spec.yaml)**: Current architecture params (tensor shape, physics constants, ETL config)
-- **[`../architect/INDEX.md`](../architect/INDEX.md)**: Architect directive timeline
+- **[`../architect/INDEX.md`](../architect/INDEX.md)**: Architect directive timeline (21 directives, 2026-03-18 ~ 04-01)
+- **[`../architect/insights/INDEX.md`](../architect/insights/INDEX.md)**: 48 structured insight cards (INS-001 ~ INS-048)
 - **[`../omega_axioms.py`](../omega_axioms.py)**: Axiom assertions (37 checks, `python3 omega_axioms.py --verbose`)
-- **[`../architect/gdocs/`](../architect/gdocs/)**: 架构师 Google Docs 原文存档 (id1-id6, 通过 `gdocs read <id>` 可刷新)
+
+## Reports & Evidence (按 Phase 组织)
+- **[`../reports/phase3/`](../reports/phase3/)**: V15 训练报告
+- **[`../reports/phase6/`](../reports/phase6/)**: 回测结果 (Equity, Trades)
+- **[`../reports/phase7/`](../reports/phase7/)**: T29 旗舰回测 + 全量模拟方案 + 决策历史 (3 GDocs)
+- **[`../reports/phase8/`](../reports/phase8/)**: 物理法则重铸 + 14 组参数扫描 (Sweep)
+- **[`../reports/phase9/`](../reports/phase9/)**: 非对称 Pearson Loss 证据包 (7 jobs 全败)
+- **[`../reports/phase10/`](../reports/phase10/)**: Vanguard V5 + Softmax Portfolio Loss 结果
+- **[`../reports/audits_and_insights/`](../reports/audits_and_insights/)**: Gemini 审计 + 架构师 GDoc 精选 ([INDEX](../reports/audits_and_insights/INDEX.md))
+- **[`../reports/general/`](../reports/general/)**: Epiplexity 理论文档
 
 ## Engineering & Infrastructure
 - **[`HARDWARE_TOPOLOGY.md`](./HARDWARE_TOPOLOGY.md)**: Physical nodes (omega-vm, linux1, windows1, mac), IPs, SSH routes
+- **[`GCP_PRICING_REFERENCE.md`](./GCP_PRICING_REFERENCE.md)**: GCP 计费参考 (Vertex AI / GCS / Nearline)
 - **[`ETL_ENGINEERING_LESSONS.md`](./ETL_ENGINEERING_LESSONS.md)**: OOM deadlocks, cgroup CPU throttling, Python anti-patterns
-- **[`../audit/gemini_bitter_lessons.md`](../audit/gemini_bitter_lessons.md)**: Gemini CLI 48h disaster post-mortem
 
 ## Training & Backtest Scripts
 | Script | Purpose | Usage |
@@ -27,12 +57,14 @@ Critical handover state, architectural documentation, workflow automation, and e
 | [`../tools/phase7_simulate.py`](../tools/phase7_simulate.py) | T+1 overnight swing backtest simulator | `python3 tools/phase7_simulate.py --predictions ... --cost_bp 25` |
 | [`../backtest_5a.py`](../backtest_5a.py) | Phase 5a spread backtest | `python3 backtest_5a.py ...` |
 
-## Methodology & Roadmap
-- **[`EXPERIMENTAL_DESIGN_AND_ROADMAP.md`](./EXPERIMENTAL_DESIGN_AND_ROADMAP.md)**: Derivation of physical constants (vol_threshold, window_size) and Phase 2-4 success criteria
-- **[`V3_SMOKE_TEST_PLAN.md`](./V3_SMOKE_TEST_PLAN.md)**: V3 shard validation and Vertex AI ignition plan
+## Historical / Early Phase (参考价值，不再更新)
+- **[`EXPERIMENTAL_DESIGN_AND_ROADMAP.md`](./EXPERIMENTAL_DESIGN_AND_ROADMAP.md)**: Phase 2-4 物理常数推导 + 成功准则 (Phase 7+ 后已演进)
+- **[`V3_SMOKE_TEST_PLAN.md`](./V3_SMOKE_TEST_PLAN.md)**: V3 shard 验证计划 (已完成)
+- **[`PHASE3_V15_TRAINING_REPORT.md`](./PHASE3_V15_TRAINING_REPORT.md)**: Phase 3 报告副本 (canonical 版本在 `reports/phase3/`)
+- **[`agent_manuals.md`](./agent_manuals.md)**: Harness V1 操作手册 (已被 CLAUDE.md + harness_v2_spec 取代，保留供参考)
+- **[`claude_code_blueprint.md`](./claude_code_blueprint.md)**: Harness V1 蓝图 (已被 CLAUDE.md 取代，保留供参考)
 
 ## Workflow Automation
-- **[`agent_manuals.md`](./agent_manuals.md)**: 完整操作手册（三层自动化架构、标准工作流、故障排除）
 
 ### Hooks（自动质量门禁，`.claude/hooks/`）
 | Hook | 触发 | 功能 |

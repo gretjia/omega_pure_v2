@@ -122,6 +122,7 @@
 ### 训练稳定性
 - **C-042**: Z-score 标准化是仿射不变的 → 梯度与权重正交 → 勾股漂移: W² 单调膨胀 → S_T 爆炸 → NaN。修复: std 必须 `.detach()` + `clamp(min=1.0)`（Ω1: Phase 11a 5 epoch 全部 NaN 实测确认）
 - **C-043**: λ_s 必须与 Loss 量纲匹配。IC Loss≈0.05 时 λ_s=1e-7 可行，Softmax Loss≈10 时 λ_s 需 ≥2e-5 (200x)。换 Loss 后必须重新标定 λ_s（Ω2: 先量化量纲差）
+- **C-044**: `--resume` + 相同 `output_dir` → 加载旧 checkpoint 跳过训练。换 Loss/超参后必须用新 output_dir（如 v1→v2），否则复用废弃 checkpoint 假完成（Ω1: 只信实测，C-020 同类教训）
 
 ### AI 治理
 - **C-021**: AI 自己写烟测测自己 → 自洽性掩盖正确性。审计独立于作者（Ω5）

@@ -36,7 +36,7 @@ workerPoolSpecs:
       echo "=== Stage 2: Phase 11 Spear Training (20 epochs) ==="
       PYTHONUNBUFFERED=1 python3 /app/train.py \
         --shard_dir=${SHARD_DIR} \
-        --output_dir=/gcs/omega-pure-data/checkpoints/phase11_spear_v1 \
+        --output_dir=/gcs/omega-pure-data/checkpoints/phase11b_spear_v2 \
         --hidden_dim=64 \
         --window_size_t=32 \
         --window_size_s=4 \
