@@ -28,3 +28,4 @@
 | 2026-03-31 | Phase 11 建仓之矛 (Spear Protocol) | [directives/2026-03-31_phase11_spear_protocol.md](directives/2026-03-31_phase11_spear_protocol.md) | AXIOM UPDATE REQUIRED — P0 FAILED, 授权部署 |
 | 2026-03-31 | Phase 11 最终判决 + 部署授权 (Spear Final Verdict) | [directives/2026-03-31_phase11_spear_final_verdict.md](directives/2026-03-31_phase11_spear_final_verdict.md) | AXIOM UPDATE REQUIRED — Phase 11a NaN 崩溃 |
 | 2026-04-01 | Phase 11b 重铸之矛 (Reforged Spear) | [directives/2026-04-01_phase11b_reforged_spear.md](directives/2026-04-01_phase11b_reforged_spear.md) | AXIOM UPDATE REQUIRED — 待 spec 更新确认 |
+| 2026-04-01 | Phase 11c 点对点建仓之矛 (Pointwise Spear) | [directives/2026-04-01_phase11c_pointwise_spear.md](directives/2026-04-01_phase11c_pointwise_spear.md) | AXIOM UPDATE REQUIRED — 待用户确认 |

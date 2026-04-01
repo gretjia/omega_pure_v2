@@ -79,6 +79,8 @@ def _sigterm_handler(signum, frame):
         _hpt.report_hyperparameter_tuning_metric(
             hyperparameter_metric_tag="best_val_portfolio_return",
             metric_value=report_pf, global_step=s["global_step"])
+    # C-047: Force FUSE flush before exit — prevent incomplete checkpoint on GCS
+    os.sync()
     logger.warning(f"Emergency checkpoint saved (epoch={s['epoch']}, step={s['global_step']}, "
                    f"pf_ret={s['best_pf_ret']:.4f}, batch_pf_ret={s.get('best_batch_pf_ret', float('-inf')):.4f}). Exiting 143.")
     sys.exit(143)  # 128+SIGTERM(15) — signals abnormal termination for Spot VM restart
@@ -88,57 +90,46 @@ signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
 def compute_spear_loss(pred, target, z_core, lambda_s, epoch,
-                       warmup_epochs=2, temperature=0.5):
-    """Phase 11b: The Reforged Spear (INS-046/047/048)
+                       warmup_epochs=2, **kwargs):
+    """Phase 11c: The Pointwise Spear (INS-049/050/051)
 
-    修复 Phase 11a 勾股漂移 (Pythagorean Drift) NaN 崩溃:
-    - Detached Straitjacket: clamp(std,min=1.0).detach() 斩断仿射黑洞
-    - T=0.5: 梯度放大从 10x 降到 2x
-    - λ_s=2e-5: 匹配 Softmax Loss 量纲 (160x vs IC Loss)
-    - FP32 safe room: 隔离 FP16 e^11 溢出天花板
+    彻底废除跨 Batch 归一化 (Softmax/Z-score)，斩断宏观 Beta 走私。
+    Pointwise Huber Loss 锚定绝对 BP 尺度，免疫时空错位。
+    Gemini 审计: 5 PASS / 2 WARN (lambda_s 量纲待首轮实测校准)。
     """
-    # 0. FP32 Safe Room (INS-046: S_T>100K 时 fp16 不安全)
-    pred = pred.float()
-    target = target.float()
+    # 0. FP32 Safe Room (继承 INS-046: fp16 溢出防护)
+    pred = pred.float().squeeze()   # [B]
+    target = target.float().squeeze()
     z_core = z_core.float()
     eps = 1e-8
 
-    pred_flat = pred.squeeze()  # [B]
-
-    # 1. 目标遮蔽 (Asymmetric Target Blinding, INS-042)
+    # 1. Asymmetric Target Blinding (INS-042, 继承)
+    #    纯建仓检测: 下跌/噪音归零，只保留右尾
     target_acc = torch.clamp(target, min=0.0)
-    target_sum = target_acc.sum()
 
-    # 2. Detached Straitjacket (INS-047)
-    logit_mean = pred_flat.mean()
-    logit_std = pred_flat.std()
-    # clamp(min=1.0): 防 std→0 时 1/σ 梯度爆炸
-    # .detach(): 斩断勾股漂移 — 梯度不再尺度不变，产生向内压缩引力
-    safe_std = torch.clamp(logit_std, min=1.0).detach()
-    locked_logits = (pred_flat - logit_mean) / safe_std
+    # 2. Pointwise Huber Loss (delta=50 BP) — 零跨 Batch 依赖
+    #    |error|<50: MSE 级严苛锁定; |error|>=50: L1 防梯度爆炸
+    #    彻底击碎 6956 BP logit 膨胀赌场 (INS-049)
+    loss_spear = F.huber_loss(pred, target_acc, delta=50.0)
 
-    # 3. Spear Loss (Accumulation Cross-Entropy, INS-043)
-    if target_sum <= eps:
-        # 熊市: 全跌 batch，切断交叉熵梯度，仅 MDL 惩罚
-        loss_spear = torch.tensor(0.0, device=pred.device, requires_grad=True)
-        pf_ret = torch.tensor(0.0, device=pred.device)
-    else:
-        target_prob = target_acc / (target_sum + eps)
-        # log_softmax: 数值稳定 (LogSumExp 内置)，替代 log(softmax+eps)
-        log_pred_prob = F.log_softmax(locked_logits / temperature, dim=0)
-        loss_spear = -torch.sum(target_prob * log_pred_prob)
-        # pf_ret: 监控指标 (不参与梯度)，用于 best model 选择
-        with torch.no_grad():
-            pred_prob = F.softmax(locked_logits / temperature, dim=0)
-            pf_ret = torch.sum(pred_prob * target)
-
-    # 4. MDL 压缩 (INS-048: λ_s=2e-5 匹配 Softmax 量纲)
-    # z_core clamp [-20,20]: 紧急防爆墙，防止 S_T→Inf
+    # 3. MDL Compression (warmup 保留: 先学信号再压缩)
     z_core_safe = torch.clamp(z_core, min=-20.0, max=20.0)
     lambda_s_eff = lambda_s if epoch >= warmup_epochs else 0.0
     s_t = torch.norm(z_core_safe, p=1, dim=-1).mean()
 
     total = loss_spear + lambda_s_eff * s_t
+
+    # 4. Pointwise portfolio return proxy (监控指标，不参与梯度)
+    #    Long-only 加权收益: clamp(pred,min=0) 归一化 → 加权 target
+    with torch.no_grad():
+        pred_pos = torch.clamp(pred, min=0.0)
+        total_pos = pred_pos.sum()
+        if total_pos > eps:
+            weights = pred_pos / total_pos
+            pf_ret = (weights * target).sum()
+        else:
+            pf_ret = torch.tensor(0.0, device=pred.device)
+
     return total, pf_ret, s_t
 
 
@@ -294,7 +285,11 @@ def create_val_dataloader(wds_url, batch_size, macro_window,
 
 def save_checkpoint(path, model, optimizer, scaler, epoch, global_step, metrics,
                     scheduler=None):
-    tmp_path = path + ".tmp"
+    import shutil
+    # C-047: Write to local disk first, then copy to final path (GCS FUSE safe).
+    # Risk: Spot SIGTERM during torch.save to /gcs/ FUSE → incomplete flush → corrupt checkpoint.
+    # Fix: local staging guarantees atomic local write, then shutil.copy2 to FUSE is a single small I/O.
+    local_staging = "/tmp/_omega_ckpt_staging.pt"
     torch.save({
         "epoch": epoch,
         "global_step": global_step,
@@ -303,8 +298,12 @@ def save_checkpoint(path, model, optimizer, scaler, epoch, global_step, metrics,
         "scaler_state_dict": scaler.state_dict() if scaler is not None else {},
         "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else {},
         "metrics": metrics,
-    }, tmp_path)
+    }, local_staging)
+    # Atomic copy: local → tmp on target → rename
+    tmp_path = path + ".tmp"
+    shutil.copy2(local_staging, tmp_path)
     os.replace(tmp_path, path)
+    os.remove(local_staging)
     logger.info(f"Checkpoint saved: epoch={epoch}, step={global_step}")
 
 
@@ -504,7 +503,7 @@ def main():
     parser.add_argument("--steps_per_epoch", type=int, default=10000)
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--lambda_s", type=float, default=2e-5)
+    parser.add_argument("--lambda_s", type=float, default=1e-3)
     parser.add_argument("--grad_clip", type=float, default=1.0)
     parser.add_argument("--val_split", type=float, default=0.2)
     # HPO-searchable (lambda x: int(float(x)) handles Vertex AI "128.0" format)
@@ -535,9 +534,9 @@ def main():
     # Spot VM resilience
     parser.add_argument("--ckpt_every_n_steps", type=int, default=0,
                         help="Save checkpoint every N steps (0=epoch-only, 500 recommended for Spot)")
-    # Phase 11b Reforged Spear (INS-047/048)
+    # Phase 11c: temperature kept for YAML backward-compat but no longer used (Pointwise Spear)
     parser.add_argument("--temperature", type=float, default=0.5,
-                        help="Spear Softmax temperature (0.5 = 2x sharpening, detached N(0,1))")
+                        help="DEPRECATED: Phase 11c Pointwise Spear removed Softmax. Kept for YAML compat.")
     parser.add_argument("--l2_weight", type=float, default=0.0,
                         help="DEPRECATED: replaced by Variance Straitjacket (INS-040). Kept for YAML compat.")
     parser.add_argument("--no_amp", action="store_true", default=False,
@@ -667,11 +666,10 @@ def main():
         logger.info(f"OVERFIT MODE: repeating single batch of {overfit_batch['target'].shape[0]} samples")
 
     # --- Training ---
-    logger.info(f"Starting training: epochs={args.epochs}, "
+    logger.info(f"Starting training [Phase 11c Pointwise Spear]: epochs={args.epochs}, "
                 f"steps/epoch={args.steps_per_epoch}, batch={args.batch_size}, "
                 f"lr={args.lr}, lambda_s={args.lambda_s}, "
-                f"warmup={args.warmup_epochs}, mask_prob={args.mask_prob}, "
-                f"temperature={args.temperature}")
+                f"warmup={args.warmup_epochs}, mask_prob={args.mask_prob}")
 
     best_pf_ret = _resumed_metrics.get("best_pf_ret", float("-inf"))
 

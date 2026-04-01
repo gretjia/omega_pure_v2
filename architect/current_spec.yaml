@@ -1,6 +1,6 @@
 # OMEGA PURE 架构规范 — 由架构师联络官维护
 # 最后更新：2026-04-01
-# 更新来源：INS-046/047/048 (Phase 11b Reforged Spear — Detached Straitjacket + λ_s=2e-5 + T=0.5)
+# 更新来源：INS-049/050/051 (Phase 11c Pointwise Spear — Huber(δ=50) + λ_s=1e-3, 废除 Softmax/Z-score)
 # 源文档：Google Docs id.1~id.6 (archived at architect/gdocs/)
 
 version: v3
@@ -81,22 +81,20 @@ target:
 # ============================================================
 training:
   target_model: Omega-TIB   # Topological Information Bottleneck (正名自 SpatioTemporal2DMAE)
-  loss: "Spear Accumulation Loss + Variance Straitjacket + MDL (INS-042/043/045)"
+  loss: "Pointwise Spear (Huber δ=50) + MDL (INS-049/050/051)"
   loss_function: |
-    target_acc = clamp(target, min=0); target_prob = target_acc / (sum(target_acc) + eps)
-    locked = (raw_logits - mean) / (std + eps)  # Variance Straitjacket
-    if sum(target_acc) > eps:  loss = -sum(target_prob * log(softmax(locked/T) + eps)) + lambda_s * ||z_core||_1
-    else:  loss = lambda_s * ||z_core||_1  # Bear market: MDL only, auto-silence
-  # Phase 11 Spear Protocol: 三重枷锁
-  # 1. target = clamp(raw_target, min=0) → 遮蔽左尾，纯建仓检测 (INS-042)
-  # 2. locked_logits = (raw - mean) / std → 方差锁死 N(0,1) (INS-040)
-  # 3. target_prob = clamp_target / sum(clamp_target) → 交叉熵 (INS-043)
-  # Phase 10 验尸 (INS-045): Logit Inflation Casino Exploit, P0 Gating FAILED
-  # L2 mean-shift 已删除 — 被方差之枷物理替代 (INS-040 supersedes INS-036)
-  temperature: 0.5           # Detached N(0,1) + T=0.5 (INS-047, 梯度放大 2x 非 10x)
-  # l2_weight: DELETED — 被方差之枷替代，不再需要 (INS-040)
-  lambda_s: 2e-5             # 匹配 Softmax Loss (~8) vs IC Loss (~0.05) 的 160x 量纲差 (INS-048)
-  variance_lock: "detached"  # safe_std = clamp(std, min=1.0).detach() — 斩断勾股漂移 (INS-047)
+    target_acc = clamp(target, min=0)                    # Asymmetric Target Blinding (INS-042)
+    loss_spear = huber_loss(pred, target_acc, delta=50)  # Pointwise — 零跨 Batch 依赖 (INS-049)
+    total = loss_spear + lambda_s * ||z_core||_1         # MDL Compression
+  # Phase 11c Pointwise Spear: 彻底废除跨 Batch 归一化
+  # 1. target = clamp(raw_target, min=0) → 遮蔽左尾，纯建仓检测 (INS-042, 继承)
+  # 2. Pointwise Huber Loss (delta=50 BP) → 绝对 BP 尺度锚定 (INS-051)
+  # 3. 无 Softmax/Z-score/Pearson — 乱序 WebDataset 免疫时空错位 (INS-049)
+  # Phase 10/11a/11b 验尸: Softmax = 宏观 Beta 走私 + L1≈0 脑死亡 (INS-049/050)
+  # temperature: DELETED — 无 Softmax (INS-051 supersedes INS-047)
+  # variance_lock: DELETED — 无 Z-score (INS-051 supersedes INS-040)
+  # l2_weight: DELETED — 被方差之枷替代，后被 Pointwise Spear 替代
+  lambda_s: 1e-3             # 匹配 Huber Loss 量纲 (~几十到几百) (INS-051, Gemini WARN: 首轮实测校准)
   loss_precision: "fp32"     # compute_spear_loss 强制 FP32 安全舱 (Phase 11a NaN 教训)
   lambda_s_warmup: 2         # Phase 3 值; Phase 6 搜索 [2, 3, 5]
   masking:
@@ -116,14 +114,14 @@ hpo:
   engine: google_vizier              # Bayesian optimization
   infrastructure: "A100 Spot (a2-highgpu-1g), 70 trials exploit, 8 parallel (INS-018 Phase 6)"
   metric: "val_portfolio_return (Vizier MAXIMIZE, 直接度量 OOS 组合收益)"
-  # Phase 11: Spear Accumulation Loss (INS-043) + 方差之枷 (INS-040) + 目标遮蔽 (INS-042)
+  # Phase 11c: Pointwise Huber Loss (INS-051) + 目标遮蔽 (INS-042)
   search_space:
-    learning_rate:                   # Softmax Loss 梯度量级待实测
+    learning_rate:                   # Huber Loss 梯度量级待实测
       type: loguniform
       range: [1e-4, 1e-3]
-    lambda_s:                        # 隐式压缩为主，显式压缩极弱 (INS-019)
+    lambda_s:                        # Huber 量纲 (~几十到几百)，MDL 需更大 λ_s (INS-051)
       type: loguniform
-      range: [1e-8, 1e-5]
+      range: [1e-4, 1e-2]
     warmup_epochs:                   # Gemini audit: [2,3,5] 配合 epochs=15
       type: choice
       values: [2, 3, 5]
@@ -133,9 +131,7 @@ hpo:
     window_size_t:                   # 保持 RECON 范围
       type: choice
       values: [8, 16, 32]
-    temperature:                     # Detached Straitjacket 尖锐度 (INS-047)
-      type: choice
-      values: [0.3, 0.5, 0.7, 1.0]
+    # temperature: DELETED — Phase 11c 废除 Softmax (INS-051 supersedes INS-047)
     # l2_weight: DELETED — 被方差之枷替代 (INS-040)
     # LOCKED (not searched):
     # coarse_graining_factor: 1 (INS-016: Volume-Clock 不可二次粗粒化)
@@ -143,14 +139,13 @@ hpo:
     # window_size_s: 10 (full LOB depth)
     # mask_prob: 0.0 (Phase 3 baseline)
     # payoff_horizon: 20 (INS-010: 禁止算法选择目标)
-    # batch_size: 物理参数，不可搜索 (Gemini audit: Softmax下batch_size=候选池大小)
-    # anchor_weight: 已删除 (INS-033: 被 l2_weight 取代)
+    # batch_size: 物理参数，不可搜索
   fixed_params:
     coarse_graining_factor: 1
     macro_window: 160
     window_size_s: 10
     mask_prob: 0.0
-    batch_size: 256                  # 固定: Softmax 下 batch_size = 截面候选池大小 (Gemini audit)
+    batch_size: 256                  # 固定: Phase 11c Pointwise 下 batch_size 不再影响截面竞争
     epochs: 15                       # post-MDL 稳定时间 (Vanguard V2 peak at epoch 14)
     steps_per_epoch: 5000
     grad_clip: 1.0

@@ -58,6 +58,9 @@
 | INS-046 | 勾股漂移 — Z-score 仿射不变性导致 S_T 爆炸 | 物理 | 2026-04-01 | NONE | 已生效 |
 | INS-047 | Detached Straitjacket — detach(std) 斩断仿射黑洞 | 训练 | 2026-04-01 | L2 更新 | 待 Phase 11b |
 | INS-048 | λ_s 动态引力重构 — 1e-7→2e-5 匹配 Softmax 量纲 | 训练 | 2026-04-01 | L2 更新 | 待 Phase 11b |
+| INS-049 | 跨期 Batch 毒药 — 乱序 WebDataset 封杀 Batch 维度归一化 | 训练 | 2026-04-01 | L2 更新 | active |
+| INS-050 | L1 脑死亡陷阱 — z_sparsity 语义翻转修正 | 物理 | 2026-04-01 | NONE | active |
+| INS-051 | 点对点建仓之矛 — Pointwise Huber Loss 替代 Softmax 交叉熵 | 训练 | 2026-04-01 | L2 更新 | 待用户确认 |
 
 ---
 
@@ -113,3 +116,6 @@
 | INS-046 | phase11b_reforged_spear | — |
 | INS-047 | phase11b_reforged_spear | — |
 | INS-048 | phase11b_reforged_spear | — |
+| INS-049 | phase11c_pointwise_spear | — |
+| INS-050 | phase11c_pointwise_spear | — |
+| INS-051 | phase11c_pointwise_spear | — |

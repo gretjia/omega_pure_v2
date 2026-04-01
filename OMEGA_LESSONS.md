@@ -123,6 +123,10 @@
 - **C-042**: Z-score 标准化是仿射不变的 → 梯度与权重正交 → 勾股漂移: W² 单调膨胀 → S_T 爆炸 → NaN。修复: std 必须 `.detach()` + `clamp(min=1.0)`（Ω1: Phase 11a 5 epoch 全部 NaN 实测确认）
 - **C-043**: λ_s 必须与 Loss 量纲匹配。IC Loss≈0.05 时 λ_s=1e-7 可行，Softmax Loss≈10 时 λ_s 需 ≥2e-5 (200x)。换 Loss 后必须重新标定 λ_s（Ω2: 先量化量纲差）
 - **C-044**: `--resume` + 相同 `output_dir` → 加载旧 checkpoint 跳过训练。换 Loss/超参后必须用新 output_dir（如 v1→v2），否则复用废弃 checkpoint 假完成（Ω1: 只信实测，C-020 同类教训）
+- **C-045**: 乱序 WebDataset(188 shards 随机流式) + Softmax(dim=0)/Batch Z-score → 跨期 Batch 毒药：模型识别宏观牛熊 Beta 比微观 Alpha 简单 1000x → logit 膨胀 6956 BP。绝对禁止 Batch 维度归一化（Ω1: Phase 10 十分位拆解实证确认）
+- **C-046**: z_sparsity(L1) ≈ 0 是"脑死亡"非"最高压缩"。模型关闭 z_core 全部通道逃避 λ_s → 靠 Bias 盲赌 Beta。L1 非零才代表真智能涌现。Gating 必须保留高 L1 剔除低 L1（Ω1: Z-D0 IC 为负, Z-D9 IC 为正）
+- **C-047**: Spot SIGTERM 期间 torch.save 直写 /gcs/ FUSE → FUSE 缓存来不及 flush → checkpoint 损坏(0 byte)。修复: 先写本地 /tmp staging → shutil.copy2 到 FUSE → os.sync() 强制刷盘（Ω4: Gemini 审计发现）
+- **C-048**: 训练 I/O 策略决策树: (1) 推理(单 pass) → pipe 模式(100GB disk, Phase 7 实测 466 shards/h); (2) 训练(多 epoch) → pd-ssd staging(1300GB, C-026); (3) FUSE file-cache + resampled=True → cache thrashing 灾难（Ω2: 先量化 I/O 模式再选方案）
 
 ### AI 治理
 - **C-021**: AI 自己写烟测测自己 → 自洽性掩盖正确性。审计独立于作者（Ω5）
