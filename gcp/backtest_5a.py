@@ -18,6 +18,7 @@ Usage (local):
 """
 
 import os
+import io
 import sys
 import glob
 import json
@@ -35,6 +36,19 @@ from omega_webdataset_loader import dynamic_processor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def fast_npy_decoder(sample):
+    """Bypass WDS generic decode, strictly parse .npy bytes.
+    ~15% CPU savings vs wds.decode() (from phase7_inference.py).
+    """
+    result = {}
+    for key, value in sample.items():
+        if key.endswith(".npy"):
+            result[key] = np.load(io.BytesIO(value))
+        else:
+            result[key] = value
+    return result
 
 
 # ============================================================
@@ -126,17 +140,27 @@ def main():
     model.eval()
     logger.info(f"Model loaded from {args.checkpoint}")
 
-    # --- Validation shards ---
-    all_shards = sorted(glob.glob(os.path.join(args.shard_dir, "omega_shard_*.tar")))
-    n_train = int(len(all_shards) * (1 - args.val_split))
-    val_shards = all_shards[n_train:]
+    # --- Validation shards (supports local and gs:// GCS paths) ---
+    if args.shard_dir.startswith("gs://"):
+        import subprocess
+        result = subprocess.run(
+            ["gcloud", "storage", "ls", os.path.join(args.shard_dir, "omega_shard_*.tar")],
+            capture_output=True, text=True, check=True
+        )
+        all_shards = sorted([s.strip() for s in result.stdout.strip().split("\n") if s.strip()])
+        n_train = int(len(all_shards) * (1 - args.val_split))
+        val_shards = [f"pipe:gcloud storage cat {s}" for s in all_shards[n_train:]]
+    else:
+        all_shards = sorted(glob.glob(os.path.join(args.shard_dir, "omega_shard_*.tar")))
+        n_train = int(len(all_shards) * (1 - args.val_split))
+        val_shards = all_shards[n_train:]
     logger.info(f"Val shards: {len(val_shards)} (temporal split, last {args.val_split*100:.0f}%)")
 
     # --- DataLoader ---
     preprocess = dynamic_processor(args.macro_window, args.coarse_graining_factor)
     dataset = (
         wds.WebDataset(val_shards, resampled=False, handler=wds.warn_and_continue)
-        .decode(handler=wds.warn_and_continue)
+        .map(fast_npy_decoder)
         .map(preprocess, handler=wds.warn_and_continue)
         .batched(args.batch_size)
     )

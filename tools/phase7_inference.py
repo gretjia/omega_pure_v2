@@ -201,8 +201,18 @@ def main():
     model.eval()
     log.info(f"Model loaded: hd={args.hidden_dim}, wt={args.window_size_t}")
 
-    # Discover shards
-    all_shards = sorted(glob.glob(os.path.join(args.shard_dir, "omega_shard_*.tar")))
+    # Discover shards (supports local paths and gs:// GCS URIs)
+    if args.shard_dir.startswith("gs://"):
+        import subprocess
+        result = subprocess.run(
+            ["gcloud", "storage", "ls", os.path.join(args.shard_dir, "omega_shard_*.tar")],
+            capture_output=True, text=True, check=True
+        )
+        all_shards = sorted([s.strip() for s in result.stdout.strip().split("\n") if s.strip()])
+        # WebDataset needs pipe:// for GCS
+        all_shards = [f"pipe:gcloud storage cat {s}" for s in all_shards]
+    else:
+        all_shards = sorted(glob.glob(os.path.join(args.shard_dir, "omega_shard_*.tar")))
     total_shards = len(all_shards)
 
     # Shard range for multi-process parallelism
