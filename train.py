@@ -553,7 +553,8 @@ def main():
     # --- Single instance lock (CLAUDE.md rule #25) ---
     lock_fd = os.open("/tmp/omega_train.lock", os.O_CREAT | os.O_RDWR, 0o644)
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if fcntl:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         logger.error("Another train.py instance is running. Exiting.")
         sys.exit(1)
@@ -761,4 +762,6 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
+ "__main__":
     main()
