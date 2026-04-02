@@ -5,27 +5,29 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-LOCK_FILE="/tmp/phase11d_resubmit.lock"
-MAX_RESUBMIT=3  # 每个 config 最多自动重提交 3 次
+MAX_RESUBMIT=3
 
-# Config → YAML 映射（用于自动重提交）
+# Config → YAML 映射
 declare -A CONFIG_YAML
 CONFIG_YAML["Config_A"]="$PROJECT_DIR/gcp/phase11d_config_A.yaml"
 CONFIG_YAML["Config_B"]="$PROJECT_DIR/gcp/phase11d_config_B.yaml"
 
-# 当前追踪的 job IDs（文件持久化，重提交后更新）
+# Job tracking 文件（持久化 job ID + resubmit count）
 JOB_TRACK="/tmp/phase11d_job_ids.txt"
+JOB_TRACK_NEW="/tmp/phase11d_job_ids.txt.new"
+
 if [[ ! -f "$JOB_TRACK" ]]; then
     cat > "$JOB_TRACK" << 'EOF'
-Config_A|projects/269018079180/locations/us-central1/customJobs/1109662714260619264|gs://omega-pure-data/checkpoints/phase11d_A_v1/train.log|0
-Config_B|projects/269018079180/locations/us-central1/customJobs/2854869142517841920|gs://omega-pure-data/checkpoints/phase11d_B_v1/train.log|0
+Config_A(ls=1e-4)|projects/269018079180/locations/us-central1/customJobs/4552691017664430080|gs://omega-pure-data/checkpoints/phase11d_A_v1/train.log|1
+Config_B(ls=1e-5)|projects/269018079180/locations/us-central1/customJobs/3599968590243037184|gs://omega-pure-data/checkpoints/phase11d_B_v1/train.log|1
 EOF
 fi
 
 echo "=== Phase 11d Monitor @ $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 
 ALL_DONE=true
-ANY_ACTIVE=false
+# 写入新的 tracking 文件（原子替换）
+> "$JOB_TRACK_NEW"
 
 while IFS='|' read -r LABEL JOB LOG RESUBMIT_COUNT; do
     STATE=$(gcloud ai custom-jobs describe "$JOB" --region=us-central1 \
@@ -33,33 +35,39 @@ while IFS='|' read -r LABEL JOB LOG RESUBMIT_COUNT; do
     echo ""
     echo "--- $LABEL: $STATE (resubmits: $RESUBMIT_COUNT/$MAX_RESUBMIT) ---"
 
+    CURRENT_JOB="$JOB"
+    CURRENT_COUNT="$RESUBMIT_COUNT"
+
     # === 自动重提交逻辑 ===
     if [[ "$STATE" == "JOB_STATE_FAILED" && "$RESUBMIT_COUNT" -lt "$MAX_RESUBMIT" ]]; then
         CONFIG_KEY="${LABEL%%(*}"  # Config_A 或 Config_B
         YAML="${CONFIG_YAML[$CONFIG_KEY]}"
         if [[ -f "$YAML" ]]; then
-            echo "  ⚡ FAILED — 自动重提交 (attempt $((RESUBMIT_COUNT+1))/$MAX_RESUBMIT)"
-            NEW_JOB=$(gcloud ai custom-jobs create \
+            NEW_COUNT=$((RESUBMIT_COUNT+1))
+            echo "  ⚡ FAILED — 自动重提交 (attempt $NEW_COUNT/$MAX_RESUBMIT)"
+            # 提取新 job 的 full resource name
+            CREATE_OUTPUT=$(gcloud ai custom-jobs create \
                 --region=us-central1 \
-                --display-name="phase11d-${CONFIG_KEY,,}-auto-resume-$((RESUBMIT_COUNT+1))" \
-                --config="$YAML" \
-                --format="value(name)" 2>&1)
-            if [[ "$NEW_JOB" == projects/* ]]; then
+                --display-name="phase11d-${CONFIG_KEY,,}-auto-resume-${NEW_COUNT}" \
+                --config="$YAML" 2>&1)
+            # 从输出中提取 job resource name
+            NEW_JOB=$(echo "$CREATE_OUTPUT" | grep -oP 'projects/[^\]]+/customJobs/\d+' | head -1)
+            if [[ -n "$NEW_JOB" ]]; then
                 echo "  ✅ 新 Job: $NEW_JOB"
-                # 更新追踪文件
-                sed -i "s|^${LABEL}|.*|${LABEL}|${NEW_JOB}|${LOG}|$((RESUBMIT_COUNT+1))|" "$JOB_TRACK" 2>/dev/null
-                # 简单方式：直接重写
+                CURRENT_JOB="$NEW_JOB"
+                CURRENT_COUNT="$NEW_COUNT"
                 STATE="JOB_STATE_PENDING"
-                ANY_ACTIVE=true
             else
-                echo "  ❌ 重提交失败: $NEW_JOB"
+                echo "  ❌ 重提交失败: $CREATE_OUTPUT"
             fi
         fi
     fi
 
+    # 更新 tracking（无论是否重提交，都写入当前状态）
+    echo "${LABEL}|${CURRENT_JOB}|${LOG}|${CURRENT_COUNT}" >> "$JOB_TRACK_NEW"
+
     if [[ "$STATE" == "JOB_STATE_RUNNING" || "$STATE" == "JOB_STATE_PENDING" ]]; then
         ALL_DONE=false
-        ANY_ACTIVE=true
     fi
 
     if [[ "$STATE" == "JOB_STATE_RUNNING" || "$STATE" == "JOB_STATE_SUCCEEDED" ]]; then
@@ -71,13 +79,13 @@ while IFS='|' read -r LABEL JOB LOG RESUBMIT_COUNT; do
             echo "  $LAST_EPOCH"
             PRED_STD=$(echo "$LAST_EPOCH" | grep -oP 'Std_yhat=\K[0-9.]+' || echo "")
             if [[ -n "$PRED_STD" ]]; then
-                if (( $(echo "$PRED_STD < 10.0" | bc -l) )); then
-                    echo "  VARIANCE COLLAPSE: pred_std=${PRED_STD} BP < 10.0"
-                elif (( $(echo "$PRED_STD < 30.0" | bc -l) )); then
-                    echo "  LOW VARIANCE: pred_std=${PRED_STD} BP"
-                else
-                    echo "  HEALTHY: pred_std=${PRED_STD} BP"
-                fi
+                # 用 awk 代替 bc（omega-vm 无 bc）
+                VERDICT=$(echo "$PRED_STD" | awk '{if ($1 < 10.0) print "COLLAPSE"; else if ($1 < 30.0) print "LOW"; else print "HEALTHY"}')
+                case "$VERDICT" in
+                    COLLAPSE) echo "  VARIANCE COLLAPSE: pred_std=${PRED_STD} BP < 10.0" ;;
+                    LOW)      echo "  LOW VARIANCE: pred_std=${PRED_STD} BP" ;;
+                    HEALTHY)  echo "  HEALTHY: pred_std=${PRED_STD} BP" ;;
+                esac
             fi
         else
             echo "  (staging or epoch 0 in progress)"
@@ -85,6 +93,9 @@ while IFS='|' read -r LABEL JOB LOG RESUBMIT_COUNT; do
         fi
     fi
 done < "$JOB_TRACK"
+
+# 原子替换 tracking 文件
+mv "$JOB_TRACK_NEW" "$JOB_TRACK"
 
 echo ""
 if $ALL_DONE; then
