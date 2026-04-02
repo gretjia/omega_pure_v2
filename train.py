@@ -106,10 +106,15 @@ def compute_spear_loss(pred, target, z_core, lambda_s, epoch,
     #    Phase 11d: δ=200 释放 97.6% 样本的 MSE 二次方梯度 (INS-055)
     loss_spear = F.huber_loss(pred, target_acc, delta=huber_delta)
 
-    # 3. MDL Compression (warmup 保留: 先学信号再压缩)
+    # 3. MDL Compression (Dynamic Variance-Aware Tax)
     z_core_safe = torch.clamp(z_core, min=-20.0, max=20.0)
-    lambda_s_eff = lambda_s if epoch >= warmup_epochs else 0.0
     s_t = torch.norm(z_core_safe, p=1, dim=-1).mean()
+    
+    # Dynamic tax: if batch prediction std drops below 30 BP (0.003), reduce tax to zero.
+    batch_std = pred.std() if pred.numel() > 1 else torch.tensor(1.0, device=pred.device)
+    variance_ratio = torch.clamp((batch_std * 10000 - 30.0) / 10.0, min=0.0, max=1.0) # linear decay from 40BP to 30BP
+    
+    lambda_s_eff = lambda_s * variance_ratio if epoch >= warmup_epochs else 0.0
 
     total = loss_spear + lambda_s_eff * s_t
 
