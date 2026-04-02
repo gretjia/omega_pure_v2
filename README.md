@@ -39,12 +39,16 @@ The axiomatic engine implementing **Finite Window Topological Attention** and **
 | 7 | Done | Full inference + diagnostic (17-test) |
 | 8 | Done | Backtest simulate — board_loss_cap Sharpe +34% |
 | 9 | Failed | Asymmetric Pearson Loss — 7 jobs, all Reward Hacking |
-| **10** | **Complete** | **Softmax Portfolio Loss — Val PfRet=0.210, pending backtest** |
+| 10 | Complete | Softmax Portfolio Loss — Val PfRet=0.210, Asym=1.30 |
+| 11a | Failed | Spear Protocol — NaN crash (勾股漂移 INS-046) |
+| 11b | Failed | Reforged Spear — Softmax Beta smuggling (INS-049) |
+| 11c | Abandoned | Pointwise Huber δ=50 — Variance collapse (pred_std=5.6 BP, 脑死亡, 216x 仪表盘幻觉) |
+| **11d** | **Complete** | **Pointwise Huber δ=200, λ_s=1e-4/1e-5 — pred_std 5.6→17 BP ✅ but IC 0.02→0.002 ⛔ (方差是噪声非信号)** |
 
 ## 📁 Key Scripts
 | Script | Purpose |
 |--------|---------|
-| `train.py` | Training loop (Softmax Portfolio Loss, Phase 10) |
+| `train.py` | Training loop (Pointwise Huber + MDL, Phase 11d) |
 | `omega_epiplexity_plus_core.py` | Math core (SRL + FWT + MDL) |
 | `omega_webdataset_loader.py` | WebDataset streaming loader |
 | `tools/omega_etl_v3_topo_forge.py` | ETL: Parquet → WebDataset shards |
@@ -54,4 +58,9 @@ The axiomatic engine implementing **Finite Window Topological Attention** and **
 | `gcp/safe_submit.sh` | Full job submission with manifest tracking |
 
 ---
+## 📊 Current Status (2026-04-02)
+Phase 11 complete. Post-flight reveals model outputs dispersed noise, not alpha (IC=0.002, D9-D0 spread=2.9 BP).
+Awaiting architect direction on next phase. Full data: [`reports/phase11_complete_data_summary.md`](reports/phase11_complete_data_summary.md).
+Experience library: 57 lessons (C-001~C-057), 56 insights (INS-001~INS-056).
+
 *For internal AI Agents: Start at [`handover/LATEST.md`](handover/LATEST.md). Engineering post-mortems in [`handover/ETL_ENGINEERING_LESSONS.md`](handover/ETL_ENGINEERING_LESSONS.md). Experience library in [`OMEGA_LESSONS.md`](OMEGA_LESSONS.md).*
