@@ -31,9 +31,7 @@ def main():
             
     if not shards:
         print(f"[WARN] No shards found in standard paths. Trying local fallback...")
-        # Get absolute path to tests/data
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        shard_dir = os.path.join(base_dir, "tests", "data")
+        shard_dir = "./tests/data"
         shards = sorted(glob.glob(os.path.join(shard_dir, "omega_shard_*.tar")))
         
     if not shards:
@@ -41,7 +39,7 @@ def main():
         print("[WARN] No shards found in workspace. Using synthetic data for local agent testing.")
         use_synthetic = True
     else:
-        wds_url = "file:///" + shards[0].replace("\\", "/") if os.name == "nt" else shards[0]
+        wds_url = shards[0].replace("\\", "/")
         print(f"[INFO] Using real shard: {wds_url}")
         use_synthetic = False
     
