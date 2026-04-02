@@ -18,13 +18,15 @@ def main():
     print("="*60)
     
     # 1. Data Source Discovery
-    shard_dir = "/omega_pool"
+    shard_dir = "/omega_pool/wds_shards_v3_full"
+    if not os.path.exists(shard_dir):
+        shard_dir = "/omega_pool"
+    
     if not os.path.exists(shard_dir):
         print(f"[WARN] {shard_dir} not found. Trying local fallback...")
-        # Since we just need extreme speed, we can even mock data if needed, 
-        # but real data is preferred.
-        # Fallback to local GCP staging if present
-        shard_dir = "./tests/data" 
+        # Get absolute path to tests/data
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        shard_dir = os.path.join(base_dir, "tests", "data")
         
     shards = sorted(glob.glob(os.path.join(shard_dir, "omega_shard_*.tar")))
     if not shards:
