@@ -19,16 +19,23 @@ def main():
     
     # 1. Data Source Discovery
     shard_dir = "/omega_pool/wds_shards_v3_full"
-    if not os.path.exists(shard_dir):
-        shard_dir = "/omega_pool"
+    shards = []
     
-    if not os.path.exists(shard_dir):
-        print(f"[WARN] {shard_dir} not found. Trying local fallback...")
+    if os.path.exists(shard_dir):
+        shards = sorted(glob.glob(os.path.join(shard_dir, "omega_shard_*.tar")))
+        
+    if not shards:
+        shard_dir = "/omega_pool"
+        if os.path.exists(shard_dir):
+            shards = sorted(glob.glob(os.path.join(shard_dir, "omega_shard_*.tar")))
+            
+    if not shards:
+        print(f"[WARN] No shards found in standard paths. Trying local fallback...")
         # Get absolute path to tests/data
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         shard_dir = os.path.join(base_dir, "tests", "data")
+        shards = sorted(glob.glob(os.path.join(shard_dir, "omega_shard_*.tar")))
         
-    shards = sorted(glob.glob(os.path.join(shard_dir, "omega_shard_*.tar")))
     if not shards:
         # Generate a dummy batch just to test compilation if no shards exist locally
         print("[WARN] No shards found in workspace. Using synthetic data for local agent testing.")
