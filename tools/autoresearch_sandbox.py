@@ -76,7 +76,7 @@ def main():
             optimizer.step()
     else:
         # Real data loop
-        loader = create_dataloader(wds_url, batch_size=256, macro_window=160, num_workers=2)
+        loader = create_dataloader(wds_url, batch_size=256, macro_window=160, num_workers=0)
         for i, batch in enumerate(loader):
             if i >= train_batches: break
             
