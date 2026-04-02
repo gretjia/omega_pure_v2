@@ -207,3 +207,26 @@ def compute_fvu(predictions: torch.Tensor, targets: torch.Tensor) -> float:
     if target_var < 1e-8:
         return 1.0
     return mse / target_var
+
+def compute_spear_loss_moment_matched(raw_logits, target, z_core, lambda_s=1e-4, huber_delta=200.0):
+    pred = raw_logits.float().view(-1)
+    tgt = target.float().view(-1)
+    z_core = z_core.float()
+    
+    target_acc = torch.clamp(tgt, min=0.0)
+    loss_err = F.huber_loss(pred, target_acc, delta=huber_delta)
+    
+    if pred.numel() > 1:
+        pred_std = torch.std(pred) + 1e-8
+        target_std = torch.std(target_acc) + 1e-8
+        loss_var = F.mse_loss(pred_std, target_std)
+    else:
+        loss_var = torch.tensor(0.0, device=pred.device)
+        
+    z_core_safe = torch.clamp(z_core, min=-20.0, max=20.0)
+    s_t = torch.norm(z_core_safe, p=1, dim=-1).mean()
+    
+    total_loss = loss_err + loss_var + lambda_s * s_t
+    
+    return total_loss, loss_err, s_t, pred
+

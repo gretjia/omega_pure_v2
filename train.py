@@ -87,40 +87,27 @@ signal.signal(signal.SIGTERM, _sigterm_handler)
 
 def compute_spear_loss(pred, target, z_core, lambda_s, epoch,
                        warmup_epochs=2, huber_delta=200.0, **kwargs):
-    """Phase 11d: The Resuscitated Spear (INS-054/055)
-
-    Phase 11c→11d: δ=50→200 释放肥尾梯度, λ_s=1e-3→1e-4 解除 z_core 死刑。
-    Pointwise Huber Loss 锚定绝对 BP 尺度，免疫时空错位。
+    """Phase 11e: The Moment-Matched Spear (矩匹配建仓之矛)
+    Wrapper that calls the new robust core loss logic from omega_epiplexity_plus_core
+    and reconstructs pf_ret for monitoring.
     """
-    # 0. FP32 Safe Room (继承 INS-046: fp16 溢出防护)
-    pred = pred.float().view(-1)   # [B]
-    target = target.float().view(-1)
-    z_core = z_core.float()
-    eps = 1e-8
-
-    # 1. Asymmetric Target Blinding (INS-042, 继承)
-    #    纯建仓检测: 下跌/噪音归零，只保留右尾
-    target_acc = torch.clamp(target, min=0.0)
-
-    # 2. Pointwise Huber Loss — 零跨 Batch 依赖
-    #    Phase 11d: δ=200 释放 97.6% 样本的 MSE 二次方梯度 (INS-055)
-    loss_spear = F.huber_loss(pred, target_acc, delta=huber_delta)
-
-    # 3. MDL Compression (warmup 保留: 先学信号再压缩)
-    z_core_safe = torch.clamp(z_core, min=-20.0, max=20.0)
+    from omega_epiplexity_plus_core import compute_spear_loss_moment_matched
+    
     lambda_s_eff = lambda_s if epoch >= warmup_epochs else 0.0
-    s_t = torch.norm(z_core_safe, p=1, dim=-1).mean()
+    total, loss_err, s_t, pred_val = compute_spear_loss_moment_matched(
+        raw_logits=pred, target=target, z_core=z_core,
+        lambda_s=lambda_s_eff, huber_delta=huber_delta
+    )
 
-    total = loss_spear + lambda_s_eff * s_t
-
+    eps = 1e-8
     # 4. Pointwise portfolio return proxy (监控指标，不参与梯度)
     #    Long-only 加权收益: clamp(pred,min=0) 归一化 → 加权 target
     with torch.no_grad():
-        pred_pos = torch.clamp(pred, min=0.0)
+        pred_pos = torch.clamp(pred_val, min=0.0)
         total_pos = pred_pos.sum()
         if total_pos > eps:
             weights = pred_pos / total_pos
-            pf_ret = (weights * target).sum()
+            pf_ret = (weights * target.float().view(-1)).sum()
         else:
             pf_ret = torch.tensor(0.0, device=pred.device)
 
