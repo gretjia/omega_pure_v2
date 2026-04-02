@@ -99,8 +99,8 @@ def compute_spear_loss(pred, target, z_core, lambda_s, epoch,
     eps = 1e-8
 
     # 1. Asymmetric Target Blinding (INS-042, 继承)
-    #    纯建仓检测: 下跌/噪音归零，只保留右尾
-    target_acc = torch.clamp(target, min=0.0)
+    #    纯建仓检测: 下跌/噪音不再完全归零，保留 10% 的微弱惩罚梯度 (Leaky Target Blinding)
+    target_acc = torch.where(target > 0, target, target * 0.1)
 
     # 2. Pointwise Huber Loss — 零跨 Batch 依赖
     #    Phase 11d: δ=200 释放 97.6% 样本的 MSE 二次方梯度 (INS-055)
