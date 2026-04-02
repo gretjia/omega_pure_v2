@@ -428,7 +428,8 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
 # ============================================================
 
 def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
-             warmup_epochs=2, temperature=0.1, huber_delta=200.0):
+             warmup_epochs=2, temperature=0.1, huber_delta=200.0,
+             sentinel_error=10.0, sentinel_warn=30.0):
     model.eval()
     all_preds, all_targets = [], []
     running = {"total": 0.0, "pf_ret": 0.0, "s_t": 0.0, "count": 0}
@@ -460,11 +461,11 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
     # Cross-sectional prediction std (INS-017: Std Expansion monitoring)
     pred_std_bp = preds.std().item()
 
-    # Variance Collapse Sentinel (INS-054: detect brain death early)
-    if pred_std_bp < 10.0 and preds.numel() > 10:
-        logger.error(f"VARIANCE COLLAPSE: pred_std={pred_std_bp:.2f} BP < 10.0. Brain death detected.")
-    elif pred_std_bp < 30.0:
-        logger.warning(f"LOW VARIANCE: pred_std={pred_std_bp:.2f} BP. Nearing collapse.")
+    # Variance Collapse Sentinel (INS-054, C-055: thresholds must be empirically calibrated)
+    if pred_std_bp < sentinel_error and preds.numel() > 10:
+        logger.error(f"VARIANCE COLLAPSE: pred_std={pred_std_bp:.2f} BP < {sentinel_error}. Brain death detected.")
+    elif pred_std_bp < sentinel_warn:
+        logger.warning(f"LOW VARIANCE: pred_std={pred_std_bp:.2f} BP < {sentinel_warn}. Nearing collapse.")
 
     return {
         "total": running["total"] / n,
@@ -509,6 +510,10 @@ def main():
     parser.add_argument("--max_val_steps", type=int, default=0,
                         help="Max validation steps (0=all, useful for CPU smoke tests)")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--sentinel_error", type=float, default=10.0,
+                        help="Variance collapse ERROR threshold (BP). C-055: calibrate with data")
+    parser.add_argument("--sentinel_warn", type=float, default=30.0,
+                        help="Low variance WARNING threshold (BP). C-055: calibrate with data")
     parser.add_argument("--mask_prob", type=float, default=0.5,
                         help="Block masking probability (0.0 to disable)")
     parser.add_argument("--overfit", action="store_true",
@@ -683,7 +688,9 @@ def main():
                                max_steps=args.max_val_steps, epoch=epoch,
                                warmup_epochs=args.warmup_epochs,
                                temperature=args.temperature,
-                               huber_delta=args.huber_delta)
+                               huber_delta=args.huber_delta,
+                               sentinel_error=args.sentinel_error,
+                               sentinel_warn=args.sentinel_warn)
         elapsed = time.time() - t0
 
         logger.info(
