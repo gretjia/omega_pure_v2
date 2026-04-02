@@ -23,7 +23,10 @@ import time
 import random
 import argparse
 import logging
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 import signal
 
 import torch
