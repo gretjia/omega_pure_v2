@@ -105,19 +105,16 @@ def compute_spear_loss(pred, target, z_core, lambda_s, epoch,
     #    纯建仓检测: 下跌/噪音不再完全归零，保留 10% 的微弱惩罚梯度 (Leaky Target Blinding)
     target_acc = torch.where(target > 0, target, target * 0.1)
 
-    # 2. Pointwise Huber Loss — 零跨 Batch 依赖
-    #    Phase 11d: δ=200 释放 97.6% 样本的 MSE 二次方梯度 (INS-055)
-    loss_spear = F.huber_loss(pred, target_acc, delta=huber_delta)
+    # 2. Pointwise Log-Cosh Loss — Perfectly smooth, no hard delta threshold
+    #    Stable implementation to prevent FP32 overflow on large BP targets
+    diff = pred - target_acc
+    abs_diff = diff.abs()
+    loss_spear = (abs_diff + torch.log1p(torch.exp(-2.0 * abs_diff)) - 0.69314718).mean()
 
-    # 3. MDL Compression (Dynamic Variance-Aware Tax)
+    # 3. MDL Compression (warmup 保留: 先学信号再压缩)
     z_core_safe = torch.clamp(z_core, min=-20.0, max=20.0)
+    lambda_s_eff = lambda_s if epoch >= warmup_epochs else 0.0
     s_t = torch.norm(z_core_safe, p=1, dim=-1).mean()
-    
-    # Dynamic tax: if batch prediction std drops below 30 BP (0.003), reduce tax to zero.
-    batch_std = pred.std() if pred.numel() > 1 else torch.tensor(1.0, device=pred.device)
-    variance_ratio = torch.clamp((batch_std * 10000 - 30.0) / 10.0, min=0.0, max=1.0) # linear decay from 40BP to 30BP
-    
-    lambda_s_eff = lambda_s * variance_ratio if epoch >= warmup_epochs else 0.0
 
     total = loss_spear + lambda_s_eff * s_t
 
