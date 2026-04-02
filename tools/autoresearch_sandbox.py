@@ -41,7 +41,7 @@ def main():
         print("[WARN] No shards found in workspace. Using synthetic data for local agent testing.")
         use_synthetic = True
     else:
-        wds_url = shards[0]
+        wds_url = "file:///" + shards[0].replace("\\", "/") if os.name == "nt" else shards[0]
         print(f"[INFO] Using real shard: {wds_url}")
         use_synthetic = False
     
