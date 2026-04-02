@@ -19,3 +19,4 @@
   "data_gb": 634,
   "display_name": "phase11-inference-v3"
 }
+{"timestamp": "2026-04-01T16:19:05.675627Z", "type": "canary", "phase": "11d", "version": "1", "image": "us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase11d-v1", "canary_status": "PASS", "machine": "g2-standard-8 + L4"}
