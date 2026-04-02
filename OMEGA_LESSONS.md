@@ -133,6 +133,7 @@
 - **C-052**: **长训练前必须独立烟测**。Phase 11c 跑完 20 epoch (~9h GPU) 才发现模型脑死亡（pred_std=5.6 BP）。长训练（>2h）启动后 E0-E1 完成时必须：(1) 用修复后推理脚本跑 checkpoint（不是训练日志），(2) 断言 pred_std 在物理区间。仪表盘可能被旧 Docker 代码污染，仅靠日志判断健康是自欺欺人（Ω1: 只信实测，Ω3: 测试环境=生产环境）。
 - **C-053**: **Docker 构建时间点 vs 代码修复时间点必须对齐**。Phase 11c Docker `phase11-v3` 在修复 `d744c4d` 之前构建，训练用旧代码（含 `*TARGET_STD`），仪表盘 15 epoch 全是 216x 幻觉。代码修复后必须重建 Docker + canary，"git 上修了"不等于"Docker 里也修了"（Ω3: 测试环境=生产环境）。
 - **C-054**: **范式切换是全栈原子事件，不是单点修改**。Softmax→Pointwise Huber 触发 6 个级联故障（λ_s 量纲、推理缩放、仪表盘幻觉、Docker 错位、HPO 过时、Epiplexity 前提破坏），逐个发现逐个救火，耗 9h GPU + 4h 人力。范式切换必须执行**原子 checklist**：(1) grep 全栈受影响变量, (2) 重标定正则化超参, (3) 重建 Docker + canary, (4) E1 后独立烟测, (5) 更新 spec + HPO, (6) 同步推理/回测脚本。不走 checklist = 埋定时炸弹（Ω4: 可执行>可记忆）。
+- **C-057**: **自动化脚本的状态更新必须是原子的**。Phase 11d monitor cron 的 sed 正则写错导致 job tracking 文件从未更新，每次 cron 运行都对旧 FAILED ID 重提交，产生 3 个并行 job 写同一个 checkpoint 目录（数据竞争）。修复：用原子文件替换（write .new → mv），不用 in-place sed（Ω4: 可执行>可记忆）。
 - **C-056**: **监控不行动 = 没有监控**。Phase 11d 夜间 Config B 被 Spot 抢占→FAILED，cron 脚本只报告不重提交，用户醒来才发现。自动化监控必须包含自动修复能力（至少：Spot FAILED→重提交），否则"无人值守"是假的（Ω4: 可执行>可记忆）。
 - **C-055**: **阈值也要实测标定，不能拍脑袋**。Phase 11d 方差哨兵的 10/30 BP 红线来源：架构师直觉（基于 216x 幻觉时代）+ 5 shard 粗估的 1.6x 乘数。这只是早期预警粗估，不可作为最终判据。正确做法：训练完成后用全量 val 烟测，实测 pred_std 与 D9-D0 spread 的映射关系，用数据定阈值（Ω1: 只信实测，Ω2: 先量化后行动）。
 
