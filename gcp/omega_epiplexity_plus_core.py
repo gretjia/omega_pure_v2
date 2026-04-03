@@ -130,7 +130,7 @@ class OmegaMathematicalCompressor(nn.Module):
     Input: x_2d [B, T, S, 10] + c_friction [B, 1]
     Output: (prediction [B, 1], z_core [B, T, S, hidden//4])
     """
-    def __init__(self, hidden_dim: int = 64, window_size: tuple = (4, 4)):
+    def __init__(self, hidden_dim: int = 64, window_size: tuple = (32, 10)):
         super().__init__()
         self.srl_inverter = AxiomaticSRLInverter()
 

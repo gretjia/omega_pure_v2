@@ -328,7 +328,9 @@ def assert_layer2_architecture(spec: dict, verbose: bool = False) -> list:
     if hpo_metric is not None:
         metric_str = str(hpo_metric).lower()
         allowed_metrics = {"fvu", "portfolio_return", "d9_d0_spread", "d9-d0 spread", "rank_ic"}
-        if any(m in metric_str for m in allowed_metrics):
+        # Extract first token before '(' to avoid matching inside descriptions
+        metric_key = metric_str.split("(")[0].strip().replace(" ", "_")
+        if any(m.replace(" ", "_") == metric_key or m in metric_key for m in allowed_metrics):
             if verbose:
                 print(f"  [OK] hpo.metric = {hpo_metric}")
         else:
