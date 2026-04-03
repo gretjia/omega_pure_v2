@@ -23,6 +23,11 @@
             "type": "command",
             "command": ".claude/hooks/lesson-enforcer.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": ".claude/hooks/rule-engine.sh",
+            "timeout": 15
           }
         ]
       }
@@ -35,6 +40,16 @@
             "type": "command",
             "command": ".claude/hooks/post-edit-axiom-check.sh",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": ".claude/hooks/post-lesson-trigger.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": ".claude/hooks/pipeline-quality-gate.sh",
+            "timeout": 10
           }
         ]
       },

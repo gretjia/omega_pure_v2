@@ -24,7 +24,7 @@ fi
 
 # 文档/记忆/日志文件免检 — 只检查代码和配置
 case "$FILE_PATH" in
-    *.md|*/memory/*|*/OMEGA_LESSONS*|*/handover/*|*/directives/*|*/insights/*|*.log)
+    *.md|*/memory/*|*/OMEGA_LESSONS*|*/handover/*|*/directives/*|*/insights/*|*.log|*/incidents/*|*/rules/*|*/tests/test_harness_v3.py)
         exit 0 ;;
 esac
 

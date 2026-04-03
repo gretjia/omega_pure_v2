@@ -1,0 +1,31 @@
+# R-003: device 不可硬编码为 CPU
+id: R-003
+name: "Block hardcoded torch.device('cpu') without auto-detect"
+source_incidents: [C-039]
+axiom: "Ω6"
+
+trigger:
+  event: PreToolUse
+  matcher: "Edit|Write"
+  file_glob: "*.py|gcp/*.py"
+
+check:
+  type: compound
+  description: |
+    检测 torch.device("cpu") 且不含 cuda.is_available 自动检测
+  steps:
+    - grep: 'torch\.device\("cpu"\)|torch\.device\(.cpu.\)'
+    - grep_inverse: "cuda.is_available|auto.detect"
+
+enforcement: block
+message: |
+  C-039: device 不可硬编码为 cpu。Vertex AI L4 GPU 会空转, CPU 跑 23h/$25。
+  必须 auto-detect: torch.cuda.is_available()
+  详见 incidents/C-039_device_hardcode/
+
+stats:
+  created: "2026-03-20"
+  times_triggered: 13
+  times_bypassed: 0
+  false_positives: 0
+  last_triggered: "2026-04-03"

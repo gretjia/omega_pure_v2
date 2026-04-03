@@ -162,6 +162,42 @@ Gemini (math): PASS/FAIL/SKIP (非数学变更跳过)
 
 **如果任一 FAIL → 回到 Stage 6 修复，重新走 Stage 7-8**
 
+### Stage 8.5: SPEC-CODE ALIGNMENT（防漂移门禁 — Meta-Harness V3）
+
+**此阶段防止 C-057 类漂移: spec 写了一套, 代码实际跑另一套。**
+
+1. 读取 `architect/current_spec.yaml` 中标记 `[DRAFT — pending audit]` 的字段
+2. 如果外部审计全部 PASS:
+   - 移除 `[DRAFT]` 标记 → 变为 final
+   - 更新对应 INS-* 的 `audit_status: draft` → `audit_status: final`
+3. 运行 spec-code 对齐检查:
+   ```
+   遍历 spec 中的关键参数:
+     - window_size_s: spec 值 vs `grep "window_size_s.*default" train.py gcp/train.py`
+     - lambda_s: spec 值 vs `grep "lambda_s.*default" train.py gcp/train.py`
+     - hidden_dim: spec 值 vs `grep "hidden_dim.*default" train.py gcp/train.py`
+     - loss_function: spec 描述 vs 代码实际实现
+   对比不一致 → 列出差异 → 必须修复后才能通过
+   ```
+4. 验证 INS 中的 `前提假设` 部分:
+   - 如果 INS 假设 target 单位为 X → `grep` ETL 源码验证
+   - 如果 INS 假设某个函数存在 → `grep` 代码验证
+   - 假设不成立 → FAIL（C-059 教训: 假设不验证 = 定时炸弹）
+
+输出：
+```
+=== STAGE 8.5: SPEC-CODE ALIGNMENT ===
+Spec drafts finalized: N fields
+Alignment check:
+  ✓ window_size_s: spec=10, code=10
+  ✓ lambda_s: spec=1e-4, code=1e-4
+  ✗ hidden_dim: spec=64, code=32 → MUST FIX
+Assumptions verified: M/N passed
+Verdict: PASS / FAIL
+```
+
+**如果 FAIL → 修复代码使其与 spec 对齐，然后重新检查**
+
 ### Stage 9: SUMMARY
 
 输出变更摘要：

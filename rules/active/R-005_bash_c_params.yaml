@@ -1,0 +1,30 @@
+# R-005: bash -c 必须传递参数
+id: R-005
+name: "bash -c commands must end with \"$@\" + _ for parameter passing"
+source_incidents: [C-017]
+axiom: "Ω4"
+
+trigger:
+  event: PreToolUse
+  matcher: "Edit|Write"
+  file_glob: "gcp/*.sh"
+
+check:
+  type: compound
+  description: |
+    检测 bash -c 命令但不含 "$@" → HPO 超参被吞
+  steps:
+    - grep: "bash -c"
+    - grep_inverse: "\\$@"
+
+enforcement: block
+message: |
+  C-017: bash -c 命令末尾必须加 "$@" + _, 否则 HPO 超参被吞。
+  100 trial 同默认参数的灾难。
+
+stats:
+  created: "2026-03-05"
+  times_triggered: 10
+  times_bypassed: 0
+  false_positives: 0
+  last_triggered: "2026-04-03"

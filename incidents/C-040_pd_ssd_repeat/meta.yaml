@@ -1,0 +1,12 @@
+id: C-040
+title: "Inference job repeatedly uses pd-ssd (banned by C-028) + gen_config hardcoded 200GB"
+pattern: io_strategy
+axiom: "Ω4"
+severity: high
+enforcement: executable
+enforcement_file: ".claude/hooks/lesson-enforcer.sh"
+related: [C-028, C-041, C-039]
+phase: "Phase 10"
+date: "2026-03-31"
+commit: "d3f5352"
+cost: "~3h debug + multiple failed job submissions"

@@ -97,6 +97,21 @@ if [[ -f "tests/test_known_bugs.py" ]]; then
     exit 1
   fi
   echo "  Regression tests PASSED"
+fi
+
+echo "[1d] Spec-code alignment check (C-057: prevent parameter drift)..."
+if [[ -f "tools/spec_code_alignment.py" ]]; then
+  if ! python3 tools/spec_code_alignment.py 2>&1; then
+    echo "WARNING: Spec-code alignment drift detected."
+    echo "Fix code defaults to match architect/current_spec.yaml, or update spec."
+    read -p "Continue anyway? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+      echo "ABORT: Fix alignment before building."
+      exit 1
+    fi
+  fi
+  echo "  Spec-code alignment OK"
 else
   echo "  WARNING: tests/test_known_bugs.py not found — skipping"
 fi

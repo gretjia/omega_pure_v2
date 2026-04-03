@@ -1,0 +1,12 @@
+id: C-020
+title: "HPO trials reuse same checkpoint dir — architecture mismatch crash"
+pattern: checkpoint_state
+axiom: "Ω1"
+severity: high
+enforcement: doc_only
+enforcement_file: "none"
+related: [C-044, C-061]
+phase: "Phase 4/6 HPO"
+date: "2026-03-25"
+commit: "a753c24"
+cost: "~4h GPU (100 HPO trials wasted)"

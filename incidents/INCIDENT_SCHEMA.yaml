@@ -1,0 +1,124 @@
+# INCIDENT_SCHEMA.yaml — Meta-Harness V3 Trace Vault Schema
+# 每个 C-xxx 事件存储为 incidents/C-xxx_slug/ 目录
+# 目录内包含: meta.yaml + trace.md + root_cause.md + resolution.md
+
+# ── meta.yaml 字段定义 ──
+schema_version: "1.0"
+
+fields:
+  id:
+    type: string
+    required: true
+    description: "事件编号 (C-001 ~ C-999)"
+    example: "C-058"
+
+  title:
+    type: string
+    required: true
+    description: "一行标题"
+    example: "Dockerfile COPY 源文件与仓库根目录不同步"
+
+  pattern:
+    type: string
+    required: true
+    description: "失败模式标签（用于跨事件聚类搜索）"
+    enum:
+      - config_sync        # 配置/默认值不同步
+      - dimension_coupling  # 量纲/维度耦合变更
+      - deploy_alignment   # Docker/部署与代码不对齐
+      - io_strategy        # I/O 存储策略错误
+      - normalization      # 归一化/标准化病态
+      - checkpoint_state   # Checkpoint 状态泄漏
+      - validation_skip    # 验证缺失或自验证
+      - parameter_coupling # 参数耦合变更未联动
+      - resource_guess     # 资源估算靠猜测
+      - full_stack_sync    # 全栈变更未同步
+      - other
+
+  axiom:
+    type: string
+    required: true
+    description: "违反的元公理"
+    enum: ["Ω1", "Ω2", "Ω3", "Ω4", "Ω5", "Ω6"]
+
+  severity:
+    type: string
+    required: true
+    enum: ["critical", "high", "medium", "low"]
+    description: "critical=数据丢失/长时间GPU浪费; high=部署失败; medium=需返工; low=小麻烦"
+
+  enforcement:
+    type: string
+    required: true
+    enum: ["executable", "doc_only", "none"]
+    description: "当前执法状态"
+
+  enforcement_file:
+    type: string
+    required: false
+    description: "执法代码所在文件路径 (enforcement=executable 时必填)"
+
+  rule_id:
+    type: string
+    required: false
+    description: "对应的规则 ID (如 R-007)"
+
+  related:
+    type: array
+    required: false
+    description: "同族事件 ID 列表"
+    example: ["C-053", "C-060"]
+
+  phase:
+    type: string
+    required: false
+    description: "发生的 Phase"
+    example: "Phase 11c"
+
+  date:
+    type: string
+    required: false
+    format: "YYYY-MM-DD"
+    description: "事件发生日期"
+
+  commit:
+    type: string
+    required: false
+    description: "相关 git commit hash"
+
+  cost:
+    type: string
+    required: false
+    description: "损失估算 (GPU 小时, 美元, 人力小时)"
+    example: "9h GPU + $25 + 4h human"
+
+# ── 文件内容规范 ──
+files:
+  trace.md:
+    description: |
+      完整执行记录 — 什么命令、什么输出、什么错误。
+      Meta-Harness 论文证明: raw traces >> summaries (准确率 +15 点)。
+      不压缩。让 agent 用 grep/read 按需查询。
+    sections:
+      - "## 背景": 当时在做什么
+      - "## 执行序列": 命令 → 输出 → 错误（按时间顺序）
+      - "## 环境": 机器/Docker/数据状态
+
+  root_cause.md:
+    description: |
+      因果分析链: A → B → C → failure。
+      不只是"什么坏了"，而是"为什么会坏"。
+      支持 agent 识别变体模式。
+    sections:
+      - "## WHY Chain": A caused B which caused C which caused failure
+      - "## 为什么现有教训没拦住": 如果有先前同类教训
+      - "## 模式泛化": 这个失败的抽象模式是什么
+
+  resolution.md:
+    description: |
+      修复方案 + 效果验证。
+      如果创建了可执行强制，记录文件和规则 ID。
+    sections:
+      - "## 修复": 具体做了什么
+      - "## 验证": 怎么确认修复有效
+      - "## 执法": 创建了什么自动防护 (如有)

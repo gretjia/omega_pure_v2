@@ -1,0 +1,32 @@
+# R-014: 长训练 (>2h) 必须 E0-E1 烟测
+id: R-014
+name: "Remind about E0-E1 smoke test for long training jobs"
+source_incidents: [C-052]
+axiom: "Ω1"
+
+trigger:
+  event: PreToolUse
+  matcher: "Bash"
+  file_glob: null
+
+check:
+  type: grep
+  # 检测训练提交命令
+  pattern: "safe_submit|custom-jobs create|train\\.py.*--epochs"
+  scope: content
+
+enforcement: warn
+message: |
+  C-052: 长训练 (>2h) 必须在 E0-E1 完成后独立烟测。
+  Phase 11c 跑完 20 epoch (9h GPU) 才发现模型脑死亡 (pred_std=5.6 BP)。
+  E0-E1 完成后必须:
+  1. 用修复后推理脚本跑 checkpoint (不是训练日志)
+  2. 断言 pred_std 在物理区间 (5-500 BP)
+  仪表盘可能被旧 Docker 代码污染, 仅靠日志判断健康是自欺欺人。
+
+stats:
+  created: "2026-04-03"
+  times_triggered: 0
+  times_bypassed: 0
+  false_positives: 0
+  last_triggered: null

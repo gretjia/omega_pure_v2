@@ -1,0 +1,90 @@
+# RULE_SCHEMA.yaml — Meta-Harness V3 Rule Engine Schema
+# 规则定义在 rules/active/*.yaml
+# rule-engine.sh 动态读取所有 active 规则并执行
+
+schema_version: "1.0"
+
+fields:
+  id:
+    type: string
+    required: true
+    description: "规则编号 R-001 ~ R-999"
+
+  name:
+    type: string
+    required: true
+    description: "规则名称（一行）"
+
+  source_incidents:
+    type: array
+    required: true
+    description: "生成此规则的 C-xxx 事件列表"
+
+  axiom:
+    type: string
+    required: true
+    description: "对应的元公理"
+
+  # ── 触发条件 ──
+  trigger:
+    event:
+      type: string
+      enum: ["PreToolUse", "PostToolUse"]
+      description: "Hook 触发时机"
+    matcher:
+      type: string
+      description: "工具匹配器 (Edit|Write, Bash, etc.)"
+    file_glob:
+      type: string
+      description: "文件路径 glob 匹配 (可选, 不填则匹配所有)"
+
+  # ── 检查逻辑 ──
+  check:
+    type:
+      enum: ["grep", "grep_inverse", "command"]
+      description: |
+        grep: 内容匹配 pattern → 违规
+        grep_inverse: 内容不匹配 pattern → 违规 (即要求必须包含)
+        command: 执行 shell 命令, 非零退出 → 违规
+    pattern:
+      type: string
+      description: "grep 正则或 shell 命令"
+    scope:
+      type: string
+      enum: ["content", "file_path", "both"]
+      default: "content"
+      description: "检查范围: 文件内容 / 文件路径 / 两者"
+
+  # ── 执法行为 ──
+  enforcement:
+    type: string
+    enum: ["block", "warn", "log"]
+    description: |
+      block: exit 2, 阻止操作
+      warn: stderr 输出警告但允许操作 (exit 0)
+      log: 静默记录到 rules/enforcement.log
+
+  message:
+    type: string
+    required: true
+    description: "违规时显示的消息 (含事件编号 + 修复建议 + trace 路径)"
+
+  # ── 效果追踪 ──
+  stats:
+    created:
+      type: string
+      format: "YYYY-MM-DD"
+    times_triggered:
+      type: integer
+      default: 0
+    times_bypassed:
+      type: integer
+      default: 0
+      description: "规则存在但未能拦截的次数"
+    false_positives:
+      type: integer
+      default: 0
+    last_triggered:
+      type: string
+      format: "YYYY-MM-DD"
+      default: null

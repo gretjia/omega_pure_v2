@@ -1,0 +1,30 @@
+# R-011: Docker 构建必须在代码修复之后
+id: R-011
+name: "Warn about Docker build timing vs code changes"
+source_incidents: [C-053, C-058]
+axiom: "Ω3"
+
+trigger:
+  event: PreToolUse
+  matcher: "Bash"
+  file_glob: null
+
+check:
+  type: grep
+  # 检测 Docker build/submit 命令
+  pattern: "gcloud builds submit|docker build|safe_build_and_canary"
+  scope: content
+
+enforcement: warn
+message: |
+  C-053/C-058: Docker 构建时间点必须在所有代码修复之后。
+  Phase 11c: Docker 在修复前构建 → 15 epoch 用旧代码 → 9h GPU 浪费。
+  检查: git status 是否有未提交的修复? gcp/ 文件是否与根目录同步?
+  safe_build_and_canary.sh Step 1b 会自动检查 Dockerfile COPY 漂移。
+
+stats:
+  created: "2026-04-03"
+  times_triggered: 0
+  times_bypassed: 0
+  false_positives: 0
+  last_triggered: null

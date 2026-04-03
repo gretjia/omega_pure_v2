@@ -1,0 +1,12 @@
+id: C-044
+title: "--resume + same output_dir after Loss change loads stale checkpoint, skips training"
+pattern: checkpoint_state
+axiom: "Ω1"
+severity: critical
+enforcement: doc_only
+enforcement_file: "none"
+related: [C-020, C-061]
+phase: "Phase 11c"
+date: "2026-04-01"
+commit: "89b4ebf"
+cost: "~2h GPU + debug time (stale run undetected until manual inspection)"

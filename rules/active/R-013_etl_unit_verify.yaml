@@ -1,0 +1,30 @@
+# R-013: Loss/Metric 代码必须验证 ETL 输出单位
+id: R-013
+name: "Warn when target/prediction scaling code is modified"
+source_incidents: [C-059]
+axiom: "Ω1"
+
+trigger:
+  event: PreToolUse
+  matcher: "Edit|Write"
+  file_glob: "*core*.py|*loss*.py|train.py|gcp/train.py"
+
+check:
+  type: grep
+  # 检测涉及 BP 转换或 target 缩放的代码
+  pattern: "\\* 10000|\\* 1e4|basis.point|bp_scale|target.*\\*|\\* TARGET"
+  scope: content
+
+enforcement: warn
+message: |
+  C-059: 检测到 BP 转换/target 缩放代码。
+  ETL (omega_etl_v3_topo_forge.py:176) 输出已经是 BP (40.0 = 40BP)。
+  再乘 10000 = double-convert → loss=24.7 (正常 ~0.25), D9-D0=16431BP (正常 ~20BP)。
+  写 Loss/Metric 前必须 grep ETL 源码确认输出单位。
+
+stats:
+  created: "2026-04-03"
+  times_triggered: 5
+  times_bypassed: 0
+  false_positives: 0
+  last_triggered: "2026-04-03"

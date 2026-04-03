@@ -1,0 +1,28 @@
+# R-002: checkpoint_interval must be positive
+id: R-002
+name: "Block checkpoint_interval set to zero (division by zero risk)"
+source_incidents: [C-032]
+axiom: "Ω1"
+
+trigger:
+  event: PreToolUse
+  matcher: "Edit|Write"
+  file_glob: "*"
+
+check:
+  # NOTE: pattern stored in separate .pattern file to avoid self-triggering hook
+  # The actual regex is: checkpoint_interval\s*[=:]\s*0\b
+  type: grep
+  pattern_ref: "rules/patterns/R-002.regex"
+  scope: content
+
+enforcement: block
+message: |
+  C-032: checkpoint_interval 不可为零, 会导致模运算除零崩溃。必须为正整数。
+
+stats:
+  created: "2026-03-10"
+  times_triggered: 2
+  times_bypassed: 0
+  false_positives: 0
+  last_triggered: "2026-04-03"

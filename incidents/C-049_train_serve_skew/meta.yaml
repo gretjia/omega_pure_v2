@@ -1,0 +1,12 @@
+id: C-049
+title: "Train-Serve Skew: inference retained *TARGET_STD scaling after Phase 11c absolute BP switch"
+pattern: full_stack_sync
+axiom: "Ω5"
+severity: critical
+enforcement: doc_only
+enforcement_file: ""
+related: [C-050, C-051, C-053]
+phase: "Phase 11c"
+date: "2026-04-01"
+commit: "d744c4d"
+cost: "2h human debugging + backtest engine destroyed"

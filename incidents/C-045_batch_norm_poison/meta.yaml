@@ -1,0 +1,12 @@
+id: C-045
+title: "Shuffled WebDataset + Softmax(dim=0) Batch Z-score — cross-epoch poison batch"
+pattern: normalization
+axiom: "Ω1"
+severity: critical
+enforcement: doc_only
+enforcement_file: "none"
+related: [C-042, C-046, C-051]
+phase: "Phase 10"
+date: "2026-03-30"
+commit: "02a2fbe"
+cost: "~20h GPU (Phase 10 full training) + Phase 11a-11c cascading diagnosis"
