@@ -1,5 +1,5 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-04-03T09:15Z — **STATUS: Phase 12 正式训练 RUNNING (Job 340079341608108032), 烟测 v6 全通过。**
+Last Updated: 2026-04-03T22:24Z — **STATUS: Phase 12 训练完成 (20 epochs, best D9-D0=4.48BP), 等待 post-flight 分析 + backtest。**
 
 ## Current State
 - **Living Harness V3 已部署** (详见 [`LIVING_HARNESS.md`](../LIVING_HARNESS.md)):
@@ -20,10 +20,15 @@ Last Updated: 2026-04-03T09:15Z — **STATUS: Phase 12 正式训练 RUNNING (Job
   - A1 sample_count=30000 ✓ | A2 pred_std=22.95 BP ✓ | A3 NaN/Inf=0 ✓
   - A4 D9-D0 Spread=**+10.17 BP** (正信号!) ✓ | A5 Schema=OK ✓
   - 训练: Loss 5.61→0.75, Std_yhat alive
-- **正式训练 RUNNING**: Job `340079341608108032`, n1-standard-8 + T4 On-Demand
-  - 配置: 20 epochs × 5000 steps, batch=256, lr=3.2e-4, lambda_s=1e-4
-  - E0 Step 3000/5000: Loss=1.337, Std_yhat=21.78 BP (healthy)
-  - Cron 监控已设 (每 10 分钟)
+- **正式训练 COMPLETE**: Job `340079341608108032`, 20 epochs × 5000 steps
+  - 最终 E19: val_loss=1.160, D9-D0=+1.28BP, Std=18.57BP, S_T=1.157
+  - Best val loss: **1.158** (E18)
+  - Best D9-D0: **+4.48 BP** (E0, saved as best.pt)
+  - S_T 压缩: 2.09→1.16 (44% reduction)
+  - D9-D0 正值 16/20 epochs
+  - 无 NaN、无崩溃、无人工干预
+  - 耗时 ~13.8h, cost ~$13 On-Demand T4
+  - Checkpoints: `gs://omega-pure-data/checkpoints/phase12_unbounded_v1/`
 
 ## Changes This Session (~38 commits)
 
@@ -68,12 +73,13 @@ Last Updated: 2026-04-03T09:15Z — **STATUS: Phase 12 正式训练 RUNNING (Job
 - C-061: 每次烟测用唯一 output_dir，防 resume 跳过
 
 ## Next Steps
-1. ~~**[P0] 修复烟测断言量纲**~~ → DONE (pred_bp ×10000, commit d119944)
-2. ~~**[P0] 重提交烟测 v6**~~ → DONE (Job 8918205178725793792, ALL PASS)
-3. ~~**[P0] 提交正式训练**~~ → DONE (Job 340079341608108032, RUNNING)
-4. **[P0] 监控正式训练**: Cron 每 10 分钟检查 Loss/Std_yhat/D9-D0
-5. **[P1] E0 后 post-deploy 烟测**: 等 E0 完成后跑推理验证
-6. **[P2] Phase 12 HPO**: 启用 Vizier MedianStoppingRule + Transfer Learning
+1. ~~**[P0] 修复烟测断言量纲**~~ → DONE
+2. ~~**[P0] 重提交烟测 v6**~~ → DONE (ALL 5 PASS)
+3. ~~**[P0] 提交正式训练**~~ → DONE
+4. ~~**[P0] 监控正式训练**~~ → DONE (20/20 epochs, SUCCEEDED)
+5. **[P0] Post-flight 分析**: 用 `tools/postflight_analysis.py` 跑 best.pt 推理 + 全量分析
+6. **[P1] Backtest**: 用 best.pt 跑 `backtest_5a.py` 验证不对称比 + profit factor
+7. **[P2] Phase 12 HPO**: 启用 Vizier MedianStoppingRule + Transfer Learning
 
 ## Warnings
 - **spec 注释需更新**: `loss_function:` 伪代码仍写 `pred * 10000; tgt * 10000`，实际是 `pred * 10000` only
@@ -99,7 +105,7 @@ Last Updated: 2026-04-03T09:15Z — **STATUS: Phase 12 正式训练 RUNNING (Job
 ## Machine-Readable State
 ```yaml
 phase: "12_unbounded_spear"
-status: "phase12_formal_training_running"
+status: "phase12_training_complete_awaiting_postflight"
 harness:
   version: "v3_living"
   rules_active: 16
@@ -118,13 +124,15 @@ smoke_test_v6:
   samples: 30000
 formal_training:
   job_id: "340079341608108032"
-  status: RUNNING
-  config: "gcp/phase12_train_ondemand.yaml"
-  epochs: 20
-  steps_per_epoch: 5000
-  cost_estimate: "$13 (On-Demand T4, ~17h)"
-  output_dir: "phase12_unbounded_v1"
-  cron_monitor: "every 10 min"
+  status: SUCCEEDED
+  duration: "13.8h"
+  cost: "~$13 (On-Demand T4)"
+  final_e19: {val_loss: 1.160, d9d0: 1.28, std_yhat: 18.57, s_t: 1.157}
+  best_val_loss: {epoch: 18, val_loss: 1.158}
+  best_d9d0: {epoch: 0, d9d0: 4.48, saved_as: "best.pt"}
+  compression: "S_T 2.09→1.16 (44%)"
+  d9d0_positive_epochs: "16/20"
+  checkpoint_dir: "gs://omega-pure-data/checkpoints/phase12_unbounded_v1/"
 commits_this_session: 8
 insights_this_session: [INS-057, INS-058, INS-059, INS-060, INS-061, INS-062, INS-063, INS-064]
 new_lessons: [C-057, C-058, C-059, C-060, C-061]
