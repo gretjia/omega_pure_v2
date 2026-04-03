@@ -139,6 +139,8 @@
 
 - **C-058**: **双副本必然漂移——靠记忆同步违反 Ω4**。Phase 12 烟测 ImportError: `gcp/omega_epiplexity_plus_core.py` 缺新函数。根因：gcp/ 维护根目录文件副本，Dockerfile 从 gcp/ 构建，dev-cycle 只同步了 train.py 忘了核心模块。C-053 教训没防住因为它只说"重建 Docker"，没覆盖"构建源文件本身是旧的"。**结构性修复：`safe_build_and_canary.sh` Step 1b 自动解析 Dockerfile COPY 指令，diff 每个源文件与根目录，不一致则 ABORT。** 从此漂移被机器拦截，不靠人记忆（Ω4: 可执行>可记忆）。
 
+- **C-059**: **量纲必须从数据源头追溯，不可假设**。架构师指令假设 target 是 raw decimal（0.004=40BP），但 ETL `omega_etl_v3_topo_forge.py:176` 输出的 target 已经乘了 10000（即 40.0=40BP）。Loss 函数再乘 10000 → double-convert → loss=24.7（正常应 ~0.25）、D9-D0=16431BP（正常应 ~20BP）。教训：写 Loss/Metric 前必须 `grep` ETL 源码确认输出单位，spec 的 `unit: "basis_points"` 不是摆设（Ω1: 只信实测 — 读源码，不读注释）。
+
 ### AI 治理
 - **C-021**: AI 自己写烟测测自己 → 自洽性掩盖正确性。审计独立于作者（Ω5）
 - **C-022**: 接收架构师指令即执行 → 188GB 数据丢失。指令 ≠ 授权

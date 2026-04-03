@@ -250,9 +250,10 @@ def compute_spear_loss_unbounded(raw_logits, target, z_core,
     # 1. Leaky Blinding (INS-060): preserve 10% of negative returns
     target_leaky = torch.where(tgt > 0, tgt, tgt * leaky_factor)
 
-    # 2. BP space projection (INS-062)
-    pred_bp = pred * 10000.0
-    tgt_leaky_bp = target_leaky * 10000.0
+    # 2. Target already in BP from ETL (omega_etl_v3_topo_forge.py:176)
+    #    NO * 10000 projection needed — data is already basis points
+    pred_bp = pred  # model learns to output BP directly
+    tgt_leaky_bp = target_leaky
 
     # 3. Static Centering — target only (Path A, INS-063)
     target_centered_bp = tgt_leaky_bp - static_mean_bp
@@ -261,6 +262,7 @@ def compute_spear_loss_unbounded(raw_logits, target, z_core,
     target_centered_bp = torch.clamp(target_centered_bp, min=-outlier_clamp_bp, max=outlier_clamp_bp)
 
     # 5. Scaled Unbounded MSE (INS-060/062)
+    #    scale_factor still needed: 50 BP error → MSE=2500 → /10000 = 0.25
     loss_err = F.mse_loss(pred_bp, target_centered_bp) / max(mse_scale_factor, 1.0)
 
     # 6. MDL Compression — z_core L1 sparsity

@@ -468,8 +468,8 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
     targets_cat = torch.cat(all_targets).view(-1)
 
     # Cross-sectional prediction std (INS-017: Std Expansion monitoring)
-    # Model outputs raw decimal (Excess BP / 10000), convert to BP for sentinel comparison
-    pred_std_bp = preds.std().item() * 10000.0
+    # Model outputs BP directly (targets are BP from ETL), no conversion needed
+    pred_std_bp = preds.std().item()
 
     # Variance Collapse Sentinel (INS-054, C-055: thresholds must be empirically calibrated)
     if pred_std_bp < sentinel_error and preds.numel() > 10:
@@ -478,12 +478,13 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
         logger.warning(f"LOW VARIANCE: pred_std={pred_std_bp:.2f} BP < {sentinel_warn}. Nearing collapse.")
 
     # D9-D0 Spread (INS-058: replaces PfRet as best.pt saving criterion)
+    # Targets already in BP from ETL (omega_etl_v3_topo_forge.py:176), no * 10000
     n_samples = preds.numel()
     k = max(n_samples // 10, 1)
     _, top_idx = torch.topk(preds, k)
     _, bot_idx = torch.topk(preds, k, largest=False)
-    d9_mean = targets_cat[top_idx].mean().item() * 10000.0  # BP
-    d0_mean = targets_cat[bot_idx].mean().item() * 10000.0  # BP
+    d9_mean = targets_cat[top_idx].mean().item()  # already BP
+    d0_mean = targets_cat[bot_idx].mean().item()  # already BP
     d9_d0_spread = d9_mean - d0_mean
 
     return {
