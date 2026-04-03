@@ -1,0 +1,9 @@
+
+=== Phase 12 Formal Training Monitor ===
+Started: 2026-04-03T08:25:00Z
+Job ID: 340079341608108032
+Docker: omega-tib:phase12-v5
+Config: 20 epochs × 5000 steps, n1-standard-8 + T4, On-Demand
+Smoke v6 baseline: pred_std=22.95 BP, D9-D0=+10.17 BP (2 epochs)
+
+[2026-04-03T08:25Z] Status: JOB_STATE_PENDING (provisioning)
