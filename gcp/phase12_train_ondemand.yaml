@@ -1,0 +1,52 @@
+workerPoolSpecs:
+- machineSpec:
+    machineType: n1-standard-8
+    acceleratorType: NVIDIA_TESLA_T4
+    acceleratorCount: 1
+  replicaCount: 1
+  diskSpec:
+    bootDiskType: pd-ssd
+    bootDiskSizeGb: 1300
+  containerSpec:
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase12-v4
+    command:
+    - bash
+    - -c
+    - |
+      set -e
+      echo "=== Phase 12 Unbounded Spear — Full Training (On-Demand) ==="
+      echo "Loss: Scaled MSE + Static Centering + Leaky Blinding (INS-060/062/063/064)"
+      echo "Metric: D9-D0 Spread (INS-058)"
+      echo "lambda_s=1e-4, ws=10, torch.compile enabled"
+
+      echo "=== Stage 1: Stage all shards ==="
+      SHARD_DIR=/tmp/shards
+      mkdir -p ${SHARD_DIR}
+
+      t0=$(date +%s)
+      gcloud storage cp "gs://omega-pure-data/wds_shards_v3_full/omega_shard_*.tar" ${SHARD_DIR}/ 2>&1 | tail -5
+      t1=$(date +%s)
+      STAGED=$(ls ${SHARD_DIR}/*.tar | wc -l)
+      echo "Staged ${STAGED} shards in $((t1-t0))s"
+
+      echo "=== Stage 2: Train ==="
+      PYTHONUNBUFFERED=1 python3 /app/train.py \
+        --shard_dir=${SHARD_DIR} \
+        --output_dir=/gcs/omega-pure-data/checkpoints/phase12_unbounded_v1 \
+        --hidden_dim=64 \
+        --window_size_t=32 \
+        --window_size_s=10 \
+        --lr=3.2e-4 \
+        --lambda_s=1e-4 \
+        --static_mean_bp=40.0 \
+        --outlier_clamp_bp=500.0 \
+        --mse_scale_factor=10000.0 \
+        --leaky_factor=0.1 \
+        --warmup_epochs=2 \
+        --batch_size=256 \
+        --coarse_graining_factor=1 \
+        --epochs=20 \
+        --steps_per_epoch=5000 \
+        --num_workers=6 \
+        --ckpt_every_n_steps=500 \
+        --no_amp
