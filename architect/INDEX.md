@@ -32,3 +32,5 @@
 | 2026-04-01 | Train-Serve Skew 216x 修复 + 全面验证协议 | [directives/2026-04-01_train_serve_skew_resolution.md](directives/2026-04-01_train_serve_skew_resolution.md) | NONE — 工程对齐，无 spec 变更 |
 | 2026-04-01 | Phase 11d 双轨复苏协议 (Resuscitation Protocol) | [directives/2026-04-01_phase11d_resuscitation_protocol.md](directives/2026-04-01_phase11d_resuscitation_protocol.md) | AXIOM UPDATE REQUIRED — 已执行 |
 | 2026-04-01 | Phase 11d I/O 审计 + 多 GPU 裁决 | [directives/2026-04-01_phase11d_io_audit_and_gpu_ruling.md](directives/2026-04-01_phase11d_io_audit_and_gpu_ruling.md) | NONE — 操作审计 |
+| 2026-04-02 | Phase 12 复苏协议 (The Unshackling Protocol) | [directives/2026-04-02_phase12_unshackling_protocol.md](directives/2026-04-02_phase12_unshackling_protocol.md) | AXIOM UPDATE REQUIRED — spec 已更新 |
+| 2026-04-02 | 审计覆盖裁决 — Excess Alpha + λ_s 回退 | [directives/2026-04-02_audit_override_excess_alpha.md](directives/2026-04-02_audit_override_excess_alpha.md) | AXIOM UPDATE REQUIRED — [AUDIT OVERRIDDEN] spec 已更新 |

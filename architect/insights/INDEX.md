@@ -66,6 +66,14 @@
 | INS-054 | 方差坍缩 — Huber δ=50 + λ_s=1e-3 导致特征脑死亡 | 训练 | 2026-04-01 | L2 更新 | active |
 | INS-055 | Phase 11d 双轨复苏 — λ_s 降 10-100x + δ 放宽 4x | 训练 | 2026-04-01 | L2 更新 | pending_deployment |
 | INS-056 | 19.7K 极小模型严禁多卡 DDP — Scale-Up Only | 架构 | 2026-04-01 | NONE | active |
+| INS-057 | SRL 捷径学习确认 — z_core 被架构旁路饿死 | 架构 | 2026-04-02 | L2 更新 | pending_ablation |
+| INS-058 | PfRet 评价失效 — 方差坍缩下等价于等权 Beta 均值 | 度量 | 2026-04-02 | L2 更新 | active |
+| INS-059 | IC Loss 历史翻案 — Phase 6 IC=0.066 为真信号 | 训练 | 2026-04-02 | NONE | active |
+| INS-060 | Phase 12 无界之矛(审计版) — Scaled MSE + Static Centering | 训练 | 2026-04-02 | L2 更新 | pending_deployment |
+| INS-061 | 空间深度恢复强制令 — ws=4 脏补丁必须修复 | 架构 | 2026-04-02 | L2 更新 | active |
+| INS-062 | MSE 量纲碾压与噪声过拟合防线 | 训练 | 2026-04-02 | NONE | active |
+| INS-063 | Excess BP 输出语义 — 仅居中 Target，封杀路径 B | 训练 | 2026-04-02 | NONE | active |
+| INS-064 | Static Mean 全局先验注入 — 严禁 Batch 内动态计算 | 训练 | 2026-04-02 | NONE | active |
 
 ---
 
@@ -129,3 +137,11 @@
 | INS-054 | phase11d_resuscitation_protocol | — |
 | INS-055 | phase11d_resuscitation_protocol | — |
 | INS-056 | phase11d_io_audit_and_gpu_ruling | — |
+| INS-057 | phase12_unshackling_protocol | — |
+| INS-058 | phase12_unshackling_protocol | — |
+| INS-059 | phase12_unshackling_protocol | — |
+| INS-060 | phase12_unshackling_protocol | — |
+| INS-061 | phase12_unshackling_protocol | — |
+| INS-062 | phase12_unshackling_protocol | — |
+| INS-063 | audit_override_excess_alpha | — |
+| INS-064 | audit_override_excess_alpha | — |

@@ -327,11 +327,12 @@ def assert_layer2_architecture(spec: dict, verbose: bool = False) -> list:
     hpo_metric = hpo.get("metric")
     if hpo_metric is not None:
         metric_str = str(hpo_metric).lower()
-        if "fvu" in metric_str or "portfolio_return" in metric_str:
+        allowed_metrics = {"fvu", "portfolio_return", "d9_d0_spread", "d9-d0 spread", "rank_ic"}
+        if any(m in metric_str for m in allowed_metrics):
             if verbose:
                 print(f"  [OK] hpo.metric = {hpo_metric}")
         else:
-            errors.append(f"SUSPECT: hpo.metric='{hpo_metric}', expected FVU or portfolio_return based")
+            errors.append(f"SUSPECT: hpo.metric='{hpo_metric}', expected one of {allowed_metrics}")
 
     search_space = hpo.get("search_space", {})
     if isinstance(search_space, dict) and search_space:
