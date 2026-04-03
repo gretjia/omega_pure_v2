@@ -8,7 +8,7 @@ workerPoolSpecs:
     bootDiskType: pd-ssd
     bootDiskSizeGb: 1300
   containerSpec:
-    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase12-v4
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase12-v5
     command:
     - bash
     - -c

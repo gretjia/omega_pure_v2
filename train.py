@@ -508,8 +508,8 @@ def main():
     parser.add_argument("--shard_dir", type=str, required=True)
     parser.add_argument("--output_dir", type=str, default="./checkpoints")
     # Training
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--steps_per_epoch", type=int, default=10000)
+    parser.add_argument("--epochs", type=int, default=15)
+    parser.add_argument("--steps_per_epoch", type=int, default=5000)
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--lambda_s", type=float, default=1e-4)
@@ -543,7 +543,7 @@ def main():
                         help="Variance collapse ERROR threshold (BP). C-055: calibrate with data")
     parser.add_argument("--sentinel_warn", type=float, default=30.0,
                         help="Low variance WARNING threshold (BP). C-055: calibrate with data")
-    parser.add_argument("--mask_prob", type=float, default=0.5,
+    parser.add_argument("--mask_prob", type=float, default=0.0,
                         help="Block masking probability (0.0 to disable)")
     parser.add_argument("--overfit", action="store_true",
                         help="Overfit test: repeat first batch for all steps")

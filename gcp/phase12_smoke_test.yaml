@@ -8,7 +8,7 @@ workerPoolSpecs:
     bootDiskType: pd-ssd
     bootDiskSizeGb: 200
   containerSpec:
-    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase12-v4
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase12-v5
     command:
     - bash
     - -c
@@ -32,7 +32,7 @@ workerPoolSpecs:
       echo "=== Stage 2: Smoke Train (2 epochs × 500 steps) ==="
       PYTHONUNBUFFERED=1 python3 /app/train.py \
         --shard_dir=${SHARD_DIR} \
-        --output_dir=/gcs/omega-pure-data/checkpoints/phase12_smoke_v5 \
+        --output_dir=/gcs/omega-pure-data/checkpoints/phase12_smoke_v6 \
         --hidden_dim=64 \
         --window_size_t=32 \
         --window_size_s=10 \
