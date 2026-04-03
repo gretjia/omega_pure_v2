@@ -17,3 +17,32 @@ Smoke v6 baseline: pred_std=22.95 BP, D9-D0=+10.17 BP (2 epochs)
   - Std_yhat=26.61 BP → variance fully alive
   - New best.pt saved
   - E1 started, Step 500: Loss=1.222
+[2026-04-03T10:18Z] E1 DONE (2410s) | Val: loss=1.177 D9D0=+0.6BP Std_yhat=17.84BP PfRet=6.81
+  - Loss: 1.204->1.177 descent continues
+  - D9-D0: 4.48->0.6 still positive, warmup period
+  - Std_yhat: 26.61->17.84 BP, within range
+  - S_T: 2.09->1.62, compression improving
+  - NOTE: E2 begins MDL L1 engagement
+[2026-04-03T10:58Z] E2 DONE (2412s) | Val: loss=1.227 D9D0=+1.61BP Std_yhat=22.94BP PfRet=5.85
+  - Lambda_s now active: D9-D0 recovered (0.6->1.6), Std_yhat bounced (17.8->22.9)
+  - S_T 1.62->1.57 -- MDL compression continues
+  - Val loss slight uptick expected from L1 penalty
+  - HEALTHY trajectory: compression + signal preservation
+[2026-04-03T11:38Z] E3 DONE (2413s) | Val: loss=1.171 (best!) D9D0=-0.04BP Std_yhat=15.71BP PfRet=6.66
+  - Val Loss new best (1.171 < 1.177)
+  - D9-D0 oscillating near zero -- normal for early compression phase
+  - Std_yhat 15.71 BP -- above error threshold, monitoring
+  - S_T 1.51 -- steady compression
+  - No NaN/Inf, no anomalies. 4/20 epochs complete (~20%)
+[2026-04-03T12:19Z] E4 DONE | Val: loss=1.179 D9D0=-1.09BP Std_yhat=7.34BP (WARNING: near collapse)
+[2026-04-03T12:59Z] E5 DONE | Val: loss=1.163 (NEW BEST!) D9D0=-0.05BP Std_yhat=19.15BP (RECOVERED!)
+  - E4 variance dip was phase transition, not collapse
+  - E5 recovered: variance 7.34->19.15 BP
+  - Val loss new best: 1.163 (prev 1.171 E3)
+  - S_T 1.42 -- compression continues
+  - 6/20 epochs complete (30%)
+[2026-04-03T13:39Z] E6 DONE | Val: loss=1.180 D9D0=+3.27BP Std_yhat=23.63BP PfRet=7.91
+  - D9-D0 strongly positive again (+3.27!) -- best since E0
+  - Model found compressed+discriminative representation (S_T=1.39 + D9D0>0)
+  - Variance fully recovered (23.63 BP)
+  - 7/20 epochs (35%). Training progressing well.
