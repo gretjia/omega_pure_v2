@@ -1,5 +1,5 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-04-03 — **STATUS: Living Harness V3 部署完成 + Phase 12 代码就绪, 烟测训练 PASS, 推理断言量纲待修。**
+Last Updated: 2026-04-03T09:15Z — **STATUS: Phase 12 正式训练 RUNNING (Job 340079341608108032), 烟测 v6 全通过。**
 
 ## Current State
 - **Living Harness V3 已部署** (详见 [`LIVING_HARNESS.md`](../LIVING_HARNESS.md)):
@@ -15,13 +15,15 @@ Last Updated: 2026-04-03 — **STATUS: Living Harness V3 部署完成 + Phase 12
   - 新指标: best.pt 保存由 D9-D0 Spread 驱动 (替代 PfRet, INS-058)
   - torch.compile 已启用 (mode=reduce-overhead)
   - window_size_s=10 已修复 (C-057)
-- **Docker**: omega-tib:phase12-v4, canary PASSED
-- **GCP 烟测 v5 状态**: 训练功能验证 PASS，推理断言量纲 FAIL
-  - 训练: Loss 0.91→0.80 (正常下降 ✓), Std_yhat=8.78→12.40 BP (活着 ✓)
-  - D9-D0=-7.7 BP (warmup 期负值正常，2 epoch 太短无法判断)
-  - 推理输出 raw logit (pred ~-0.055)，断言脚本期望 BP 量级 → FAIL
-  - **修复**: 断言中 pred_std 需 ×10000 转 BP，与 validate() 一致
-- **正式训练 YAML 就绪**: `gcp/phase12_train_ondemand.yaml`, n1-standard-8 + T4 On-Demand, ~$13/17h
+- **Docker**: omega-tib:phase12-v5, canary PASSED
+- **烟测 v6 全 PASS** (pred_bp ×10000 修复 + spec-code 对齐):
+  - A1 sample_count=30000 ✓ | A2 pred_std=22.95 BP ✓ | A3 NaN/Inf=0 ✓
+  - A4 D9-D0 Spread=**+10.17 BP** (正信号!) ✓ | A5 Schema=OK ✓
+  - 训练: Loss 5.61→0.75, Std_yhat alive
+- **正式训练 RUNNING**: Job `340079341608108032`, n1-standard-8 + T4 On-Demand
+  - 配置: 20 epochs × 5000 steps, batch=256, lr=3.2e-4, lambda_s=1e-4
+  - E0 Step 3000/5000: Loss=1.337, Std_yhat=21.78 BP (healthy)
+  - Cron 监控已设 (每 10 分钟)
 
 ## Changes This Session (~38 commits)
 
@@ -66,17 +68,18 @@ Last Updated: 2026-04-03 — **STATUS: Living Harness V3 部署完成 + Phase 12
 - C-061: 每次烟测用唯一 output_dir，防 resume 跳过
 
 ## Next Steps
-1. **[P0] 修复烟测断言量纲**: `pred_std * 10000` 或改用 rank-based 断言
-2. **[P0] 重提交烟测 v6**: 断言修复后一次通过即可
-3. **[P0] 提交正式训练**: `gcp/phase12_train_ondemand.yaml` (20 epochs, 5000 steps)
-4. **[P1] E0 后 post-deploy 烟测**: 等 E0 完成后跑推理验证
-5. **[P2] Phase 12 HPO**: 启用 Vizier MedianStoppingRule + Transfer Learning
+1. ~~**[P0] 修复烟测断言量纲**~~ → DONE (pred_bp ×10000, commit d119944)
+2. ~~**[P0] 重提交烟测 v6**~~ → DONE (Job 8918205178725793792, ALL PASS)
+3. ~~**[P0] 提交正式训练**~~ → DONE (Job 340079341608108032, RUNNING)
+4. **[P0] 监控正式训练**: Cron 每 10 分钟检查 Loss/Std_yhat/D9-D0
+5. **[P1] E0 后 post-deploy 烟测**: 等 E0 完成后跑推理验证
+6. **[P2] Phase 12 HPO**: 启用 Vizier MedianStoppingRule + Transfer Learning
 
 ## Warnings
 - **spec 注释需更新**: `loss_function:` 伪代码仍写 `pred * 10000; tgt * 10000`，实际是 `pred * 10000` only
 - **linux1 不可达**: SSH Connection refused, 需检查节点状态
 - **phase11e_config.yaml 是旧的**: 不含新 CLI 参数，不可用于 Phase 12
-- **推理脚本 pred_bp 列是 raw logit**: 不是真正的 BP。排序不受影响，但绝对值需 ×10000
+- ~~**推理脚本 pred_bp 列是 raw logit**~~ → FIXED (phase7_inference.py 已加 ×10000)
 
 ## Remote Node Status
 - linux1: SSH Connection refused (本次会话无法连接)
@@ -96,7 +99,7 @@ Last Updated: 2026-04-03 — **STATUS: Living Harness V3 部署完成 + Phase 12
 ## Machine-Readable State
 ```yaml
 phase: "12_unbounded_spear"
-status: "living_harness_v3_deployed + smoke_test_training_pass_assertion_fail"
+status: "phase12_formal_training_running"
 harness:
   version: "v3_living"
   rules_active: 16
@@ -105,21 +108,23 @@ harness:
   skills: 9
   smoke_test: "26/26 passed"
   key_doc: "LIVING_HARNESS.md"
-docker: "omega-tib:phase12-v4"
-smoke_test_v5:
+docker: "omega-tib:phase12-v5"
+smoke_test_v6:
   training: PASS
-  loss_e0: 0.91
-  loss_e1: 0.80
-  std_yhat_e0: 8.78
-  std_yhat_e1: 12.40
-  d9d0_e0: -7.70
-  d9d0_e1: -9.31
   inference: PASS
-  assertion: FAIL (pred_std unit mismatch — raw logit vs BP)
-  fix_needed: "pred_std * 10000 in assertion script"
-full_train_yaml: "gcp/phase12_train_ondemand.yaml"
-full_train_cost: "$13 (On-Demand T4, ~17h)"
-full_train_output_dir: "phase12_unbounded_v1"
+  assertion: PASS (all 5/5)
+  pred_std_bp: 22.95
+  d9d0_bp: 10.17
+  samples: 30000
+formal_training:
+  job_id: "340079341608108032"
+  status: RUNNING
+  config: "gcp/phase12_train_ondemand.yaml"
+  epochs: 20
+  steps_per_epoch: 5000
+  cost_estimate: "$13 (On-Demand T4, ~17h)"
+  output_dir: "phase12_unbounded_v1"
+  cron_monitor: "every 10 min"
 commits_this_session: 8
 insights_this_session: [INS-057, INS-058, INS-059, INS-060, INS-061, INS-062, INS-063, INS-064]
 new_lessons: [C-057, C-058, C-059, C-060, C-061]

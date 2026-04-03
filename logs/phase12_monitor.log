@@ -7,3 +7,13 @@ Config: 20 epochs × 5000 steps, n1-standard-8 + T4, On-Demand
 Smoke v6 baseline: pred_std=22.95 BP, D9-D0=+10.17 BP (2 epochs)
 
 [2026-04-03T08:25Z] Status: JOB_STATE_PENDING (provisioning)
+[2026-04-03T09:13Z] Status: RUNNING | E0 Step 3000/5000 | Loss=1.337 Std_yhat=21.78BP PfRet=7.48
+  - Corrupt shards auto-handled: 0906, 1580, 1581, 0909, 1171 (ReadError, expected)
+  - torch.compile active, checkpoint saved at step 2500, 3000
+  - No NaN/Inf, no variance collapse
+[2026-04-03T09:38Z] E0 DONE (2371s/~40min) | Val: loss=1.204 D9D0=+4.48BP Std_yhat=26.61BP PfRet=7.70 (1.9M samples)
+  - Val < Train (1.204 < 1.285) → good generalization, no overfit
+  - D9-D0 positive at E0 → genuine discriminative signal
+  - Std_yhat=26.61 BP → variance fully alive
+  - New best.pt saved
+  - E1 started, Step 500: Loss=1.222
