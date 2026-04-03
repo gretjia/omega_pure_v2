@@ -250,10 +250,12 @@ def compute_spear_loss_unbounded(raw_logits, target, z_core,
     # 1. Leaky Blinding (INS-060): preserve 10% of negative returns
     target_leaky = torch.where(tgt > 0, tgt, tgt * leaky_factor)
 
-    # 2. Target already in BP from ETL (omega_etl_v3_topo_forge.py:176)
-    #    NO * 10000 projection needed — data is already basis points
-    pred_bp = pred  # model learns to output BP directly
-    tgt_leaky_bp = target_leaky
+    # 2. Dimensional alignment (C-059 fix + gradient analysis)
+    #    Target: already in BP from ETL (omega_etl_v3_topo_forge.py:176) — NO scaling
+    #    Pred: raw model logit (~0.07) — MUST project to BP space for gradient health
+    #    The ×10000 on pred and /scale_factor cancel in backprop: net grad ∝ BP error
+    pred_bp = pred * 10000.0  # project raw logit to BP space
+    tgt_leaky_bp = target_leaky  # already BP, no conversion
 
     # 3. Static Centering — target only (Path A, INS-063)
     target_centered_bp = tgt_leaky_bp - static_mean_bp

@@ -468,8 +468,8 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
     targets_cat = torch.cat(all_targets).view(-1)
 
     # Cross-sectional prediction std (INS-017: Std Expansion monitoring)
-    # Model outputs BP directly (targets are BP from ETL), no conversion needed
-    pred_std_bp = preds.std().item()
+    # Model outputs raw logit; project to BP for sentinel comparison
+    pred_std_bp = preds.std().item() * 10000.0
 
     # Variance Collapse Sentinel (INS-054, C-055: thresholds must be empirically calibrated)
     if pred_std_bp < sentinel_error and preds.numel() > 10:

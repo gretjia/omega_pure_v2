@@ -139,7 +139,9 @@
 
 - **C-058**: **双副本必然漂移——靠记忆同步违反 Ω4**。Phase 12 烟测 ImportError: `gcp/omega_epiplexity_plus_core.py` 缺新函数。根因：gcp/ 维护根目录文件副本，Dockerfile 从 gcp/ 构建，dev-cycle 只同步了 train.py 忘了核心模块。C-053 教训没防住因为它只说"重建 Docker"，没覆盖"构建源文件本身是旧的"。**结构性修复：`safe_build_and_canary.sh` Step 1b 自动解析 Dockerfile COPY 指令，diff 每个源文件与根目录，不一致则 ABORT。** 从此漂移被机器拦截，不靠人记忆（Ω4: 可执行>可记忆）。
 
-- **C-059**: **量纲必须从数据源头追溯，不可假设**。架构师指令假设 target 是 raw decimal（0.004=40BP），但 ETL `omega_etl_v3_topo_forge.py:176` 输出的 target 已经乘了 10000（即 40.0=40BP）。Loss 函数再乘 10000 → double-convert → loss=24.7（正常应 ~0.25）、D9-D0=16431BP（正常应 ~20BP）。教训：写 Loss/Metric 前必须 `grep` ETL 源码确认输出单位，spec 的 `unit: "basis_points"` 不是摆设（Ω1: 只信实测 — 读源码，不读注释）。
+- **C-061**: **每次烟测必须用唯一 output_dir，否则旧 checkpoint 触发 resume 跳过训练**。Phase 12 烟测 v3b 复用 `phase12_smoke_v1` 目录，train.py 自动从旧 checkpoint resume 到 E2 直接完成，新 Loss 代码根本没执行。这是 C-044 的变种（换 Loss/超参后必须用新 output_dir），泛化为：任何需要验证新代码的运行，output_dir 必须唯一。格式建议 `phase12_smoke_v{N}`（Ω1: 只信实测 — "训练完成"不等于"新代码被执行"）。
+- **C-060**: **部署命令必须从目标环境反推，不可从本地路径假设**。烟测 YAML 写 `/app/tools/phase7_inference.py`，但 Dockerfile COPY 到 `/app/`。又写 `--shard_dir` 但漏了 `--date_map`（必需参数）。两次提交两次白跑。写远程命令前必须：(1) 读 Dockerfile 确认文件路径 (2) 读目标脚本 `argparse` 确认必需参数 (3) 不假设本地目录结构=容器目录结构（Ω1: 只信实测，Ω3: 测试环境=生产环境）。
+- **C-059**: **量纲必须从数据源头追溯，不可假设；修复时必须逐变量分析，不可一刀切**。ETL 输出 target 已是 BP，架构师指令假设 raw decimal 导致 target double-convert（C-059a）。修复时一刀切去掉 pred 和 target 的 ×10000，但 model output 是 raw logit（~0.07）vs target ~20 BP → 梯度冻死（5e-9/step），模型无法学习（C-059b）。正确组合：`pred×10000`（投影到 BP）+ target 不动（已是 BP）+ `/scale_factor` 抵消链式法则。教训：量纲修复必须对每个变量独立追溯源头，不可 batch 修（Ω1: 只信实测 — 读 ETL 源码 + 读 model output 量级）。
 
 ### AI 治理
 - **C-021**: AI 自己写烟测测自己 → 自洽性掩盖正确性。审计独立于作者（Ω5）
