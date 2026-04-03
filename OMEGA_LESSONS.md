@@ -137,6 +137,8 @@
 - **C-055**: **阈值也要实测标定，不能拍脑袋**。Phase 11d 方差哨兵的 10/30 BP 红线来源：架构师直觉（基于 216x 幻觉时代）+ 5 shard 粗估的 1.6x 乘数。这只是早期预警粗估，不可作为最终判据。正确做法：训练完成后用全量 val 烟测，实测 pred_std 与 D9-D0 spread 的映射关系，用数据定阈值（Ω1: 只信实测，Ω2: 先量化后行动）。
 - **C-057**: **代码默认值必须与 spec 同步，OOM 补丁不可静默残留**。`train.py` 和 `gcp/train.py` 的 `--window_size_s` 默认值为 4（早期防 OOM 临时改的），而 spec `fixed_params.window_size_s=10`（完整 LOB 10 档深度）。Phase 11 全部训练只看了 4 档浅水区，Topology Attention 丧失 60% 深水区机构挂单信息，z_core 无特征可编码。临时 OOM 补丁必须在 issue 解决后立即回退，否则就是静默降级（Ω1: 只信实测 — 代码 default 才是实测值，不是 spec 文档）。
 
+- **C-058**: **gcp/ 目录下所有 Dockerfile COPY 的源文件必须全量同步，不能只 cp train.py**。Phase 12 烟测 ImportError: `compute_spear_loss_unbounded` 不存在于 Docker 内的 `omega_epiplexity_plus_core.py`。原因：只同步了 `gcp/train.py` 忘了 `gcp/omega_epiplexity_plus_core.py`。修复后必须 `diff` 验证 Dockerfile COPY 的每一个文件都与根目录一致（Ω3: 测试环境=生产环境，C-053: Docker 构建时间点 vs 代码修复时间点）。
+
 ### AI 治理
 - **C-021**: AI 自己写烟测测自己 → 自洽性掩盖正确性。审计独立于作者（Ω5）
 - **C-022**: 接收架构师指令即执行 → 188GB 数据丢失。指令 ≠ 授权

@@ -227,6 +227,47 @@ def compute_spear_loss_moment_matched(raw_logits, target, z_core, lambda_s=1e-4,
     s_t = torch.norm(z_core_safe, p=1, dim=-1).mean()
     
     total_loss = loss_err + loss_var + lambda_s * s_t
-    
+
+    return total_loss, loss_err, s_t, pred
+
+
+def compute_spear_loss_unbounded(raw_logits, target, z_core,
+                                 lambda_s=1e-4, static_mean_bp=40.0,
+                                 outlier_clamp_bp=500.0, mse_scale_factor=10000.0,
+                                 leaky_factor=0.1):
+    """Phase 12: The Unbounded Spear (审计通过版, INS-060/062/063/064)
+
+    Scaled MSE with Static Centering — releases unbounded gradient for fat tails
+    while protecting against microstructure noise and dimensional overflow.
+
+    Key design: Only target is centered (Path A, INS-063). Prediction stays
+    uncentered, forcing the model's bias toward 0 and preventing Beta smuggling.
+    """
+    pred = raw_logits.float().view(-1)
+    tgt = target.float().view(-1)
+    z_core = z_core.float()
+
+    # 1. Leaky Blinding (INS-060): preserve 10% of negative returns
+    target_leaky = torch.where(tgt > 0, tgt, tgt * leaky_factor)
+
+    # 2. BP space projection (INS-062)
+    pred_bp = pred * 10000.0
+    tgt_leaky_bp = target_leaky * 10000.0
+
+    # 3. Static Centering — target only (Path A, INS-063)
+    target_centered_bp = tgt_leaky_bp - static_mean_bp
+
+    # 4. Physical Outlier Clipping (INS-062)
+    target_centered_bp = torch.clamp(target_centered_bp, min=-outlier_clamp_bp, max=outlier_clamp_bp)
+
+    # 5. Scaled Unbounded MSE (INS-060/062)
+    loss_err = F.mse_loss(pred_bp, target_centered_bp) / max(mse_scale_factor, 1.0)
+
+    # 6. MDL Compression — z_core L1 sparsity
+    z_core_safe = torch.clamp(z_core, min=-20.0, max=20.0)
+    s_t = torch.norm(z_core_safe, p=1, dim=-1).mean()
+
+    total_loss = loss_err + lambda_s * s_t
+
     return total_loss, loss_err, s_t, pred
 
