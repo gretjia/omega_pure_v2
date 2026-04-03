@@ -641,6 +641,14 @@ def main():
         mask_prob=args.mask_prob,
     ).to(device)
 
+    # torch.compile: 10-50% speedup for tiny models by reducing Python overhead
+    if device.type == "cuda" and hasattr(torch, "compile"):
+        try:
+            model = torch.compile(model, mode="reduce-overhead")
+            logger.info("torch.compile enabled (mode=reduce-overhead)")
+        except Exception as e:
+            logger.warning(f"torch.compile failed, continuing without: {e}")
+
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Model: OmegaTIBWithMasking, {n_params:,} parameters")
     logger.info(f"Config: hidden_dim={args.hidden_dim}, "
