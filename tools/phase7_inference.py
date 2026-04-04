@@ -107,18 +107,19 @@ class OmegaTIBInference(torch.nn.Module):
         lob[..., 3] = torch.log1p(ask_v.clamp(min=0.0))
         lob_features = lob.to(x_2d.dtype)
 
+        q_metaorder = torch.clamp(q_metaorder, min=-1e12, max=1e12)
         q_metaorder = torch.sign(q_metaorder) * torch.log1p(torch.abs(q_metaorder))
         native_manifold = torch.cat([lob_features, q_metaorder], dim=-1)
 
         x = self.model.input_proj(native_manifold)
         x = self.post_proj_norm(x)
-        structured_features = self.model.tda_layer(x)
+        structured_features = self.model.tda_with_residual(x)
         z_core = self.model.epiplexity_bottleneck(structured_features)
 
         # Store z_core for sparsity analysis (M3)
         self._z_core = z_core.detach()
 
-        pooled_z = torch.mean(z_core, dim=[1, 2])
+        pooled_z = self.model.attention_pool(z_core)
         prediction = self.model.intent_decoder(pooled_z)
         return prediction
 
@@ -202,6 +203,12 @@ def main():
             continue
         state[k] = v
     model.load_state_dict(state, strict=False)
+    # Phase 13: verify new architecture keys (Codex audit FAIL #10)
+    required_phase13 = ['model.attention_pool.W_pool', 'model.tda_pre_ln.weight']
+    missing_p13 = [k for k in required_phase13 if k not in state]
+    if missing_p13:
+        log.error(f"Checkpoint missing Phase 13 keys: {missing_p13}. Use Phase 13+ checkpoint.")
+        sys.exit(1)
     model.eval()
     log.info(f"Model loaded: hd={args.hidden_dim}, wt={args.window_size_t}")
 

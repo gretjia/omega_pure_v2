@@ -1,9 +1,9 @@
 # OMEGA PURE 架构规范 — 由架构师联络官维护
 # 最后更新：2026-04-04
-# 更新来源：INS-065~069 (Phase 13 Audit Verdict — IC Loss + Cross-Sectional + Topological Unblocking)
+# 更新来源：INS-065~070 (Phase 13 Audit Verdict V2 — IC Loss + Cross-Sectional + Topological Unblocking + Window Isolation)
 # [FINAL — Codex 9/9 RESOLVED + Gemini 7/7 addressed, 2026-04-04]
 # 源文档：Google Docs id.1~id.6 (archived at architect/gdocs/)
-# 审计裁决：architect/directives/2026-04-04_phase13_audit_verdict_and_roadmap.md
+# 审计裁决：architect/directives/2026-04-04_phase13_audit_verdict_and_roadmap_v2.md (V2 supersedes V1)
 
 version: v3
 
@@ -231,7 +231,11 @@ model_architecture:
     # 原生2D窗口注意力, 绝对禁止1D Flatten, O(1)寻址
     # [DRAFT] Phase 13: 加标准残差连接 out = x + tda(LayerNorm(x))  (INS-068)
     #   Pre-LN 格式 (Gemini 强制: 防残差流方差爆炸)
+    #   注: V2 directive 建议 Post-LN, 但 Gemini 审计选择 Pre-LN — 保持 Pre-LN
     #   RPB: 先 debug 梯度极弱问题 (grad_norm=0.08)，如无法修复则替换为 sinusoidal
+    # [DRAFT] Phase 13: 跨窗注意力打破 0.64 天感受野限制 (INS-070)
+    #   当前 5×32-bar 隔离窗口 → Swin-style shifted window 或 cross-window attention
+    #   验证: 64-sample Crucible Overfit Test, loss→0.0
   layer_3_compression: EpiplexityBottleneck
     # 信息瓶颈 (dim → dim/2 → dim/4)
     # [DRAFT] Phase 13: L1 MDL 移除 (INS-069)，瓶颈仅做隐式压缩

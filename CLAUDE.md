@@ -59,8 +59,15 @@
 14. **远程推送** → 必须人工确认
 15. **修改 architect/current_spec.yaml** → 必须人工确认
 
+### 外部审计强制规则（Ω5 扩展）
+15b. **Plan/Spec 变更必须经外部审计** — Claude 是起草者，不可自审。架构师 directive 摄取后，Plan 和 Spec 变更必须经 Codex (`codex exec`) + Gemini (curl API) 双路审计。Claude 不可代替外部审计员做 PASS/FAIL 判定。不可限制外审员的输出 token 数。
+15c. **代码完成后、最终审计前执行两项预审** — `/dev-cycle` Stage 4 (CODE) 完成后，Stage 5 (AUDIT CODE) 之前，强制执行：
+  - (a) **Gemini GCP 适用性审查**: Vertex AI 调用方式（pipe/FUSE/staging）、Python 效率（低效循环、torch.compile 等优化）、Google 内置算法/API 是否有更好方案、GCS I/O 模式匹配。Gemini 作为 Google 内部专家有独到优势。
+  - (b) **`/simplify` 代码质量扫描**: 检查复用、质量、效率问题，修复后再送审。
+  - 两项均在最终外部审计前完成，确保审计看到的是最终代码。不可放在部署前——那时发现问题改代码来不及审计。
+
 ### 强制工作流（由 Hook + 脚本强制执行）
-16. **新代码/新 Phase** → 走 `/dev-cycle`（含 Pre-mortem + 外部审计）
+16. **新代码/新 Phase** → 走 `/dev-cycle`（含 Pre-mortem + 外部审计，**Plan 阶段即启动外审**）
 17. **Docker 构建 + 部署** → 走 `gcp/safe_build_and_canary.sh` + `gcp/safe_submit.sh`
 18. **上传到 GCS** → 走 `gcp/safe_upload.sh`（旧 upload_shards.sh 已废弃）
 19. **部署到远程节点** → 先 `/pre-flight`，重计算走 `heavy-workload.slice`

@@ -34,10 +34,11 @@ Vertex AI 实测：RPB grad_norm=0.08 vs decoder grad_norm=4811（弱 60,000x）
 ## 被拒绝的替代方案
 - **方案 D (暂不改)**: Phase 6 同架构 IC=0.066 → 部分合理，但 pooling 在 MSE 下完全失效，且 IC Loss 下也是信息损失。不改是可接受的保守选项，但长期受限
 
-## 验证协议
-1. 验证命令: 加残差后 overfit test，检查 loss 是否更快归零
-2. 预期结果: overfit loss < 0.01 within 2000 steps (当前 0.073)
+## 验证协议 (V2 更新: 64-sample Crucible Overfit Test)
+1. 验证命令: 64-sample Crucible Overfit Test — 加残差+池化替换后 overfit 64 个样本
+2. 预期结果: **Loss 达到绝对 0.0**，证明 RPB 梯度复活、物理信息瓶颈已清除
 3. 失败回退: 逐项回退（先只加残差，再加池化替换）
+4. 注意: V2 directive 指定 Post-LN `x = LayerNorm(x + tda(x))`，但 Codex+Gemini 审计选择了 Pre-LN `x + tda(LayerNorm(x))`。**保持 spec [FINAL] Pre-LN 选择**，因为 Gemini 证明 Pre-LN 防止残差流方差爆炸
 
 ## 参数标定来源
 - 📐 **理论推导**: Swin Transformer 标准做法（残差 + shifted window）

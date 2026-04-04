@@ -97,9 +97,9 @@ class OmegaTIBInference(torch.nn.Module):
 
         x = self.model.input_proj(native_manifold)
         x = self.post_proj_norm(x)
-        structured_features = self.model.tda_layer(x)
+        structured_features = self.model.tda_with_residual(x)
         z_core = self.model.epiplexity_bottleneck(structured_features)
-        pooled_z = torch.mean(z_core, dim=[1, 2])
+        pooled_z = self.model.attention_pool(z_core)
         prediction = self.model.intent_decoder(pooled_z)
         return prediction
 
@@ -145,6 +145,12 @@ def main():
     if result.unexpected_keys or len(result.missing_keys) > 0:
         logger.warning(f"State dict: loaded {n_loaded} keys, "
                        f"missing={result.missing_keys}, unexpected={result.unexpected_keys}")
+    # Phase 13: verify new architecture keys (Codex audit FAIL #10)
+    required_phase13 = ['model.attention_pool.W_pool', 'model.tda_pre_ln.weight']
+    missing_p13 = [k for k in required_phase13 if k not in state]
+    if missing_p13:
+        logger.error(f"Checkpoint missing Phase 13 keys: {missing_p13}. Use Phase 13+ checkpoint.")
+        sys.exit(1)
     else:
         logger.info(f"State dict: loaded {n_loaded} keys, all matched")
     model.eval()

@@ -1,9 +1,10 @@
-# AUDIT VERDICT: PHASE 12 POST-FLIGHT & PHASE 13 ARCHITECTURAL ROADMAP
+# AUDIT VERDICT: PHASE 12 POST-FLIGHT & PHASE 13 ARCHITECTURAL ROADMAP (V1 — SUPERSEDED)
 
 **Date**: 2026-04-04
 **Source**: External Audit AI Agent (post Phase 12 post-flight)
 **Source ID**: PHASE12_AUDIT_PROMPT.md → External Audit Agent response
 **Axiom Impact**: UPDATE REQUIRED — Loss function, evaluation metric, model topology, regularization
+**SUPERSEDED BY**: 2026-04-04_phase13_audit_verdict_and_roadmap_v2.md (V2: POST-MORTEM, adds Volatility Illusion diagnosis + Window Isolation mandate)
 
 ---
 

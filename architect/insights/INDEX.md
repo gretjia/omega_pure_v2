@@ -79,6 +79,7 @@
 | INS-067 | Cross-Sectional Evaluation — D9-D0 必须按日期截面排序 | 度量 | 2026-04-04 | L2 更新 | **Phase 13 P0** |
 | INS-068 | Topological Unblocking — 残差连接 + RPB 修复 + 池化替换 | 架构 | 2026-04-04 | L2 更新 | **Phase 13 P1** |
 | INS-069 | Remove MDL Guillotine — L1 在 2.4% SNR 下杀信号 | 训练 | 2026-04-04 | L2 更新 | **Phase 13 P0** |
+| INS-070 | Shatter Window Isolation — 跨窗注意力打破 0.64 天感受野 | 架构 | 2026-04-04 | L2 更新 | **Phase 13 P1** |
 
 ---
 
@@ -155,3 +156,4 @@
 | INS-067 | phase13_audit_verdict_and_roadmap | — |
 | INS-068 | phase13_audit_verdict_and_roadmap | — |
 | INS-069 | phase13_audit_verdict_and_roadmap | — |
+| INS-070 | phase13_audit_verdict_and_roadmap_v2 | — |

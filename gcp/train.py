@@ -235,10 +235,10 @@ class OmegaTIBWithMasking(nn.Module):
         # === MASKING INSERTION POINT (spec: after input_proj, before tda) ===
         x = self.masking(x)
 
-        # Step 3-5: Topology → Bottleneck → Prediction
-        structured_features = self.model.tda_layer(x)
+        # Step 3-5: Topology (Pre-LN residual) → Bottleneck → Attention Pooling (Phase 13 B.1/B.2)
+        structured_features = self.model.tda_with_residual(x)
         z_core = self.model.epiplexity_bottleneck(structured_features)
-        pooled_z = torch.mean(z_core, dim=[1, 2])
+        pooled_z = self.model.attention_pool(z_core)
         prediction = self.model.intent_decoder(pooled_z)
 
         return prediction, z_core
