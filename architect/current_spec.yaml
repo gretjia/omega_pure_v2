@@ -1,7 +1,9 @@
 # OMEGA PURE 架构规范 — 由架构师联络官维护
-# 最后更新：2026-04-03
-# 更新来源：INS-057~062 (Phase 12 Unshackling Protocol — Unbounded Spear + D9-D0 Spread + ws=10 修复)
+# 最后更新：2026-04-04
+# 更新来源：INS-065~069 (Phase 13 Audit Verdict — IC Loss + Cross-Sectional + Topological Unblocking)
+# [FINAL — Codex 9/9 RESOLVED + Gemini 7/7 addressed, 2026-04-04]
 # 源文档：Google Docs id.1~id.6 (archived at architect/gdocs/)
+# 审计裁决：architect/directives/2026-04-04_phase13_audit_verdict_and_roadmap.md
 
 version: v3
 
@@ -77,91 +79,105 @@ target:
   # 绝对封杀 Look-ahead Bias
 
 # ============================================================
-# 训练参数 (id5: Omega-TIB paradigm)
+# 训练参数 — Phase 13 (INS-065~069, supersedes Phase 12 INS-057~064)
+# [FINAL — Codex+Gemini audited 2026-04-04]
 # ============================================================
 training:
-  target_model: Omega-TIB   # Topological Information Bottleneck (正名自 SpatioTemporal2DMAE)
-  loss: "Unbounded Spear (Scaled MSE) + MDL (INS-057~062, supersedes INS-049/050/051/054/055)"
+  target_model: Omega-TIB   # Topological Information Bottleneck
+  loss: "Per-Date IC Loss (Pearson) — rank-based objective (INS-066, supersedes INS-060/062/063/064)"
   loss_function: |
-    target_leaky = where(target > 0, target, target * 0.1)  # Leaky Blinding (INS-060, supersedes INS-042 hard clamp)
-    pred_bp = pred * 10000; tgt_bp = target_leaky * 10000   # BP 空间投影 (INS-062)
-    tgt_centered = clamp(tgt_bp - 40.0, -500, 500)          # Static Centering + Outlier Clamp (INS-060/062)
-    loss_err = mse(pred_bp, tgt_centered) / 10000            # Scaled Unbounded MSE (INS-060)
-    total = loss_err + lambda_s * ||z_core||_1               # MDL Compression
-  # Phase 12 Unshackling Protocol: 打破捷径学习 + 方差坍缩 + 评价失效三重枷锁
-  # 1. Leaky Blinding: 负收益保留 10% 信号，不再硬截零 (INS-060 supersedes INS-042)
-  # 2. Unbounded MSE: 废弃 Huber 有界梯度，释放肥尾无上限奖赏 (INS-060 supersedes INS-055)
-  # 3. Static Centering: 仅居中 Target，pred 不居中 — 模型输出 Excess BP (INS-063)
-  #    路径 B（双居中）在反向传播中 -40 抵消，静态置零防线形同虚设，Bias 走私复活
-  #    推理端无需加回 40 — 评估指标 Rank IC / D9-D0 Spread 对常数平移免疫
-  # 4. Outlier Clamp ±500 BP: 防微观结构噪声毛刺炸毁权重 (INS-062)
-  # 5. SCALE_FACTOR=10000: MSE 量级压回 0.1~1.0，与 λ_s 公平博弈 (INS-062)
-  # 6. static_mean_bp 是 Config 注入的全局先验，严禁 Batch 内动态 mean() (INS-064, INS-049)
-  # 诊断链: SRL 捷径 (INS-057) + PfRet 失效 (INS-058) + IC Loss 翻案 (INS-059)
-  # [AUDIT OVERRIDDEN] Codex FAIL + Gemini CONDITIONAL PASS → 架构师 4 点裁决 (INS-063/064)
-  # huber_delta: DELETED — Unbounded MSE 取代 (INS-060 supersedes INS-055)
-  # temperature: DELETED — 无 Softmax (INS-051)
-  # variance_lock: DELETED — 无 Z-score (INS-051)
-  lambda_s: 1e-4             # Phase 12 安全水位，待 HPO 标定 (INS-063 override INS-060)
-  static_mean_bp: 40.0       # 全局先验锚点，由 IS 训练集一次性统计注入，严禁 Batch 内动态计算 (INS-064)
-  outlier_clamp_bp: 500      # A 股天地板物理极限 (INS-062)
-  mse_scale_factor: 10000    # 100 BP² 对齐 λ_s 博弈天平 (INS-062)
-  leaky_factor: 0.1          # 负收益衰减因子 (INS-060)
-  loss_precision: "fp32"     # compute_spear_loss 强制 FP32 安全舱 (Phase 11a NaN 教训)
-  lambda_s_warmup: 2         # Phase 3 值; Phase 6 搜索 [2, 3, 5]
+    # Per-date IC within each batch (Codex audit: global batch IC is UNFAITHFUL to directive)
+    # Group samples by date within batch, compute Pearson IC per date, average across dates
+    for date in unique_dates_in_batch:
+        mask = (batch_dates == date)
+        pred_d, target_d = pred[mask], target[mask]
+        if len(pred_d) < 2: continue
+        ic_d = pearson_corr(pred_d, target_d)  # requires std+eps guard (Gemini)
+        ic_losses.append(-ic_d)
+    loss = mean(ic_losses)
+  # Phase 13 Architectural Reset (External Audit Verdict 2026-04-04):
+  # 1. DROP Leaky Blinding: 100x 梯度压缩导致波动率预测 (INS-065, Gemini 证明)
+  # 2. DROP MSE: 高方差(190BP)低SNR(2.4%)下退化为条件均值预测 (INS-066)
+  # 3. DROP Static Centering: IC Loss 平移不变，无需居中 (Gemini PASS)
+  # 4. DROP L1 MDL: 2.4% SNR 下杀信号 (INS-069, Phase 12 E0>E19 实证)
+  # 5. REVERT IC Loss: Phase 6 IC=0.066 历史最高 (INS-059 翻案, 但基准待重验 C-062)
+  # 诊断链: 波动率预测(Gemini) + 条件均值退化(Codex) + 全局排序伪信号(Codex)
+  # SUPERSEDED: INS-060(leaky) INS-062(MSE scale) INS-063(path A) INS-064(static mean)
+  # leaky_factor: DELETED — 100x 梯度压缩致波动率预测 (INS-065)
+  # static_mean_bp: DELETED — IC Loss 平移不变 (INS-066)
+  # outlier_clamp_bp: DELETED from training — 移至 ETL 数据质量层 (Codex audit)
+  # mse_scale_factor: DELETED — MSE 已废弃 (INS-066)
+  # lambda_s: DELETED — L1 在 2.4% SNR 下杀信号 (INS-069)
+  # lambda_s_warmup: DELETED — L1 已废弃 (Codex audit: meaningless without L1)
+  loss_precision: "fp32"     # IC Loss 必须 FP32 (Gemini: FP16 下 std 精度不足)
+  ic_epsilon: 1e-8           # [FINAL — Codex+Gemini audited 2026-04-04] std(pred) 防零除 (Gemini 强制要求)
+  min_samples_per_date: 2    # [FINAL — Codex+Gemini audited 2026-04-04] IC 需至少 2 个样本
   masking:
-    strategy: block_input    # 输入端 Block-wise Masking (非 MAE 输出重构)
-    min_bars: 10             # 最小遮蔽长度
-    max_bars: 30             # 最大遮蔽长度
-    probability: 0.5         # 训练时 50% 概率触发
-    keep_last: 5             # 保留最后 5 根 Bar 不遮蔽 (触警现状)
-    train_only: true         # 只在 model.train() 模式生效
+    strategy: block_input    # 输入端 Block-wise Masking
+    min_bars: 10
+    max_bars: 30
+    probability: 0.5
+    keep_last: 5
+    train_only: true
   # 串联位置: input_proj 之后、tda_layer 之前
-  # 目的: 斩断局部线性插值退路，逼迫跨期因果推理
+
+# ============================================================
+# 推理参数 — Phase 13 新增 (INS-066 + Codex audit)
+# [FINAL — Codex+Gemini audited 2026-04-04]
+# ============================================================
+inference:
+  scaling: "daily_cross_sectional_zscore"  # 每日截面 Z-Score 标准化 (解决 IC Loss 尺度问题)
+  # pred_scaled = (pred - mean(pred_today)) / (std(pred_today) + eps)
+  # 输出标准化后的相对排名分数，供执行层使用
+  zscore_epsilon: 1e-8
+  min_stocks_per_date: 50    # [FINAL — Codex+Gemini audited 2026-04-04] 少于此数的日期不出信号 (Gemini 建议)
 
 # ============================================================
 # HPO (Hyperparameter Optimization) 搜索空间
 # ============================================================
+# ============================================================
+# HPO — Phase 13 (INS-066/067, supersedes Phase 12 HPO)
+# [FINAL — Codex+Gemini audited 2026-04-04]
+# ============================================================
 hpo:
   engine: google_vizier              # Bayesian optimization
-  infrastructure: "A100 Spot (a2-highgpu-1g), 70 trials exploit, 8 parallel (INS-018 Phase 6)"
-  metric: "D9-D0 Spread (Vizier MAXIMIZE, 头部10%减尾部10%收益差, INS-058 废弃 PfRet)"
-  # Phase 12: Unbounded Spear (INS-060) + Leaky Blinding + D9-D0 Spread
+  infrastructure: "A100 Spot (a2-highgpu-1g), 70 trials exploit, 8 parallel"
+  primary_metric: "Cross-Sectional Rank IC (Vizier MAXIMIZE, per-date Spearman average, INS-067)"
+  secondary_metric: "Cross-Sectional D9-D0 Spread (per-date, min 50 samples/date, then equal-weight average)"
+  # Phase 13: IC Loss + Cross-Sectional Evaluation
+  # WARNING (Codex): old global-spread thresholds NOT comparable to cross-sectional metrics
+  # lambda_s: DELETED from search — fixed at 0 (INS-069)
+  # warmup_epochs: DELETED — no L1 warmup needed (Codex audit)
   search_space:
-    learning_rate:                   # Huber Loss 梯度量级待实测
+    learning_rate:
       type: loguniform
       range: [1e-4, 1e-3]
-    lambda_s:                        # Phase 11d: 降低 10-100x 解除方差坍缩 (INS-055)
-      type: loguniform
-      range: [1e-5, 1e-3]
-    warmup_epochs:                   # Gemini audit: [2,3,5] 配合 epochs=15
-      type: choice
-      values: [2, 3, 5]
-    hidden_dim:                      # 死锁 64 为首选，保留 128 做对照 (INS-033)
+    hidden_dim:
       type: choice
       values: [64, 128]
-    window_size_t:                   # 保持 RECON 范围
+    window_size_t:
       type: choice
       values: [8, 16, 32]
-    # temperature: DELETED — Phase 11c 废除 Softmax (INS-051 supersedes INS-047)
-    # l2_weight: DELETED — 被方差之枷替代 (INS-040)
     # LOCKED (not searched):
-    # coarse_graining_factor: 1 (INS-016: Volume-Clock 不可二次粗粒化)
+    # coarse_graining_factor: 1 (INS-016)
     # macro_window: 160 (Phase 3 validated)
     # window_size_s: 10 (full LOB depth)
     # mask_prob: 0.0 (Phase 3 baseline)
-    # payoff_horizon: 20 (INS-010: 禁止算法选择目标)
-    # batch_size: 物理参数，不可搜索
+    # payoff_horizon: 20 (INS-010)
+    # batch_size: 物理参数
+    # lambda_s: 0 (INS-069, fixed, not searched)
   fixed_params:
     coarse_graining_factor: 1
     macro_window: 160
     window_size_s: 10
     mask_prob: 0.0
-    batch_size: 256                  # 固定: Phase 11c Pointwise 下 batch_size 不再影响截面竞争
-    epochs: 15                       # post-MDL 稳定时间 (Vanguard V2 peak at epoch 14)
+    lambda_s: 0                      # L1 disabled (INS-069)
+    batch_size: 256
+    epochs: 15
     steps_per_epoch: 5000
     grad_clip: 1.0
-  success_criterion: "Top-3 trials Phase 5a Spread > 8 BP (扣 25 BP A股成本后正期望)"
+  success_criterion: "Top-3 trials Cross-Sectional Rank IC > 0.03 (Phase 6 provisional IC=0.066 的一半)"
+  # NOTE: Phase 6 IC=0.066 基准待重验 (C-062 torch.compile bug, Codex: provisional not calibration anchor)
 
 # ============================================================
 # 回测约束 (The Crucible)
@@ -201,6 +217,10 @@ backtest:
 # ============================================================
 # 模型架构层级 (Omega-TIB)
 # ============================================================
+# ============================================================
+# 模型架构 — Phase 13 (INS-068, supersedes Phase 12 topology)
+# [FINAL — Codex+Gemini audited 2026-04-04]
+# ============================================================
 model_architecture:
   name: Omega-TIB
   layer_1_physics: AxiomaticSRLInverter
@@ -209,7 +229,15 @@ model_architecture:
     # Q_hidden = sign(ΔP) × (|ΔP| / (c_i × σ_D))^2 × V_D
   layer_2_topology: FiniteWindowTopologicalAttention
     # 原生2D窗口注意力, 绝对禁止1D Flatten, O(1)寻址
+    # [DRAFT] Phase 13: 加标准残差连接 out = x + tda(LayerNorm(x))  (INS-068)
+    #   Pre-LN 格式 (Gemini 强制: 防残差流方差爆炸)
+    #   RPB: 先 debug 梯度极弱问题 (grad_norm=0.08)，如无法修复则替换为 sinusoidal
   layer_3_compression: EpiplexityBottleneck
-    # 信息瓶颈 (dim → dim/2 → dim/4) + L1 MDL裁决
-  layer_4_prediction: IntentDecoder
-    # 全局池化 → 标量意图预测
+    # 信息瓶颈 (dim → dim/2 → dim/4)
+    # [DRAFT] Phase 13: L1 MDL 移除 (INS-069)，瓶颈仅做隐式压缩
+  layer_4_pooling: AttentionPooling
+    # [DRAFT] Phase 13: 替换 Global Mean Pooling (INS-068)
+    # pool = sum(softmax(W_pool @ z_core_flat) * z_core_flat, dim=tokens)
+    # ~16 新参数 (Gemini 推荐, Flatten+Linear FAIL: +25.6K 过拟合)
+  layer_5_prediction: IntentDecoder
+    # AttentionPooling 输出 → 标量意图预测

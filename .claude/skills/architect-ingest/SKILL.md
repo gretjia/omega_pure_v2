@@ -93,6 +93,32 @@ Layer 1 物理公理由人类锁定，AI 不可修改。
 > Draft 状态 = "这是架构师的意图, 但未被验证"。
 > Final 状态 = "经过 Codex + Gemini 审计确认"。
 
+### 3b. 外部 Spec 审计（DRAFT → FINAL 的必经门禁）
+
+**强制规则（C-065 教训）: 外部审计师必须读架构师原文，不可只读 Claude 摘要。**
+
+Spec 从 DRAFT 升级到 FINAL 必须经过以下外部审计流程:
+
+1. **审计师必读清单**（缺一不可）:
+   - 架构师原始 directive 全文: `architect/directives/<filename>.md`
+   - 当前 spec 全文: `architect/current_spec.yaml`
+   - 对应 INS 卡片: `architect/insights/INS-xxx.md`
+   - Phase 12 post-flight 数据（如有）: `handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md`
+
+2. **审计 prompt 必须包含**:
+   - 架构师原文（完整粘贴或文件路径）
+   - proposed spec diff（DRAFT 标记的字段）
+   - 审计问题清单（至少覆盖: 量纲一致性 / 梯度健康 / 前提假设验证 / 与历史 Phase 的兼容性）
+
+3. **审计通过标准**:
+   - Codex: 所有 spec 字段与 directive 原文一致，无遗漏无曲解
+   - Gemini: 数学量纲正确，梯度分析健康，前提假设合理
+   - 两路都 PASS → 移除 `[DRAFT]` 标记，升级 chain_of_custody 为 `spec_final`
+
+4. **审计失败处理**:
+   - 任一路 FAIL → spec 保持 DRAFT，记录失败原因
+   - 向架构师汇报审计发现，等待修正指令
+
 **AXIOM VIOLATION**:
 ```
 === AXIOM IMPACT: ⛔ VIOLATION ===

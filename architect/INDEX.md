@@ -34,3 +34,4 @@
 | 2026-04-01 | Phase 11d I/O 审计 + 多 GPU 裁决 | [directives/2026-04-01_phase11d_io_audit_and_gpu_ruling.md](directives/2026-04-01_phase11d_io_audit_and_gpu_ruling.md) | NONE — 操作审计 |
 | 2026-04-02 | Phase 12 复苏协议 (The Unshackling Protocol) | [directives/2026-04-02_phase12_unshackling_protocol.md](directives/2026-04-02_phase12_unshackling_protocol.md) | AXIOM UPDATE REQUIRED — spec 已更新 |
 | 2026-04-02 | 审计覆盖裁决 — Excess Alpha + λ_s 回退 | [directives/2026-04-02_audit_override_excess_alpha.md](directives/2026-04-02_audit_override_excess_alpha.md) | AXIOM UPDATE REQUIRED — [AUDIT OVERRIDDEN] spec 已更新 |
+| 2026-04-04 | Phase 13 审计裁决 + 架构路线图 | [directives/2026-04-04_phase13_audit_verdict_and_roadmap.md](directives/2026-04-04_phase13_audit_verdict_and_roadmap.md) | AXIOM UPDATE REQUIRED — Loss/Pooling/Residual/Evaluation 全面重构 |

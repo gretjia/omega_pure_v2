@@ -74,6 +74,11 @@
 | INS-062 | MSE 量纲碾压与噪声过拟合防线 | 训练 | 2026-04-02 | NONE | active |
 | INS-063 | Excess BP 输出语义 — 仅居中 Target，封杀路径 B | 训练 | 2026-04-02 | NONE | active |
 | INS-064 | Static Mean 全局先验注入 — 严禁 Batch 内动态计算 | 训练 | 2026-04-02 | NONE | active |
+| INS-065 | Drop Leaky Blinding — 负收益梯度 100x 压缩导致波动率预测 | 训练 | 2026-04-04 | L2 ���新 | **Phase 13 P0** |
+| INS-066 | Revert to IC Loss — MSE 在高方差低 SNR 下退化为条件均值预测 | 训练 | 2026-04-04 | L2 更新 | **Phase 13 P0** |
+| INS-067 | Cross-Sectional Evaluation — D9-D0 必须按日期截面排序 | 度量 | 2026-04-04 | L2 更新 | **Phase 13 P0** |
+| INS-068 | Topological Unblocking — 残差连接 + RPB 修复 + 池化替换 | 架构 | 2026-04-04 | L2 更新 | **Phase 13 P1** |
+| INS-069 | Remove MDL Guillotine — L1 在 2.4% SNR 下杀信号 | 训练 | 2026-04-04 | L2 更新 | **Phase 13 P0** |
 
 ---
 
@@ -145,3 +150,8 @@
 | INS-062 | phase12_unshackling_protocol | — |
 | INS-063 | audit_override_excess_alpha | — |
 | INS-064 | audit_override_excess_alpha | — |
+| INS-065 | phase13_audit_verdict_and_roadmap | — |
+| INS-066 | phase13_audit_verdict_and_roadmap | — |
+| INS-067 | phase13_audit_verdict_and_roadmap | — |
+| INS-068 | phase13_audit_verdict_and_roadmap | — |
+| INS-069 | phase13_audit_verdict_and_roadmap | — |
