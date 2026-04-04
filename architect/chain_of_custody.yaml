@@ -109,6 +109,21 @@ pipelines:
     failures: []
     last_updated: "2026-04-04"
 
+  - directive: "2026-04-04_phase13_recursive_audit_and_joint_arbitration.md"
+    stage: ins_created
+    insights: [INS-071, INS-072, INS-073]
+    spec_fields:
+      - "hpo.success_criterion: Phase 6 anchor invalidated → TBD from Phase 13 Post-Flight (INS-072)"
+      - "model_architecture.layer_2_topology: INS-070 deferred to Phase 14 (INS-073)"
+    code_files:
+      - "backtest_5a.py"
+      - "tools/postflight_analysis.py"
+      - "tools/omega_etl_v3_topo_forge.py"
+    audit_status: final
+    notes: "Joint arbitration of 5 blocking questions (Q1-Q5). Supplements V1/V2 with formal rulings."
+    failures: []
+    last_updated: "2026-04-04"
+
 # ── 模板 (新 directive 用) ──
 # pipeline_template:
 #   directive: "<filename>"

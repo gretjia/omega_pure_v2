@@ -1,9 +1,11 @@
 # OMEGA PURE 架构规范 — 由架构师联络官维护
 # 最后更新：2026-04-04
-# 更新来源：INS-065~070 (Phase 13 Audit Verdict V2 — IC Loss + Cross-Sectional + Topological Unblocking + Window Isolation)
-# [FINAL — Codex 9/9 RESOLVED + Gemini 7/7 addressed, 2026-04-04]
+# 更新来源：INS-065~073 (Phase 13 Audit V2 + Joint Arbitration V3)
+# [FINAL — Codex 9/9 + Gemini 7/7 + Architect GREEN LIGHT + Crucible PASS, 2026-04-04]
 # 源文档：Google Docs id.1~id.6 (archived at architect/gdocs/)
-# 审计裁决：architect/directives/2026-04-04_phase13_audit_verdict_and_roadmap_v2.md (V2 supersedes V1)
+# 审计裁决：V2 (audit_verdict_and_roadmap_v2) + V3 (recursive_audit_and_joint_arbitration)
+# 范式：INS-071 双轨制 — Volume Clock 训练 (batch-level IC) + Calendar 严格评估 (per-date)
+# 基线：INS-072 Phase 6 及所有历史基线已作废，Phase 13 = Epoch 0
 
 version: v3
 
@@ -65,6 +67,9 @@ etl:
   # 设计哲学: 容量时钟替代物理时钟，抹平大小盘异质性
   # 每根 Bar 严格代表 "消耗了该标的 2% 日常流动性"
   # ETL 必须维护跨文件的 symbol 状态连续性 (Codex audit fix)
+  # [UPGRADE] ETL V4: 添加 date.npy 到 shard (INS-071 双轨制评估需要)
+  #   原始 parquet 已有 date 字段，ETL 内部已用于日边界检测，只需写入 shard
+  #   执行: windows1 并行重处理 2.2TB → gs://omega-pure-data/wds_shards_v4/
 
 # ============================================================
 # Target 定义 (id5: 架构师裁决)
@@ -106,7 +111,7 @@ training:
   # 2. DROP MSE: 高方差(190BP)低SNR(2.4%)下退化为条件均值预测 (INS-066)
   # 3. DROP Static Centering: IC Loss 平移不变，无需居中 (Gemini PASS)
   # 4. DROP L1 MDL: 2.4% SNR 下杀信号 (INS-069, Phase 12 E0>E19 实证)
-  # 5. REVERT IC Loss: Phase 6 IC=0.066 历史最高 (INS-059 翻案, 但基准待重验 C-062)
+  # 5. REVERT IC Loss: 排序损失理论优于MSE (INS-059→INS-072: Phase 6 数据已作废，定性仍成立)
   # 诊断链: 波动率预测(Gemini) + 条件均值退化(Codex) + 全局排序伪信号(Codex)
   # SUPERSEDED: INS-060(leaky) INS-062(MSE scale) INS-063(path A) INS-064(static mean)
   # leaky_factor: DELETED — 100x 梯度压缩致波动率预测 (INS-065)
@@ -182,8 +187,9 @@ hpo:
     epochs: 15
     steps_per_epoch: 5000
     grad_clip: 1.0
-  success_criterion: "Top-3 trials Cross-Sectional Rank IC > 0.03 (Phase 6 provisional IC=0.066 的一半)"
-  # NOTE: Phase 6 IC=0.066 基准待重验 (C-062 torch.compile bug, Codex: provisional not calibration anchor)
+  success_criterion: "Stable monotonic positive Cross-Sectional Rank IC (threshold TBD from Phase 13 Post-Flight)"
+  # [UPDATED INS-072] Phase 6 baseline INVALIDATED (C-062 torch.compile bug + D9-D0=-5.92 BP)
+  # Phase 13 = Epoch 0, no historical anchor. Threshold set after first Post-Flight results.
 
 # ============================================================
 # 回测约束 (The Crucible)
@@ -235,19 +241,21 @@ model_architecture:
     # Q_hidden = sign(ΔP) × (|ΔP| / (c_i × σ_D))^2 × V_D
   layer_2_topology: FiniteWindowTopologicalAttention
     # 原生2D窗口注意力, 绝对禁止1D Flatten, O(1)寻址
-    # [DRAFT] Phase 13: 加标准残差连接 out = x + tda(LayerNorm(x))  (INS-068)
+    # [FINAL — Crucible PASS IC=0.88, Architect GREEN LIGHT 2026-04-04] (INS-068)
+    #   Pre-LN 残差: out = x + tda(LayerNorm(x))
     #   Pre-LN 格式 (Gemini 强制: 防残差流方差爆炸)
-    #   注: V2 directive 建议 Post-LN, 但 Gemini 审计选择 Pre-LN — 保持 Pre-LN
-    #   RPB: 先 debug 梯度极弱问题 (grad_norm=0.08)，如无法修复则替换为 sinusoidal
-    # [DRAFT] Phase 13: 跨窗注意力打破 0.64 天感受野限制 (INS-070)
+    #   RPB 梯度: Phase 12 grad_norm=0.08 (死亡), Phase 13 间接证据 IC=0.88 暗示恢复
+    #   建议: 正式训练加逐参数 grad_norm 监控以直接验证 RPB 恢复
+    # [DEFERRED Phase 14] 跨窗注意力打破 0.64 天感受野限制 (INS-070, deferred by INS-073)
     #   当前 5×32-bar 隔离窗口 → Swin-style shifted window 或 cross-window attention
-    #   验证: 64-sample Crucible Overfit Test, loss→0.0
+    #   Phase 13 范围降级为日内 TWAP/VWAP 拆单摩擦 (0.64天感受野足够)
+    #   理由: 控制变量法 — Phase 13 已改 5 个变量，再加窗口拓扑=归因灾难
   layer_3_compression: EpiplexityBottleneck
     # 信息瓶颈 (dim → dim/2 → dim/4)
-    # [DRAFT] Phase 13: L1 MDL 移除 (INS-069)，瓶颈仅做隐式压缩
+    # [FINAL — Crucible PASS, Architect GREEN LIGHT] L1 MDL 移除 (INS-069)，瓶颈仅做隐式压缩
   layer_4_pooling: AttentionPooling
-    # [DRAFT] Phase 13: 替换 Global Mean Pooling (INS-068)
-    # pool = sum(softmax(W_pool @ z_core_flat) * z_core_flat, dim=tokens)
-    # ~16 新参数 (Gemini 推荐, Flatten+Linear FAIL: +25.6K 过拟合)
+    # [FINAL — Crucible PASS IC=0.88, Architect GREEN LIGHT] 替换 Global Mean Pooling (INS-068)
+    # AttentionPooling: pool = sum(softmax(z @ W_pool / sqrt(D)) * z, dim=tokens)
+    # +64 新参数 (Gemini 推荐, Flatten+Linear FAIL: +25.6K 过拟合)
   layer_5_prediction: IntentDecoder
     # AttentionPooling 输出 → 标量意图预测

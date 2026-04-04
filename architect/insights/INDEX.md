@@ -68,7 +68,7 @@
 | INS-056 | 19.7K 极小模型严禁多卡 DDP — Scale-Up Only | 架构 | 2026-04-01 | NONE | active |
 | INS-057 | SRL 捷径学习确认 — z_core 被架构旁路饿死 | 架构 | 2026-04-02 | L2 更新 | pending_ablation |
 | INS-058 | PfRet 评价失效 — 方差坍缩下等价于等权 Beta 均值 | 度量 | 2026-04-02 | L2 更新 | active |
-| INS-059 | IC Loss 历史翻案 — Phase 6 IC=0.066 为真信号 | 训练 | 2026-04-02 | NONE | active |
+| INS-059 | IC Loss 历史翻案 — Phase 6 IC=0.066 为真信号 | 训练 | 2026-04-02 | NONE | **部分废弃: Phase 6 数据作废 (INS-072), IC>MSE 定性仍成立** |
 | INS-060 | Phase 12 无界之矛(审计版) — Scaled MSE + Static Centering | 训练 | 2026-04-02 | L2 更新 | pending_deployment |
 | INS-061 | 空间深度恢复强制令 — ws=4 脏补丁必须修复 | 架构 | 2026-04-02 | L2 更新 | active |
 | INS-062 | MSE 量纲碾压与噪声过拟合防线 | 训练 | 2026-04-02 | NONE | active |
@@ -79,7 +79,10 @@
 | INS-067 | Cross-Sectional Evaluation — D9-D0 必须按日期截面排序 | 度量 | 2026-04-04 | L2 更新 | **Phase 13 P0** |
 | INS-068 | Topological Unblocking — 残差连接 + RPB 修复 + 池化替换 | 架构 | 2026-04-04 | L2 更新 | **Phase 13 P1** |
 | INS-069 | Remove MDL Guillotine — L1 在 2.4% SNR 下杀信号 | 训练 | 2026-04-04 | L2 更新 | **Phase 13 P0** |
-| INS-070 | Shatter Window Isolation — 跨窗注意力打破 0.64 天感受野 | 架构 | 2026-04-04 | L2 更新 | **Phase 13 P1** |
+| INS-070 | Shatter Window Isolation — 跨窗注意力打破 0.64 天感受野 | 架构 | 2026-04-04 | L2 更新 | **Phase 14 (deferred from P13, INS-073)** |
+| INS-071 | Dual-Paradigm — Volume Clock 训练 + Calendar 评估 | 架构 | 2026-04-04 | NONE | active |
+| INS-072 | Historical Baselines Invalidated — Phase 13 = Epoch 0 | 度量 | 2026-04-04 | L2 更新 | active |
+| INS-073 | Phase 13 Scope Downgrade — 日内 TWAP/VWAP 拆单摩擦 | 架构 | 2026-04-04 | NONE | active |
 
 ---
 
@@ -157,3 +160,6 @@
 | INS-068 | phase13_audit_verdict_and_roadmap | — |
 | INS-069 | phase13_audit_verdict_and_roadmap | — |
 | INS-070 | phase13_audit_verdict_and_roadmap_v2 | — |
+| INS-071 | phase13_recursive_audit_and_joint_arbitration | — |
+| INS-072 | phase13_recursive_audit_and_joint_arbitration | — |
+| INS-073 | phase13_recursive_audit_and_joint_arbitration | — |

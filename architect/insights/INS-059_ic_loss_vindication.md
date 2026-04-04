@@ -4,7 +4,7 @@ title: IC Loss 历史翻案 — Phase 6 IC=0.066 为真信号，INS-018 废弃 I
 category: training
 date: 2026-04-02
 axiom_impact: NONE
-status: active
+status: "PARTIALLY SUPERSEDED by INS-072 — IC Loss 优于 MSE 的定性结论仍成立，但 Phase 6 IC=0.066 数据已作废"
 source_directive: 2026-04-02_phase12_unshackling_protocol.md
 source_gdoc: null
 ---

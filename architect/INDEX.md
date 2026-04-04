@@ -36,3 +36,4 @@
 | 2026-04-02 | 审计覆盖裁决 — Excess Alpha + λ_s 回退 | [directives/2026-04-02_audit_override_excess_alpha.md](directives/2026-04-02_audit_override_excess_alpha.md) | AXIOM UPDATE REQUIRED — [AUDIT OVERRIDDEN] spec 已更新 |
 | 2026-04-04 | Phase 13 审计裁决 + 架构路线图 (V1) | [directives/2026-04-04_phase13_audit_verdict_and_roadmap.md](directives/2026-04-04_phase13_audit_verdict_and_roadmap.md) | SUPERSEDED by V2 |
 | 2026-04-04 | Phase 13 审计裁决 V2 — 波动率幻觉 + 窗口隔离 | [directives/2026-04-04_phase13_audit_verdict_and_roadmap_v2.md](directives/2026-04-04_phase13_audit_verdict_and_roadmap_v2.md) | AXIOM UPDATE REQUIRED — Loss/Pooling/Residual/Evaluation/WindowIsolation |
+| 2026-04-04 | 递归审计 + 5 项悬案联合裁决 (V3 Arbitration) | [directives/2026-04-04_phase13_recursive_audit_and_joint_arbitration.md](directives/2026-04-04_phase13_recursive_audit_and_joint_arbitration.md) | AXIOM UPDATE REQUIRED — success_criterion 基线作废 + INS-070 延至 Phase 14 |
