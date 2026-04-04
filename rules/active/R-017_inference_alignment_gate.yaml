@@ -1,0 +1,35 @@
+# R-017: 推理 Job 提交前必须完成 Train-Serve 对齐审计
+# 触发: 创建/编辑 gcp/*.yaml 推理 config 或提交 Vertex AI 推理 job 时
+# 教训: C-065/C-066 — Phase 6→12 七次 post-flight 失败，每次都跳过管线验证直接跑
+#
+# 原因: Claude 口头同意"先验证管线"，但行动上仍直接提交 job。
+#        人的记忆不可靠，AI 的记忆更不可靠。必须用规则约束行为。
+
+id: R-017
+name: inference_alignment_gate
+severity: critical
+trigger:
+  event: [PreToolUse]
+  tool: [Bash, Write]
+  pattern: "gcloud ai custom-jobs create|phase.*inference.*yaml|phase.*postflight.*yaml"
+
+check: |
+  推理 Job 提交前必须回答以下 3 个问题（在对话中明确记录）:
+
+  1. CHECKPOINT 来自哪个 Phase？训练时用的是哪个 forward pass（wrapper/core）？
+  2. 推理代码的 forward pass 是否与训练时完全一致？（逐步对比: SRL/FRT/LN/TDA/Pooling/Decoder）
+  3. 是否有外部审计（Codex/Gemini）确认了 Train-Serve 一致性？
+
+  如果任一问题的答案是"不确定"或"未验证"→ 阻塞提交。
+
+action: warn
+message: |
+  ⚠️ R-017: 推理 Job 提交前 Train-Serve 对齐检查
+  C-065/C-066: 不要在管线未验证时提交推理 job。
+
+  必须在对话中明确记录:
+  1. Checkpoint 来源 + 训练时的 forward pass
+  2. 推理 forward pass 对齐确认（逐步对比）
+  3. 外部审计确认
+
+  详见: handover/STRATEGY_B_PIPELINE_VALIDATION.md
