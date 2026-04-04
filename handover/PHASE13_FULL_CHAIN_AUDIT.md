@@ -342,3 +342,357 @@ Failure: torch.compile + ROCm 不兼容 (aten::empty.memory_format HIP backend)
 
 *本文档由实测数据生成，每个结论标注数据来源。*
 *审计链: Phase 12 训练日志 → Post-Flight 推理 → Gemini+Codex 诊断 → INS-065~070 → Phase 13 代码 → Crucible 验证 → 本审计*
+
+---
+
+## 附录 A: 原始证据 — 完整 Decile 表 (E0 best.pt)
+
+> 源文件: `handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md` §五.1
+
+| Decile | N | mean_pred (BP) | mean_target (BP) | hit_rate | per-decile IC |
+|--------|--------|---------------|-----------------|----------|---------------|
+| D0 | 190,492 | -9.04 | +4.53 | 51.4% | 0.0160 |
+| D1 | 190,668 | +7.01 | +6.62 | 51.0% | 0.0051 |
+| D2 | 190,424 | +15.75 | +7.45 | 50.3% | -0.0018 |
+| D3 | 190,777 | +22.91 | +6.41 | 49.5% | -0.0001 |
+| D4 | 190,456 | +29.58 | +6.64 | 49.3% | 0.0001 |
+| D5 | 190,616 | +36.30 | +7.20 | 49.2% | -0.0012 |
+| D6 | 190,283 | +43.48 | +7.26 | 49.1% | 0.0007 |
+| D7 | 190,598 | +51.72 | +7.28 | 49.0% | 0.0023 |
+| D8 | 190,029 | +62.46 | +6.86 | 48.6% | -0.0025 |
+| D9 | 190,404 | +84.12 | +9.04 | 49.0% | -0.0005 |
+
+## 附录 B: 原始证据 — E19 vs E0 Checkpoint 对比
+
+> 源文件: `handover/LATEST.md`, `handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md`
+
+| 指标 | E0 (best.pt) | E19 (latest.pt) | Phase 11c | Phase 6 (IC Loss) |
+|------|-------------|-----------------|-----------|-------------------|
+| pred_std (BP) | 26.61 | 18.57 | 5.64 | — |
+| D9-D0 (BP) | +4.51 | +1.29 | +8.90 | **-5.92** |
+| Pearson IC | 0.0046 | 0.0001 | 0.0210 | 0.066 |
+| Spearman Rank IC | -0.0206 | **-0.0297** | — | — |
+| z_sparsity | 5.4% | 18.5% | — | — |
+| Corr(z_sparsity, |pred|) | -0.001 | +0.225 | -0.22 | — |
+| S_T | 2.087 | 1.157 | — | — |
+
+注意: Phase 6 D9-D0 = **-5.92 BP** (负值)。历史最高 IC=0.066 对应的 D9-D0 是反转的。
+
+## 附录 C: 原始证据 — 全 14 参数组梯度范数
+
+> 源文件: `handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md` §五.2
+
+```
+参数组                              grad_norm    占比
+──────────────────────────────────────────────────────
+intent_decoder.bias                 4,811        [最强]
+bottleneck.2.bias                   3,145
+bottleneck.2.weight                   730
+bottleneck.0.bias                     715
+bottleneck.0.weight                   588
+tda_layer.qkv.weight                  498
+tda_layer.proj.weight                  474
+tda_layer.proj.bias                    336
+input_proj.weight                      165
+post_proj_norm.bias                    118
+post_proj_norm.weight                   40
+input_proj.bias                       0.06
+tda_layer.rpb_table                   0.08        [最弱 — 60,137x 弱于 decoder]
+```
+
+RPB 参数量: 1,197 entries × 4 heads = 4,788 params (总参数 24,437 的 19.6%)
+
+## 附录 D: 原始证据 — Rank IC 统计显著性计算
+
+> 源文件: `handover/PHASE12_AUDIT_PROMPT.md`
+
+```
+Spearman Rank IC = -0.0206
+样本量 N = 1,904,747
+标准误 SE = 1/√N = 1/√1,904,747 = 0.000725
+Z-score = -0.0206 / 0.000725 = -28.4σ
+
+注: 审计正文写 29σ，精确计算为 28.4σ。两者均远超 5σ 显著性阈值。
+
+E19 Rank IC: -0.0297
+E19 Z-score: -0.0297 / 0.000725 = -41.0σ (更显著的反向排序)
+```
+
+## 附录 E: 原始证据 — Leaky Blinding 数学推导
+
+> 源文件: `architect/insights/INS-065_drop_leaky_blinding.md`
+
+```
+原始 target 分布:
+  E[T|T>0] = +158.6 BP (正收益期望)
+  E[T|T<0] = -144.6 BP (负收益期望)
+  P(T>0) ≈ P(T<0) ≈ 0.5
+
+Leaky 变换 (leaky_factor=0.1):
+  T_leaky = T       if T > 0
+  T_leaky = 0.1 × T if T < 0
+
+Leaky 后期望:
+  E[T_leaky] = 0.5 × 158.6 + 0.5 × 0.1 × (-144.6)
+             = 79.3 - 7.23
+             = 72.07 BP
+
+Static Centering (static_mean_bp=40):
+  E[T_centered] = 72.07 - 40.0 = +32.07 BP
+
+实测 pred_mean = +34.42 BP (误差 7.3%)
+
+MSE 梯度压缩:
+  正收益: grad ∝ (pred - T)²
+  负收益: grad ∝ (pred - 0.1×T)² = 0.01 × (pred/0.1 - T)²
+  → 负收益梯度被压缩 100x (0.1² = 0.01)
+```
+
+## 附录 F: 原始证据 — INS-066 IC Loss 翻案依据
+
+> 源文件: `architect/insights/INS-066_revert_to_ic_loss.md`
+
+```
+历史 IC 对比:
+  Phase 6 (IC Loss):           Pearson IC = 0.066 [历史最高]
+  Phase 11c (MSE):             Pearson IC = 0.021
+  Phase 12 E0 (Unbounded MSE): Pearson IC = 0.005
+  Phase 12 E19 (Unbounded MSE):Pearson IC = 0.0001
+
+IC Loss → MSE 切换点: INS-018
+  INS-018 废弃理由: "IC Loss 绝对尺度太小，无法用于仓位管理"
+  INS-066 翻案理由: "尺度是推理工程问题 — Daily Cross-Sectional Z-Score 解决"
+  [AUDIT OVERRIDE] INS-018 被推翻
+
+MSE 失效证明 (SNR 分析):
+  target_std = 189.60 BP
+  signal (D9-D0) = 4.51 BP
+  SNR = 4.51 / 189.60 = 2.4%
+  结论: MSE gradient 被 189 BP 噪声主导，退化为条件均值预测
+```
+
+## 附录 G: 原始证据 — Phase 13 IC Loss 实现代码
+
+> 源文件: `gcp/omega_epiplexity_plus_core.py:215-242`
+
+```python
+def compute_ic_loss(prediction, target, ic_epsilon=1e-8):
+    """Phase 13 Mandate A: Pearson IC Loss (INS-066)"""
+    pred = prediction.float().view(-1)
+    tgt = target.float().view(-1)
+
+    if pred.numel() < 2:
+        return torch.tensor(0.0, device=pred.device, requires_grad=True)
+
+    pred_centered = pred - pred.mean()
+    tgt_centered = tgt - tgt.mean()
+
+    cov = (pred_centered * tgt_centered).mean()
+    pred_std = torch.sqrt((pred_centered ** 2).mean() + ic_epsilon)  # NOT clamp
+    tgt_std = torch.sqrt((tgt_centered ** 2).mean() + ic_epsilon)
+
+    ic = cov / (pred_std * tgt_std)
+    return -ic  # minimize negative IC = maximize IC
+```
+
+> 源文件: `gcp/train.py:86-100`
+
+```python
+def compute_ic_loss_wrapper(pred, target, z_core, ic_epsilon=1e-8):
+    """lambda_s=0 (INS-069), no warmup needed, no target warping."""
+    ic_loss = compute_ic_loss(pred, target, ic_epsilon=ic_epsilon)
+    # s_t monitoring only (not added to loss since lambda_s=0)
+    with torch.no_grad():
+        z_core_safe = torch.clamp(z_core.float(), min=-20.0, max=20.0)
+        s_t = torch.norm(z_core_safe, p=1, dim=-1).mean()
+    return ic_loss, s_t
+```
+
+## 附录 H: 原始证据 — validate() 哨兵逻辑
+
+> 源文件: `gcp/train.py:408-466`
+
+```python
+def validate(model, val_loader, device, max_steps=0,
+             sentinel_error=10.0, sentinel_warn=30.0):
+    """Phase 13: Cross-Sectional Validation (INS-066/067)
+    Primary metric: Rank IC (Spearman). Secondary: D9-D0 Spread."""
+
+    # 1. Variance Collapse Detection (INS-017/054)
+    pred_std_bp = preds.std().item() * 10000.0
+    if pred_std_bp < sentinel_error and n_samples > 10:
+        logger.error("VARIANCE COLLAPSE: pred_std=%.2f BP < %.0f" % (pred_std_bp, sentinel_error))
+    elif pred_std_bp < sentinel_warn:
+        logger.warning("LOW VARIANCE: pred_std=%.2f BP < %.0f" % (pred_std_bp, sentinel_warn))
+
+    # 2. Pearson IC (aggregate, not per-date — [APPROXIMATION])
+    pearson_ic = float(np.corrcoef(pred_np, tgt_np)[0, 1])
+
+    # 3. Rank IC — Spearman (PRIMARY metric, Vizier MAXIMIZE)
+    rank_ic, rank_ic_pval = spearmanr(pred_np, tgt_np)
+
+    # 4. D9-D0 Spread (global topk, not per-date — [APPROXIMATION])
+    k = max(n_samples // 10, 1)
+    _, top_idx = torch.topk(preds, k)
+    _, bot_idx = torch.topk(preds, k, largest=False)
+    d9_d0_spread = (targets_cat[top_idx].mean() - targets_cat[bot_idx].mean()).item()
+```
+
+哨兵阈值: `error=10 BP` (HARD), `warn=30 BP` (SOFT)
+已知近似: Pearson IC 和 D9-D0 均为 global 而非 per-date (Spec [APPROXIMATION])
+
+## 附录 I: 原始证据 — torch.compile _orig_mod. Bug
+
+> 源文件: `OMEGA_LESSONS.md` C-062, `gcp/train.py:262-264`
+
+**Bug 机制:**
+```
+torch.compile(model) 给 state_dict key 加 "_orig_mod." 前缀
+  例: "input_proj.weight" → "_orig_mod.input_proj.weight"
+
+model.load_state_dict(ckpt, strict=False) 不匹配时静默跳过
+  → 所有权重保持 random initialization
+  → 推理输出 = 随机噪声
+```
+
+**修复 (3 处):**
+```python
+# 1. Save side (gcp/train.py:262-264):
+raw_state = model.state_dict()
+clean_state = {k.replace("_orig_mod.", ""): v for k, v in raw_state.items()}
+
+# 2. Load side (gcp/phase7_inference.py:202-203):
+state = {k.replace("_orig_mod.", ""): v for k, v in ckpt["model_state_dict"].items()}
+
+# 3. Load side (backtest_5a.py:136-138):
+# Same defensive strip
+```
+
+**影响范围:**
+- Phase 6 T29 (IC=0.066): 可能受影响 → 基准待重验
+- Phase 11c (D9-D0=8.90): 可能受影响 → 基准待重验
+- Phase 12+: 已修复
+
+## 附录 J: 原始证据 — Chain of Custody
+
+> 源文件: `architect/chain_of_custody.yaml`
+
+**Phase 12 链:**
+```yaml
+directive: "2026-04-02_phase12_unshackling_protocol.md"
+stage: deployed
+insights: [INS-060, INS-063, INS-064]
+spec_fields:
+  - "loss_function: Unbounded Spear"
+  - "hpo.fixed_params.lambda_s: 1e-4"
+code_files: ["omega_epiplexity_plus_core.py", "train.py"]
+audit_status: final
+failures:
+  - lesson: C-059
+    root_cause: "ETL 输出单位假设错误 — INS 未记录数据格式前提"
+```
+
+**Phase 13 V1 链:**
+```yaml
+directive: "2026-04-04_phase13_audit_verdict_and_roadmap.md"
+superseded_by: "2026-04-04_phase13_audit_verdict_and_roadmap_v2.md"
+insights: [INS-065, INS-066, INS-067, INS-068, INS-069]
+audit_overrides:
+  - rejected: "INS-018 废弃 IC Loss (绝对尺度太小)"
+    reason: "尺度是推理工程问题 — cross-sectional Z-score 解决"
+```
+
+**Phase 13 V2 链 (V2 新增内容):**
+```yaml
+directive: "2026-04-04_phase13_audit_verdict_and_roadmap_v2.md"
+insights: [INS-070]
+v2_new_content:
+  - "Volatility Sorting Illusion 诊断 (Phase 6 D9-D0=-5.92 BP)"
+  - "Shatter Window Isolation mandate (INS-070)"
+  - "64-sample Crucible Overfit Test pass criteria (loss→0.0)"
+```
+
+## 附录 K: 原始证据 — Phase 12 Overfit Test 完整曲线
+
+> 源文件: Vertex AI Job 8287604473870680064 日志
+
+```
+条件: 64 samples, 2000 steps, batch=64, lr=3.2e-4, lambda_s=0, no_amp
+模型: OmegaTIBWithMasking, 24,437 params (Phase 12 架构)
+
+Step    0: Loss=8.353  PfRet=2.35   S_T=2.183  Std_yhat=0.007775
+Step  200: Loss=0.212  PfRet=0.90   S_T=2.130  Std_yhat=0.001655
+Step  400: Loss=0.143  PfRet=16.15  S_T=2.084  Std_yhat=0.001301
+Step  600: Loss=0.117  PfRet=37.03  S_T=2.048  Std_yhat=0.001240
+Step  800: Loss=0.106  PfRet=45.70  S_T=2.014  Std_yhat=0.001292
+Step 1000: Loss=0.096  PfRet=52.17  S_T=1.982  Std_yhat=0.001316
+Step 1200: Loss=0.090  PfRet=56.13  S_T=1.957  Std_yhat=0.001363
+Step 1400: Loss=0.084  PfRet=58.74  S_T=1.937  Std_yhat=0.001411
+Step 1600: Loss=0.080  PfRet=60.95  S_T=1.921  Std_yhat=0.001449
+Step 1800: Loss=0.075  PfRet=62.73  S_T=1.909  Std_yhat=0.001487
+
+Final: Loss=0.073, Val D9-D0=-1.35 BP, Val Std_yhat=41.65 BP
+Gradient: 所有 14 参数组 grad_norm > 0 (PASS)
+
+注意: Std_yhat 从 0.0078 降到 0.0015 (5.2x 衰减) — 方差坍缩严重
+对比 Phase 13: Std_yhat 从 0.0092 降到 0.0072 (1.3x 衰减)
+```
+
+## 附录 L: 原始证据 — Phase 13 Mandate B Crucible
+
+> 源文件: Vertex AI Job 5402703665888755712 日志
+
+```
+条件: 64 samples, 2000 steps, batch=64, lr=1e-3, lambda_s=0, no_amp
+模型: OmegaTIBWithMasking, 24,581 params (Phase 13 架构, Unbounded Spear Loss)
+目的: 验证 AttentionPooling + Pre-LN + Residual 架构修改
+
+Step    0: Loss=5.213  PfRet=50.50   S_T=3.900  Std_yhat=0.008239
+Step  200: Loss=2.217  PfRet=218.98  S_T=2.195  Std_yhat=0.005805
+Step  400: Loss=1.737  PfRet=246.54  S_T=2.051  Std_yhat=0.006588
+Step  600: Loss=1.454  PfRet=248.21  S_T=2.064  Std_yhat=0.007412
+Step  800: Loss=1.270  PfRet=255.13  S_T=2.092  Std_yhat=0.008056
+Step 1000: Loss=1.114  PfRet=265.43  S_T=2.141  Std_yhat=0.008668
+Step 1200: Loss=0.987  PfRet=277.34  S_T=2.192  Std_yhat=0.009231
+Step 1400: Loss=0.879  PfRet=289.51  S_T=2.233  Std_yhat=0.009695
+Step 1600: Loss=0.802  PfRet=298.98  S_T=2.253  Std_yhat=0.010031
+Step 1800: Loss=0.732  PfRet=308.34  S_T=2.269  Std_yhat=0.010328
+
+Final: Loss=0.674, PfRet=316.10, Val D9-D0=-301.01 BP, Val Std_yhat=140.98 BP
+训练时间: 123s
+
+注意: Std_yhat 持续上升 0.0082→0.0103 — 无方差坍缩
+注意: S_T 先降后升 (3.90→2.05→2.28) — 与 Phase 12 单调下降不同
+```
+
+## 附录 M: 源文件索引
+
+| 证据 | 文件路径 | 用于验证 |
+|------|----------|----------|
+| Phase 12 训练日志 | `logs/phase12_monitor.log` | §1.2 逐 Epoch 曲线 |
+| Phase 12 Post-Flight | `handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md` | §1.3 Decile 表, 附录 A/B |
+| Phase 12 Post-Flight | `handover/LATEST.md` | §1.3 E19 数据, 附录 B |
+| Gemini 诊断 | `architect/insights/INS-065_drop_leaky_blinding.md` | §1.4 Leaky 数学, 附录 E |
+| Codex 诊断 | `handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md` §五 | §1.4 梯度范数, 附录 C |
+| IC Loss 翻案 | `architect/insights/INS-066_revert_to_ic_loss.md` | §2.2 INS-066, 附录 F |
+| L1 删除 | `architect/insights/INS-069_remove_mdl_guillotine.md` | §1.4 数据点 3 |
+| 拓扑解锁 | `architect/insights/INS-068_topological_unblocking.md` | §3.1 架构变更 |
+| 窗口隔离 | `architect/insights/INS-070_shatter_window_isolation.md` | §5.3 疑惑 4 |
+| 截面评估 | `architect/insights/INS-067_cross_sectional_evaluation.md` | §5.3 疑惑 2 |
+| IC Loss 代码 | `gcp/omega_epiplexity_plus_core.py:215-242` | 附录 G |
+| 训练循环 | `gcp/train.py:330-400` | 附录 G/H |
+| 哨兵逻辑 | `gcp/train.py:408-466` | 附录 H |
+| _orig_mod bug | `OMEGA_LESSONS.md` C-062, `gcp/train.py:262` | 附录 I |
+| Chain of Custody | `architect/chain_of_custody.yaml` | 附录 J |
+| Phase 12 Overfit | Vertex AI Job 8287604473870680064 | 附录 K |
+| Mandate B Crucible | Vertex AI Job 5402703665888755712 | 附录 L |
+| Mandate A Crucible | Vertex AI Job 5026336437654519808 | §3.3 |
+| Spec | `architect/current_spec.yaml` | §3.1 |
+| 教训库 | `OMEGA_LESSONS.md` C-055~C-071 | §4 |
+| 规则库 | `rules/active/R-018_docker_dep_tag_sync.yaml` | §3.5 |
+| Incident | `incidents/C-071_docker_dep_tag_sync/` | §3.5 |
+
+---
+
+**数据修正记录:**
+- Rank IC Z-score: 正文写 29σ，精确计算为 28.4σ (附录 D)。两者均远超显著性阈值，结论不变。
