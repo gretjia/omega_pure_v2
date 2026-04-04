@@ -199,10 +199,12 @@ def main():
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
     state = {}
     for k, v in ckpt["model_state_dict"].items():
+        if k.startswith("_orig_mod."):
+            k = k[len("_orig_mod."):]
         if k.startswith("masking."):
             continue
         state[k] = v
-    model.load_state_dict(state, strict=False)
+    result = model.load_state_dict(state, strict=False)
     # Phase 13: verify new architecture keys (Codex audit FAIL #10)
     required_phase13 = ['model.attention_pool.W_pool', 'model.tda_pre_ln.weight']
     missing_p13 = [k for k in required_phase13 if k not in state]
@@ -210,7 +212,8 @@ def main():
         log.error(f"Checkpoint missing Phase 13 keys: {missing_p13}. Use Phase 13+ checkpoint.")
         sys.exit(1)
     model.eval()
-    log.info(f"Model loaded: hd={args.hidden_dim}, wt={args.window_size_t}")
+    log.info(f"Model loaded: hd={args.hidden_dim}, wt={args.window_size_t}, "
+             f"keys={len(state)}, missing={result.missing_keys}")
 
     # Discover shards (supports local paths and gs:// GCS URIs)
     if args.shard_dir.startswith("gs://"):

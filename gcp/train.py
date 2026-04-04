@@ -517,7 +517,8 @@ def main():
     parser.add_argument("--steps_per_epoch", type=int, default=5000)
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--lambda_s", type=float, default=1e-4)
+    parser.add_argument("--lambda_s", type=float, default=0,
+                        help="L1 MDL weight (Phase 13 INS-069: fixed at 0, L1 kills signal at 2.4%% SNR)")
     parser.add_argument("--huber_delta", type=float, default=200.0,
                         help="DEPRECATED: Phase 12 Unbounded Spear removed Huber. Kept for YAML compat.")
     parser.add_argument("--static_mean_bp", type=float, default=40.0,
