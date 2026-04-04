@@ -145,6 +145,9 @@
 - **C-063**: **GCS pipe (`pipe:gcloud storage cat`) 不可用于推理**。gcloud CLI 子进程缺少中途字节范围重试，网络微中断 → EOF → shard 丢失。训练可容忍（shuffle+handler 重试），推理不行（每个 shard 必须完整）。Vertex AI 正确方案：GCS FUSE `/gcs/` 路径直读（自动重试+预读缓冲+零安装）。`pipe:` 仅限训练容错场景（Ω6: 数据在哪计算在哪 + Ω2: 先量化 I/O 可靠性）。
 - **C-064**: **推理 job staging 必须只下载需要的 split，提前计算磁盘需求**。Phase 12 post-flight staging 全量 1992 shards (1.8TB) 到 500GB pd-ssd → 磁盘满 FAILED。val-only = 399 shards (~400GB)。下载前必须：`shard 数 × 平均 shard 大小 < disk * 0.8`（Ω2: 先量化后行动）。
 
+- **C-065**: **训练指标好看 ≠ 模型有效 — 范式切换前必须先验证推理管线**。Phase 6→12 每次训练 val 指标好看，post-flight 全部失败。Phase 6 完美单调递减 deciles [3.33→-2.59] 是 bug 特征，不是模型弱。**新训练被阻塞，直到历史 checkpoint 用修复后代码重跑 post-flight 并翻正**（Ω1: 只信实测）。
+- **C-066**: **不要用换 Loss 来解决管线 bug**。Phase 6 IC Loss���Phase 9 Pearson→Phase 10 Softmax→Phase 11 Huber→Phase 12 MSE，7 次换 Loss，7 次 post-flight 失败。Gemini 诊断："你在用换 Loss 函数来解决管线工程 bug"。正确做法：先修管线（Train-Serve Skew / 评估指标 / 架构瓶颈），验证管线健康，**然后**才评估 Loss（Ω1 + Ω4: 可执行的管线验证 > 可讨论的 Loss 理论��。
+
 - **C-059**: **量纲必须从数据源头追溯，不可假设；修复时必须逐变量分析，不可一刀切**。ETL 输出 target 已是 BP，架构师指令假设 raw decimal 导致 target double-convert（C-059a）。修复时一刀切去掉 pred 和 target 的 ×10000，但 model output 是 raw logit（~0.07）vs target ~20 BP → 梯度冻死（5e-9/step），模型无法学习（C-059b）。正确组合：`pred×10000`（投影到 BP）+ target 不动（已是 BP）+ `/scale_factor` 抵消链式法则。教训：量纲修复必须对每个变量独立追溯源头，不可 batch 修（Ω1: 只信实测 — 读 ETL 源码 + 读 model output 量级）。
 
 ### AI 治理
