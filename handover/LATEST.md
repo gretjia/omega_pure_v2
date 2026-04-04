@@ -1,76 +1,66 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-04-04 — **STATUS: Phase 13 Mandate A COMPLETE — IC Loss 替换 MSE, Rank IC 为主指标。待 Docker rebuild + Crucible overfit test 验证。**
+Last Updated: 2026-04-04 — **STATUS: meta_karpathy_harness 理论溯源中心建立完毕 + 创世宪法颁布。Phase 13 Mandate A 待 Docker rebuild + Crucible。**
 
 ## Current State
-- **Phase 13 Mandate A DONE**: IC Loss 替换 Unbounded Spear MSE, Rank IC 替换 D9-D0 为 best.pt/Vizier 主指标
-- **Phase 13 Mandate B DONE**: AttentionPooling + Pre-LN Residual (上一 session)
-- **Mandate B Crucible PASS**: 瞬时 loss≈0.15, pred_std 非零 (Phase 13 架构验证)
-- **Mandate A Crucible 待做**: 需 Docker rebuild (phase13-v2) + 新 Crucible test
-- **gcp/ 已同步**: 3 文件 + crucible config 已更新
-- **Spec [FINAL] + 2 APPROXIMATION**: batch-level IC + global Spearman (date 不在 shard 中)
+- **meta_karpathy_harness/ 建立完毕**: 理论溯源中心 + 核心洞察文献库 + 创世宪法
+- **CONSTITUTION.md 颁布**: 五大法则 — 压缩智能/SRL物理学/有限窗口/否定之道/非对称博弈
+- **Phase 13 Mandate A DONE**: IC Loss + Rank IC (上一 session)
+- **Phase 13 Mandate B DONE**: AttentionPooling + Pre-LN Residual
+- **Docker 镜像过期**: phase13-v1 仅含 Mandate B，需 rebuild phase13-v2
+- **autoresearch clone**: `_source_autoresearch/` 完整 git clone 在本地
 
-## Changes This Session (3 commits)
-- `df2db3a` feat: Phase 13 Mandate A — IC Loss + Cross-Sectional Evaluation (5 files)
-- `d8d402a` merge: Phase 13 Mandate A (feature branch → main)
-- `1c11bbe` sync: gcp/ mirror + crucible config update
+## Changes This Session (2 commits)
+- `69a77b0` docs: meta_karpathy_harness — 理论溯源中心 + 核心洞察原始文献库 (9 files, 1783 lines)
+- `f77fdc6` Merge: feature branch → main
+- **未提交**: `CONSTITUTION.md` (创世宪法, 待 commit)
 
 ## Key Decisions
-- **Batch-level IC (非 per-date)**: ETL shard meta.json 无日期字段。Codex 审计标记 FAIL (spec 要求 per-date)，用户接受近似。Spec 标注 [APPROXIMATION]。
-- **sqrt(var+eps) 非 clamp(std,eps)**: Gemini 二轮审计发现 torch.std() backward 在 var=0 时 NaN。clamp 只修 forward，sqrt(var+eps) forward+backward 都安全。
-- **Rank IC 替换 D9-D0**: Spec primary_metric = Cross-Sectional Rank IC (Vizier MAXIMIZE)
-- **Pipeline Gate 豁免**: Strategy B Step 1 未执行，但外部审计已裁定所有历史基准作废 (strict=False + GMP + Leaky Blinding)
+- **ALIGNMENT.md 七原则**: 失败是燃料 / 原始经验不压缩 / 可执行>可记忆 / 简单是美德 / 生产者≠验证者 / 围栏内自主 / 系统观察自己
+- **CONSTITUTION.md 五法则**: 架构师原文存档，作为项目唯一宪法，高于一切代码框架
+- **Epiplexity 论文完整转写**: 架构师手动转写全文（ar5iv HTML 截断问题），正文 §1-§8 + 附录 A-H
 
 ## Next Steps
-1. **[P0] Docker rebuild**: `bash gcp/safe_build_and_canary.sh 13 2` — 必须先构建 phase13-v2 镜像
-2. **[P0] Crucible overfit test**: IC Loss 应收敛到 loss→-1.0 (IC=1.0), pred_std 非零
-3. **[P1] Phase 13 全面训练**: Vizier HPO, Rank IC 为主指标, A100 Spot
-4. **[P2] ETL V4 加 date**: 升级 batch-level IC → per-date IC (消除 APPROXIMATION)
-5. **[P2] Mandate B.3 — Window Isolation**: 跨窗注意力 (INS-070, deferred)
+1. **[P0] Commit CONSTITUTION.md** + push + merge to main
+2. **[P0] Docker rebuild**: `bash gcp/safe_build_and_canary.sh 13 2` — phase13-v2
+3. **[P0] Crucible overfit test**: IC Loss 收敛到 loss→-1.0
+4. **[P1] Phase 13 全面训练**: Vizier HPO, Rank IC 为主指标
+5. **[P2] ETL V4 加 date**: batch-level IC → per-date IC
 
 ## Warnings
-- **Docker 镜像过期**: phase13-v1 仅含 Mandate B，不含 IC Loss。必须 rebuild phase13-v2
-- **APPROXIMATION 标注**: Spec 中 loss_function 和 primary_metric 两处标注 batch-level 近似
-- **Stale CLI params**: train.py 保留 leaky_factor/static_mean_bp/mse_scale_factor 参数 (YAML backward-compat)，但不在活跃代码路径中
-- **Early stopping 阈值**: --early_stop_fvu 现在对比 Rank IC (非 D9-D0 BP)，阈值含义改变
+- **CONSTITUTION.md 未提交**: 需要 `git add` + commit + push + merge
+- **Docker 镜像过期**: phase13-v1 不含 IC Loss，必须 rebuild
+- **_source_autoresearch/ 未跟踪**: Karpathy repo clone 在 .gitignore 外，但未 git add（含 .git 子目录，不应提交）
+- **APPROXIMATION 标注**: Spec 中仍有 2 处 batch-level 近似
 
 ## Remote Node Status
-本次会话未涉及远程节点。所有工作在 omega-vm 控制节点完成。
+本次会话未涉及远程节点。4 条 SSH 连接失败已标记为 transient_infra（linux1 不可达）。
 
 ## Architect Insights (本次会话)
-本次会话无新架构洞察。实施已有 INS-066 (IC Loss) + INS-067 (Rank IC 主指标)。
+本次会话无新架构洞察。建立了理论溯源基础设施，归档了四篇核心文献和创世宪法。
 
 ## Machine-Readable State
 ```yaml
 phase: "13_mandate_a_done"
-status: "ic_loss_implemented_pending_crucible"
+status: "meta_harness_established_constitution_published"
 blocking_gate: "Docker rebuild phase13-v2 + Crucible overfit test"
+new_infrastructure:
+  meta_karpathy_harness:
+    - ALIGNMENT.md (7 principles)
+    - CONSTITUTION.md (5 laws, supreme authority)
+    - README.md (harness architecture index)
+    - arxiv_meta_harness.md (MIT paper archive)
+    - karpathy_autoresearch.md (autoresearch archive)
+    - architect_core_insights/ (4 foundational papers)
+    - _source_autoresearch/ (full git clone, untracked)
 harness:
   version: "v3_living"
-  rules_active: 17
+  rules_active: 18
   incidents_total: 70
   hooks: 10
   skills: 9
-docker: "omega-tib:phase13-v1 (STALE — needs rebuild to phase13-v2)"
-crucible:
-  mandate_b:
-    job_id: "5402703665888755712"
-    instantaneous_loss_final: 0.15
-    verdict: "PASS"
-  mandate_a:
-    status: "PENDING — Docker rebuild required"
-    expected_loss: "-1.0 (IC=1.0 perfect overfit)"
+docker: "omega-tib:phase13-v1 (STALE)"
 spec:
-  status: "FINAL + 2 APPROXIMATION annotations"
-  loss: "Pearson IC Loss — IMPLEMENTED (sqrt(var+eps) guard)"
-  pooling: "AttentionPooling — IMPLEMENTED (phase13-v1)"
-  residual: "Pre-LN — IMPLEMENTED (phase13-v1)"
-  lambda_s: 0
-  approximations:
-    - "batch-level IC (no date in shard, pending ETL V4)"
-    - "global Spearman Rank IC (pending per-date average)"
-  window_isolation: "INS-070 — DEFERRED to P2"
-external_audits:
-  plan_audit: "Codex FAIL (per-date, user accepted batch-level), Gemini CONDITIONAL PASS"
-  code_audit: "Codex 7/8 PASS (stale CLI params intentional), Gemini 2-round PASS (sqrt fix)"
-new_commits: ["df2db3a", "d8d402a", "1c11bbe"]
+  status: "FINAL + 2 APPROXIMATION"
+new_commits: ["69a77b0", "f77fdc6"]
+uncommitted: ["CONSTITUTION.md"]
 ```
