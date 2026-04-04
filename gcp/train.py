@@ -173,7 +173,7 @@ class OmegaTIBWithMasking(nn.Module):
     Wraps OmegaMathematicalCompressor to inject VolumeBlockInputMasking
     at the spec-mandated insertion point: after input_proj, before tda_layer.
     """
-    def __init__(self, hidden_dim=64, window_size=(4, 4),
+    def __init__(self, hidden_dim=64, window_size=(32, 10),
                  min_mask_bars=10, max_mask_bars=30, mask_prob=0.5, keep_last=5):
         super().__init__()
         self.model = OmegaMathematicalCompressor(hidden_dim, window_size)
@@ -223,7 +223,9 @@ class OmegaTIBWithMasking(nn.Module):
 
         lob_features = lob.to(x_2d.dtype)  # back to model dtype (fp16 if AMP)
 
-        # symlog for q_metaorder: handles negative values + sigma_d≈0 singularity
+        # Overflow clamp before symlog: prevent Inf from sigma_d≈0 singularity
+        q_metaorder = torch.clamp(q_metaorder, min=-1e12, max=1e12)
+        # symlog for q_metaorder: handles negative values + compresses dynamic range
         q_metaorder = torch.sign(q_metaorder) * torch.log1p(torch.abs(q_metaorder))
 
         native_manifold = torch.cat([lob_features, q_metaorder], dim=-1)
@@ -272,10 +274,13 @@ def save_checkpoint(path, model, optimizer, scaler, epoch, global_step, metrics,
     # Risk: Spot SIGTERM during torch.save to /gcs/ FUSE → incomplete flush → corrupt checkpoint.
     # Fix: local staging guarantees atomic local write, then shutil.copy2 to FUSE is a single small I/O.
     local_staging = "/tmp/_omega_ckpt_staging.pt"
+    # Strip torch.compile _orig_mod. prefix so downstream loaders work directly
+    raw_state = model.state_dict()
+    clean_state = {k.replace("_orig_mod.", ""): v for k, v in raw_state.items()}
     torch.save({
         "epoch": epoch,
         "global_step": global_step,
-        "model_state_dict": model.state_dict(),
+        "model_state_dict": clean_state,
         "optimizer_state_dict": optimizer.state_dict(),
         "scaler_state_dict": scaler.state_dict() if scaler is not None else {},
         "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else {},
@@ -529,7 +534,7 @@ def main():
     _int = lambda x: int(float(x))
     parser.add_argument("--macro_window", type=_int, default=160)
     parser.add_argument("--coarse_graining_factor", type=_int, default=1)
-    parser.add_argument("--window_size_t", type=_int, default=4)
+    parser.add_argument("--window_size_t", type=_int, default=32)
     parser.add_argument("--window_size_s", type=_int, default=10)
     parser.add_argument("--hidden_dim", type=_int, default=64)
     # Infra

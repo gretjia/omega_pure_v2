@@ -28,7 +28,7 @@ message: |
 
 stats:
   created: "2026-04-03"
-  times_triggered: 0
+  times_triggered: 1
   times_bypassed: 0
   false_positives: 0
-  last_triggered: null
+  last_triggered: "2026-04-04"

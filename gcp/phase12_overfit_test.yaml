@@ -1,0 +1,100 @@
+workerPoolSpecs:
+- machineSpec:
+    machineType: n1-standard-8
+    acceleratorType: NVIDIA_TESLA_T4
+    acceleratorCount: 1
+  replicaCount: 1
+  diskSpec:
+    bootDiskType: pd-ssd
+    bootDiskSizeGb: 200
+  containerSpec:
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase12-postflight-v1
+    command:
+    - bash
+    - -c
+    - |
+      set -e
+      echo "=== Phase 12 Model Sanity: Overfit Test + Gradient Check ==="
+
+      echo "=== Stage 1: Stage 5 shards for overfit ==="
+      SHARD_DIR=/tmp/shards
+      mkdir -p ${SHARD_DIR}
+      # Only need a few shards for overfit test
+      gcloud storage cp "gs://omega-pure-data/wds_shards_v3_full/omega_shard_00000.tar" ${SHARD_DIR}/
+      gcloud storage cp "gs://omega-pure-data/wds_shards_v3_full/omega_shard_00001.tar" ${SHARD_DIR}/
+      gcloud storage cp "gs://omega-pure-data/wds_shards_v3_full/omega_shard_00002.tar" ${SHARD_DIR}/
+      echo "Staged 3 shards"
+
+      echo "=== Stage 2: Overfit Test (1 batch, 2000 steps) ==="
+      echo "If model can memorize 1 batch, loss should approach 0"
+      PYTHONUNBUFFERED=1 python3 /app/train.py \
+        --shard_dir=${SHARD_DIR} \
+        --output_dir=/gcs/omega-pure-data/checkpoints/phase12_overfit_test \
+        --hidden_dim=64 \
+        --window_size_t=32 \
+        --window_size_s=10 \
+        --lr=3.2e-4 \
+        --lambda_s=0 \
+        --static_mean_bp=40.0 \
+        --outlier_clamp_bp=500.0 \
+        --mse_scale_factor=10000.0 \
+        --leaky_factor=0.1 \
+        --warmup_epochs=0 \
+        --batch_size=64 \
+        --epochs=1 \
+        --steps_per_epoch=2000 \
+        --num_workers=0 \
+        --overfit \
+        --no_amp \
+        --mask_prob=0.0
+
+      echo "=== Stage 3: Gradient Flow Check ==="
+      python3 -c "
+      import torch
+      import sys
+      sys.path.insert(0, '/app')
+      from train import OmegaTIBWithMasking
+      from omega_epiplexity_plus_core import compute_spear_loss_unbounded
+
+      model = OmegaTIBWithMasking(hidden_dim=64, window_size=(32, 10), mask_prob=0.0)
+      model.train()
+
+      # Synthetic batch
+      x = torch.randn(4, 160, 10, 10)
+      c = torch.ones(4, 1) * 0.842
+      t = torch.randn(4) * 50  # target in BP
+
+      pred, z_core = model(x, c)
+      loss, loss_err, s_t, pred_val = compute_spear_loss_unbounded(pred, t, z_core, lambda_s=1e-4)
+      loss.backward()
+
+      print('=== GRADIENT FLOW CHECK ===')
+      total_params = 0
+      zero_grad_params = 0
+      for name, p in model.named_parameters():
+          if p.grad is not None:
+              grad_norm = p.grad.norm().item()
+              status = 'OK' if grad_norm > 1e-10 else 'ZERO GRAD!'
+              if grad_norm < 1e-10:
+                  zero_grad_params += 1
+              total_params += 1
+              print(f'  {name}: shape={list(p.shape)}, grad_norm={grad_norm:.6e} [{status}]')
+          else:
+              print(f'  {name}: shape={list(p.shape)}, grad=None [NO GRAD!]')
+              zero_grad_params += 1
+              total_params += 1
+
+      print(f'Total: {total_params} param groups, {zero_grad_params} with zero/no grad')
+      if zero_grad_params == 0:
+          print('GRADIENT FLOW: ALL PASS')
+      else:
+          print(f'GRADIENT FLOW: FAIL — {zero_grad_params} dead parameters')
+
+      print()
+      print('=== OUTPUT SANITY ===')
+      print(f'pred: shape={pred.shape}, mean={pred.mean().item():.6f}, std={pred.std().item():.6f}')
+      print(f'z_core: shape={z_core.shape}, mean={z_core.mean().item():.6f}, std={z_core.std().item():.6f}, sparsity={((z_core.abs() < 0.01).float().mean()*100):.1f}%')
+      print(f'loss: {loss.item():.6f}, loss_err: {loss_err.item():.6f}, s_t: {s_t.item():.6f}')
+      "
+
+      echo "=== DONE ==="

@@ -66,3 +66,10 @@
 2026-04-03T07:32:11+00:00 | R-001 | block | /home/zephryj/projects/omega_pure_v2/gcp/test.yaml
 2026-04-03T07:32:17+00:00 | R-005 | block | /home/zephryj/projects/omega_pure_v2/gcp/test.sh
 2026-04-03T07:32:32+00:00 | R-003 | block | /tmp/test.py
+2026-04-03T07:54:27+00:00 | R-016 | warn | /home/zephryj/projects/omega_pure_v2/train.py
+2026-04-03T07:54:30+00:00 | R-016 | warn | /home/zephryj/projects/omega_pure_v2/gcp/train.py
+2026-04-03T07:54:33+00:00 | R-016 | warn | /home/zephryj/projects/omega_pure_v2/train.py
+2026-04-03T07:54:36+00:00 | R-016 | warn | /home/zephryj/projects/omega_pure_v2/gcp/train.py
+2026-04-04T00:51:43+00:00 | R-010 | warn | /home/zephryj/projects/omega_pure_v2/omega_epiplexity_plus_core.py
+2026-04-04T00:51:51+00:00 | R-016 | warn | /home/zephryj/projects/omega_pure_v2/train.py
+2026-04-04T01:34:27+00:00 | R-001 | block | /home/zephryj/projects/omega_pure_v2/gcp/phase12_postflight_inference.yaml
