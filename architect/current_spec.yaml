@@ -86,15 +86,21 @@ training:
   target_model: Omega-TIB   # Topological Information Bottleneck
   loss: "Per-Date IC Loss (Pearson) — rank-based objective (INS-066, supersedes INS-060/062/063/064)"
   loss_function: |
-    # Per-date IC within each batch (Codex audit: global batch IC is UNFAITHFUL to directive)
-    # Group samples by date within batch, compute Pearson IC per date, average across dates
-    for date in unique_dates_in_batch:
-        mask = (batch_dates == date)
-        pred_d, target_d = pred[mask], target[mask]
-        if len(pred_d) < 2: continue
-        ic_d = pearson_corr(pred_d, target_d)  # requires std+eps guard (Gemini)
-        ic_losses.append(-ic_d)
-    loss = mean(ic_losses)
+    # [APPROXIMATION: batch-level IC, pending ETL date field for true per-date grouping]
+    # Target: Per-date IC within each batch (Codex audit: global batch IC is UNFAITHFUL to directive)
+    # Current: Batch-level Pearson IC (date not available in shard meta.json)
+    # Upgrade path: ETL V4 adds date → per-date grouping as spec originally intended
+    #
+    # Batch-level implementation:
+    pred = prediction.float().view(-1)
+    tgt = target.float().view(-1)
+    pred_c = pred - pred.mean()
+    tgt_c = tgt - tgt.mean()
+    cov = (pred_c * tgt_c).mean()
+    pred_std = sqrt(mean(pred_c^2) + eps)  # NOT clamp(std, eps) — std() backward NaN at var=0
+    tgt_std = sqrt(mean(tgt_c^2) + eps)
+    ic = cov / (pred_std * tgt_std)
+    loss = -ic  # Gemini audit: sqrt(var+eps) safe forward AND backward
   # Phase 13 Architectural Reset (External Audit Verdict 2026-04-04):
   # 1. DROP Leaky Blinding: 100x 梯度压缩导致波动率预测 (INS-065, Gemini 证明)
   # 2. DROP MSE: 高方差(190BP)低SNR(2.4%)下退化为条件均值预测 (INS-066)
@@ -142,7 +148,7 @@ inference:
 hpo:
   engine: google_vizier              # Bayesian optimization
   infrastructure: "A100 Spot (a2-highgpu-1g), 70 trials exploit, 8 parallel"
-  primary_metric: "Cross-Sectional Rank IC (Vizier MAXIMIZE, per-date Spearman average, INS-067)"
+  primary_metric: "Cross-Sectional Rank IC (Vizier MAXIMIZE, INS-067) [APPROXIMATION: global Spearman, pending per-date average when ETL adds date]"
   secondary_metric: "Cross-Sectional D9-D0 Spread (per-date, min 50 samples/date, then equal-weight average)"
   # Phase 13: IC Loss + Cross-Sectional Evaluation
   # WARNING (Codex): old global-spread thresholds NOT comparable to cross-sectional metrics

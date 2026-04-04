@@ -408,8 +408,8 @@ def assert_layer2_architecture(spec: dict, verbose: bool = False) -> list:
                 errors.append(f"STALE: model_architecture.name='{arch_name}' uses MAE naming")
             elif verbose:
                 print(f"  [OK] model_architecture.name = {arch_name}")
-        # Check 4-layer structure exists
-        for layer_key in ["layer_1_physics", "layer_2_topology", "layer_3_compression", "layer_4_prediction"]:
+        # Check 5-layer structure exists (Phase 13: AttentionPooling added as layer 4)
+        for layer_key in ["layer_1_physics", "layer_2_topology", "layer_3_compression", "layer_4_pooling", "layer_5_prediction"]:
             if model_arch.get(layer_key) is not None:
                 if verbose:
                     print(f"  [OK] model_architecture.{layer_key} = {model_arch[layer_key]}")
