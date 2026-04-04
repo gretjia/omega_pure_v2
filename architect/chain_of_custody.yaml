@@ -64,6 +64,51 @@ pipelines:
         assumption_violated: "代码默认值 = spec 值 (实际是早期 OOM 临时改的)"
     last_updated: "2026-04-03"
 
+  - directive: "2026-04-04_phase13_audit_verdict_and_roadmap.md"
+    superseded_by: "2026-04-04_phase13_audit_verdict_and_roadmap_v2.md"
+    stage: ins_created
+    insights: [INS-065, INS-066, INS-067, INS-068, INS-069]
+    spec_fields:
+      - "training.loss: IC Loss (supersedes Unbounded Spear)"
+      - "training.loss_function: complete rewrite"
+      - "training.lambda_s: 0 (remove L1)"
+      - "training.leaky_factor: DELETED"
+      - "training.static_mean_bp: DELETED"
+      - "hpo.metric: Cross-Sectional D9-D0"
+      - "model_architecture: +residual +attention_pooling +RPB_fix"
+    code_files:
+      - "omega_epiplexity_plus_core.py"
+      - "train.py"
+      - "backtest_5a.py"
+      - "gcp/phase7_inference.py"
+      - "tools/postflight_analysis.py"
+    audit_status: draft
+    audit_overrides:
+      - rejected: "INS-018 废弃 IC Loss (绝对尺度太小)"
+        reason: "尺度是推理工程问题 — cross-sectional Z-score 解决"
+        auditor: "External Audit AI Agent"
+      - rejected: "INS-060 Leaky Blinding (A股做空受限)"
+        reason: "100x 梯度压缩 → 波动率预测器。长空约束属于执行层"
+        auditor: "Gemini 3.1 Pro + External Audit AI Agent"
+    failures: []
+    last_updated: "2026-04-04"
+
+  - directive: "2026-04-04_phase13_audit_verdict_and_roadmap_v2.md"
+    stage: ins_created
+    insights: [INS-070]
+    spec_fields:
+      - "model_architecture.layer_2_topology: +cross_window_attention (INS-070)"
+    code_files:
+      - "omega_epiplexity_plus_core.py"
+    audit_status: draft
+    v2_new_content:
+      - "Volatility Sorting Illusion 诊断 (Phase 6 D9-D0=-5.92 BP)"
+      - "Shatter Window Isolation mandate (INS-070)"
+      - "64-sample Crucible Overfit Test pass criteria (loss→0.0)"
+      - "Post-LN vs Pre-LN 残差格式 (保持 spec Pre-LN)"
+    failures: []
+    last_updated: "2026-04-04"
+
 # ── 模板 (新 directive 用) ──
 # pipeline_template:
 #   directive: "<filename>"

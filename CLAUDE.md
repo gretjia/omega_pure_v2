@@ -38,7 +38,7 @@
 
 ### 元公理（Ω1-Ω6，详见 `OMEGA_LESSONS.md`）
 1. **Ω1 只信实测** — 报告/状态/ETA 必须由命令输出生成
-2. **Ω2 先量化后行动** — `du -sh` / `df -h` / 带宽实测，然后才承诺资源
+2. **Ω2 先量化后行动** — 每次资源承诺（GPU/I/O/磁盘/费用）必须与任务目的**成比例**。不成比例 = 计划有误
 3. **Ω3 测试环境=生产环境** — 本地 smoke 永不授权生产部署，canary 必须目标环境
 4. **Ω4 可执行 > 可记忆** — 已知最优方法固化为 wrapper 脚本（`gcp/safe_*.sh`）
 5. **Ω5 生产者 ≠ 验证者** — 外部审计不可删除（Codex 管代码，Gemini 管数学）
@@ -59,8 +59,15 @@
 14. **远程推送** → 必须人工确认
 15. **修改 architect/current_spec.yaml** → 必须人工确认
 
+### 外部审计强制规则（Ω5 扩展）
+15b. **Plan/Spec 变更必须经外部审计** — Claude 是起草者，不可自审。架构师 directive 摄取后，Plan 和 Spec 变更必须经 Codex (`codex exec`) + Gemini (curl API) 双路审计。Claude 不可代替外部审计员做 PASS/FAIL 判定。不可限制外审员的输出 token 数。
+15c. **代码完成后、最终审计前执行两项预审** — `/dev-cycle` Stage 4 (CODE) 完成后，Stage 5 (AUDIT CODE) 之前，强制执行：
+  - (a) **Gemini GCP 适用性审查**: Vertex AI 调用方式（pipe/FUSE/staging）、Python 效率（低效循环、torch.compile 等优化）、Google 内置算法/API 是否有更好方案、GCS I/O 模式匹配。Gemini 作为 Google 内部专家有独到优势。
+  - (b) **`/simplify` 代码质量扫描**: 检查复用、质量、效率问题，修复后再送审。
+  - 两项均在最终外部审计前完成，确保审计看到的是最终代码。不可放在部署前——那时发现问题改代码来不及审计。
+
 ### 强制工作流（由 Hook + 脚本强制执行）
-16. **新代码/新 Phase** → 走 `/dev-cycle`（含 Pre-mortem + 外部审计）
+16. **新代码/新 Phase** → 走 `/dev-cycle`（含 Pre-mortem + 外部审计，**Plan 阶段即启动外审**）
 17. **Docker 构建 + 部署** → 走 `gcp/safe_build_and_canary.sh` + `gcp/safe_submit.sh`
 18. **上传到 GCS** → 走 `gcp/safe_upload.sh`（旧 upload_shards.sh 已废弃）
 19. **部署到远程节点** → 先 `/pre-flight`，重计算走 `heavy-workload.slice`
@@ -68,18 +75,20 @@
 
 ### 热修复纪律（C-030 教训）
 21. **配置报错时只改出错字段**，禁止重写整个文件。修复后必须 `diff` 原始版本，确认无静默丢失
-22. **提交 Vertex AI Job 前**，人工检查 YAML 三项: (1) diskType 合法? (2) 关键性能配置(SSD/staging/cache)在? (3) 参数默认值是否安全(除零/边界)?
+22. **提交 Vertex AI Job 前**，人工检查 YAML 三项: (1) diskType 合法? (2) 关键性能配置(SSD/staging/cache)在? (3) 参数默认值是否安全(除零/边界)? 以上三项是具体检查，但根本原则是 **Ω2 成比例性** — 资源消耗必须与任务目的匹配
 
 ### 工程规范
 21. 禁止紧密循环 `gc.collect()` | 禁止无条件 `use_threads=True`
 22. ETL 单实例锁（fcntl.LOCK_EX） | PyArrow `iter_batches` 禁止 `.collect()`
 23. 断点续传强制（>1h 批处理必须 checkpoint）
 24. `PYTHONUNBUFFERED=1` 用于所有 nohup/后台任务
+24b. **Spot 仅用于大型训练（>2h）**。烟测、Crucible overfit、推理等短任务一律 ON_DEMAND，避免 Spot 排队浪费时间
 
-### 会话退出强制流程
-25. **Session 结束前**，必须将本次会话遇到的**所有 debug、错误、失误**压缩记录到 `OMEGA_LESSONS.md` 案例库（编号递增，每条 ≤ 2 行，归因到 Ω 公理）。包括但不限于：配置错误、API 拒绝、参数遗漏、工程踩坑、费用误判。**不可遗漏，不可延迟到下个 session。**
-25b. **新教训记录后**，**自动**运行 `/lesson-to-rule` 将教训转化为可执行规则（Meta-Harness V3: Ω4 amplifier）。post-lesson-trigger.sh 会提醒。规则生成需用户确认。
-25c. **Session 结束前**（如果本 session 有新教训或规则触发），**自动**运行 `/harness-reflect` 简报版（仅 Stage 1 盘点 + Stage 6 健康分，跳过详细分析）。
+### 经验记录强制流程（两层机制）
+25. **实时层**: `post-bash-error-tracker.sh` hook 在 Bash exit ≠ 0 时自动捕获错误到 `logs/session_errors.jsonl`（标记 `recorded: false`），即时提醒 Claude 写入 `OMEGA_LESSONS.md`（编号递增，每条 ≤ 2 行，归因到 Ω 公理）。
+25a. **兜底层**: `/handover-update` 执行时扫描 `logs/session_errors.jsonl` 中 `recorded: false` 的条目，**强制补录**遗漏的教训到 `OMEGA_LESSONS.md`，然后标记为 `recorded: true`。
+25b. **新教训记录后**，**自动**运行 `/lesson-to-rule` 将教训转化为可执行规则（Meta-Harness V3: Ω4 amplifier）。`post-lesson-trigger.sh` 会提醒。规则生成需用户确认。
+25c. **`/handover-update` 执行时**（如有新教训或规则触发），**自动**运行 `/harness-reflect` 简报版（仅 Stage 1 盘点 + Stage 6 健康分，跳过详细分析）。
 
 ### Living Harness — 自我进化的有机体
 

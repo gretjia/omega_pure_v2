@@ -122,6 +122,26 @@ class FiniteWindowTopologicalAttention(nn.Module):
         return out
 
 
+class AttentionPooling(nn.Module):
+    """
+    Phase 13 B.1: Learnable attention pooling over spatiotemporal tokens.
+    Replaces Global Mean Pooling that destroyed sequence order information.
+    pool = sum(softmax(z @ W_pool * scale) * z, dim=tokens)
+    """
+    def __init__(self, dim: int):
+        super().__init__()
+        self.W_pool = nn.Parameter(torch.empty(dim))
+        self.scale = dim ** -0.5  # Gemini audit: /sqrt(D) prevents softmax degeneration
+        nn.init.normal_(self.W_pool, std=0.02)
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        B, T, S, D = z.shape
+        z_flat = z.view(B, T * S, D)
+        scores = (z_flat @ self.W_pool) * self.scale
+        weights = torch.softmax(scores, dim=1)
+        return torch.einsum('bt,btd->bd', weights, z_flat)
+
+
 class OmegaMathematicalCompressor(nn.Module):
     """
     Omega-TIB: Topological Information Bottleneck.
@@ -137,6 +157,7 @@ class OmegaMathematicalCompressor(nn.Module):
         # LOB features (ch 0-4) + q_metaorder (1) = 6 input dims
         self.input_proj = nn.Linear(6, hidden_dim)
         self.tda_layer = FiniteWindowTopologicalAttention(hidden_dim, window_size)
+        self.tda_pre_ln = nn.LayerNorm(hidden_dim)  # Phase 13 B.2: Pre-LN for residual
 
         self.epiplexity_bottleneck = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim // 2),
@@ -144,6 +165,11 @@ class OmegaMathematicalCompressor(nn.Module):
             nn.Linear(hidden_dim // 2, hidden_dim // 4)
         )
         self.intent_decoder = nn.Linear(hidden_dim // 4, 1)
+        self.attention_pool = AttentionPooling(hidden_dim // 4)  # Phase 13 B.1
+
+    def tda_with_residual(self, x: torch.Tensor) -> torch.Tensor:
+        """Phase 13 B.2: Pre-LN residual. out = x + tda(LayerNorm(x))"""
+        return x + self.tda_layer(self.tda_pre_ln(x))
 
     def forward(self, x_2d: torch.Tensor, c_friction: torch.Tensor):
         """
@@ -173,14 +199,14 @@ class OmegaMathematicalCompressor(nn.Module):
         native_manifold = torch.cat([lob_features, q_metaorder], dim=-1)  # [B, T, S, 6]
         x = self.input_proj(native_manifold)
 
-        # 3. Topology layer: finite window 2D attention
-        structured_features = self.tda_layer(x)
+        # 3. Topology layer: finite window 2D attention with Pre-LN residual (Phase 13 B.2)
+        structured_features = self.tda_with_residual(x)
 
         # 4. Compression layer: information bottleneck
         z_core = self.epiplexity_bottleneck(structured_features)
 
-        # 5. Prediction layer: global pooling → scalar intent
-        pooled_z = torch.mean(z_core, dim=[1, 2])
+        # 5. Prediction layer: attention pooling → scalar intent (Phase 13 B.1)
+        pooled_z = self.attention_pool(z_core)
         main_force_prediction = self.intent_decoder(pooled_z)
 
         return main_force_prediction, z_core

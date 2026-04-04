@@ -1,130 +1,75 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-04-04 — **STATUS: Phase 12 post-flight COMPLETE — 信号不可交易，等待架构师审计。**
+Last Updated: 2026-04-04 — **STATUS: Phase 13 Mandate B COMPLETE — AttentionPooling + Pre-LN 残差已实现并通过 Crucible overfit test。下一步: Mandate A (IC Loss)。**
 
 ## Current State
-- **Phase 12 训练 COMPLETE**: 20 epochs, best D9-D0=4.48BP (E0), checkpoints 在 GCS
-- **Phase 12 Post-flight COMPLETE**: E0 + E19 双模型推理完成，信号不足
-- **8 轮外部审计 COMPLETE**: 代码正确，发现并修复 torch.compile 静默加载 bug
-- **Living Harness V3**: 16 规则 + 10 incidents + 10 hooks + 9 skills
+- **Phase 13 Mandate B DONE**: AttentionPooling 替换 GMP + Pre-LN 残差 + RPB 梯度解锁
+- **Crucible overfit test PASS**: 瞬时 loss≈0.15 (R²=0.96), pred_std 非零, 单调递减
+- **Docker phase13-v1 已构建**: canary 正确拒绝旧 checkpoint (Phase 13 key guard 工作)
+- **Phase 13 spec FINAL**: IC Loss + Cross-Sectional + Topological Unblocking (Codex+Gemini 审计通过)
+- **Mandate A (IC Loss) 待实施**: Loss 函数仍是 Phase 12 Unbounded Spear MSE
 
-## Phase 12 Post-Flight 结果
-
-### E0 (best.pt, MDL 未激活) vs E19 (latest.pt, MDL 激活后)
-
-| 指标 | E0 | E19 | Phase 11c baseline | 判定 |
-|------|-----|------|-------------------|------|
-| pred_std | 26.61 BP | 18.57 BP | 5.64 BP | 方差恢复 ✓ |
-| D9-D0 spread | 4.51 BP | 1.29 BP | 8.90 BP | 不足 ✗ |
-| Pearson IC | 0.0046 | 0.0001 | 0.0210 | 退步 ✗ |
-| Spearman Rank IC | -0.0206 | -0.0297 | — | **负值** ✗ |
-| Monotonicity | 7/9 | 4/9 | — | E0 略好 |
-| z_sparsity | 5.4% | 18.5% | — | MDL 生效 |
-| Cost coverage | 4.5/25 BP | 1.3/25 BP | — | 不可交易 |
-
-### 关键诊断
-1. **方差坍缩已解决**: Unbounded Spear 成功恢复 pred_std (5.64→26.61 BP)
-2. **判别力消失**: D9-D0 从 Phase 11c 的 8.90 退步到 4.51 BP
-3. **Rank IC 为负**: 模型排序能力比随机差
-4. **MDL 压缩杀信号**: D9-D0 从 E0 的 4.51 单调降到 E19 的 1.29，lambda_s=1e-4 仍太强
-5. **结论**: 不是代码 bug（8 轮审计确认），是模型/Loss 架构层面问题
-
-## Changes This Session
-
-### 代码修复（8 轮外部审计驱动）
-1. **[CRITICAL] torch.compile `_orig_mod.` 静默加载修复**
-   - `train.py`: save 端 strip `_orig_mod.` 前缀
-   - `backtest_5a.py`: load 端防御性 strip + 诊断日志
-   - 此 bug 可能导致历次"训练成功推理失败"
-2. **[CRITICAL] backtest_5a.py 默认值对齐**: hidden_dim=64, window_t=32, costs_bp=25
-3. **[CRITICAL] pred_bp 量纲修复**: `prediction * 10000.0` (raw logit → BP)
-4. **[HIGH] SRL overflow clamp**: `±1e12` before symlog (train.py + backtest_5a.py)
-5. **[LOW] 死代码清理**: 删除 `compute_spear_loss_moment_matched`, 修复默认值, core SRL autocast
-6. **[SYNC] gcp/ 目录同步**: 所有 .py 文件与根目录一致
-
-### 新教训 (C-062~C-064)
-- C-062: torch.compile `_orig_mod.` 静默杀推理
-- C-063: GCS pipe 不可用于推理，用 FUSE `/gcs/`
-- C-064: 推理 staging 只下载需要的 split
+## Changes This Session (3 commits)
+- `481870b` feat: Phase 13 Mandate B — AttentionPooling + Pre-LN Residual (8 文件, +144 params)
+- `3018cb0` fix: lambda_s 0→0 spec 对齐 + gcp/ 完全同步 + q_metaorder clamp
+- `3a5a249` docs: C-068~C-070 + Ω2 进化 + harness 硬化
 
 ## Key Decisions
-- **E0 作为 post-flight 模型**: MDL warmup=2 前的未压缩模型，val D9-D0 最优
-- **Rank IC 为负**: 模型排序能力比随机差，不是 lambda_s 问题
-- **Outlier clamp 维持架构师设计**: clamp 在居中后，右尾 540 BP 截断
-- **GCS FUSE 替代 pipe**: Gemini 确认 FUSE 是 Vertex AI 推荐方案
+- **Pipeline Gate Override for Mandate B**: 架构修复不是"换 Loss"，Crucible test 替代 Strategy B Step 1
+- **Pre-LN > Post-LN**: V2 directive 说 Post-LN, Gemini 审计选 Pre-LN (防方差爆炸), 保持 spec [FINAL]
+- **B.3 窗口隔离推迟**: 先验证 B.1+B.2，跨窗注意力推迟到 Phase 13 P2 (INS-070)
+- **Ω2 进化**: "du -sh/df -h" → "资源承诺必须与任务目的成比例" (meta 原则, 非补窟窿)
+- **einsum 替换 broadcast-multiply-sum**: Gemini 建议 /sqrt(D) 缩放 + simplify 建议 einsum
 
-## Next Steps（等架构师裁决）
-1. **[P0] 架构师审计**: 汇报 D9-D0=4.51 BP 和 Rank IC=-0.02 的诊断
-2. **[P1] HPO 探索**: Vizier 70-trial, lambda_s 搜索含 0, 验证是否有可交易超参组合
-3. **[P2] 损失函数重新审视**: Rank IC 为负可能需要回到 IC-based Loss 或混合 Loss
+## Next Steps
+1. **[P0] Mandate A — IC Loss + Cross-Sectional Evaluation**: 替换 MSE → Per-Date IC Loss, 重构 validate() 和 backtest_5a.py 的截面评估
+2. **[P1] Phase 13 全面训练**: IC Loss + 修复后架构, Vizier HPO, Cross-Sectional Rank IC 为主指标
+3. **[P2] Mandate B.3 — Window Isolation**: 如 P0+P1 效果不够, 实施跨窗注意力 (INS-070)
 
 ## Warnings
-- **linux1 SSH 不稳定**: OOM 后反复 Connection refused，推理已改用 Vertex AI
-- **gcp/phase7_inference.py 未被 Dockerfile COPY**: 需要更新 Dockerfile 或 YAML 内联
-
-## 8-Round External Audit Summary
-
-| 轮次 | 工具 | 结果 |
-|------|------|------|
-| R1: Core model+loss | Codex | 9 PASS, 1 FAIL (SRL overflow → 已修) |
-| R2: Spec-code alignment | Codex | 4 CRITICAL drift (默认值 → 已修) |
-| R3: Train-serve skew | Codex | FRT 一致, 2 外部问题 (→ 已修) |
-| R4: Math correctness | Gemini | 6 PASS, 2 WARNING (clamp 非对称 → 维持) |
-| R5: Directive compliance | Codex | 活跃路径全合规, 4 死代码 (→ 已清理) |
-| R6: Fix verification | Codex | 10 PASS, 2 FAIL (_orig_mod_ + gcp/ → 已修) |
-| R7: Fix math verification | Gemini | 3/3 PASS |
-| R8: Final torch.compile | Codex | 5/5 PASS |
+- **Loss 函数仍是 Phase 12 MSE**: Mandate A 尚未实施, 当前训练无意义
+- **Crucible loss=0.674 是 running average**: 实际瞬时 loss≈0.15 (C-070 教训, 必须增量分析)
+- **lambda_s default 已改为 0**: 旧 YAML 如果不指定 lambda_s, 现在会用 0 (Phase 13 正确行为)
+- **gcp/ 镜像已完全同步**: 但结构性债务仍在 (5 文件手动 cp)
 
 ## Remote Node Status
-- **linux1**: SSH 不稳定 (OOM 后恢复缓慢), 推理改用 Vertex AI
-- **Vertex AI**: T4 GPU, 推理正常 (GCS FUSE 模式)
+本次会话未涉及远程节点。Crucible test 在 Vertex AI L4 ON_DEMAND 完成。
 
 ## Architect Insights (本次会话)
-- **torch.compile _orig_mod. 是潜在历史元凶**: 可能解释历次 Phase 的"训练好推理差"
-- **方差恢复但判别力消失**: Unbounded Spear 解决了方差坍缩，但模型未学到排序信号
-- **MDL 确认有害**: D9-D0 从 E0→E19 单调下降，压缩杀信号
-- **GCS FUSE 是正确方案**: Gemini 确认 pipe:gcloud 是反模式
+- INS-070: Shatter Window Isolation — 跨窗注意力打破 0.64 天感受野 (deferred to P2)
+- V2 directive 已归档: architect/directives/2026-04-04_phase13_audit_verdict_and_roadmap_v2.md
 
 ## Machine-Readable State
 ```yaml
-phase: "12_unbounded_spear"
-status: "postflight_complete_signal_insufficient"
+phase: "13_mandate_b_done_mandate_a_next"
+status: "mandate_b_complete_crucible_pass"
+blocking_gate: "Mandate A (IC Loss) 未实施 — MSE 仍在代码中"
 harness:
   version: "v3_living"
-  rules_active: 16
-  incidents_total: 64
+  rules_active: 17
+  incidents_total: 70  # +C-068~C-070
   hooks: 10
   skills: 9
-docker: "omega-tib:phase12-postflight-v1"
-formal_training:
-  job_id: "340079341608108032"
-  status: SUCCEEDED
-  best_d9d0: {epoch: 0, d9d0: 4.48, saved_as: "best.pt"}
-  checkpoint_dir: "gs://omega-pure-data/checkpoints/phase12_unbounded_v1/"
-postflight:
-  status: COMPLETE
-  e0_d9d0: 4.51
-  e19_d9d0: 1.29
-  e0_rank_ic: -0.0206
-  e0_pearson_ic: 0.0046
-  e0_pred_std: 26.61
-  e0_z_sparsity: 0.054
-  samples: 1904747
-  symbols: 5200
-  verdict: "NOT TRADEABLE — spread 4.51 < cost 25 BP"
-  parquet_e0: "gs://omega-pure-data/postflight/phase12_val_predictions.parquet"
-  parquet_e19: "gs://omega-pure-data/postflight/phase12_latest_val_predictions.parquet"
-audit:
-  rounds: 8
-  tools: ["Codex", "Gemini"]
-  critical_fix: "torch.compile _orig_mod. silent load failure"
-  all_active_paths: "COMPLIANT"
-code_fixes:
-  - "torch.compile _orig_mod_ strip (save+load)"
-  - "backtest defaults aligned (hd=64, wt=32, costs=25)"
-  - "pred_bp * 10000 scaling"
-  - "SRL overflow clamp ±1e12"
-  - "dead code cleanup"
-  - "gcp/ sync"
-new_lessons: ["C-062", "C-063", "C-064"]
-next_decision: "architect_audit"
+  omega2_evolved: "proportionality principle (not just du/df)"
+docker: "omega-tib:phase13-v1"
+crucible:
+  job_id: "5402703665888755712"
+  instantaneous_loss_final: 0.15
+  running_avg_loss: 0.674
+  r_squared: 0.96
+  pred_std: 0.010
+  verdict: "PASS — architecture learns, gradients flow, model not collapsed"
+spec:
+  status: "FINAL — Codex 9/9 + Gemini 7/7"
+  loss: "Per-Date IC Loss (Pearson) — NOT YET IMPLEMENTED"
+  pooling: "AttentionPooling — IMPLEMENTED (phase13-v1)"
+  residual: "Pre-LN — IMPLEMENTED (phase13-v1)"
+  lambda_s: 0
+  window_isolation: "INS-070 — DEFERRED to P2"
+new_lessons: ["C-068", "C-069", "C-070"]
+new_insights: ["INS-070"]
+new_harness_rules: ["15b external audit mandatory", "15c pre-audit quality", "24b Spot only >2h", "25/25a two-layer error tracking"]
+external_audits:
+  plan_audit: "Codex 6/4→fixed, Gemini 6/1"
+  code_audit: "Codex 7/8 (1 deferred=Mandate A), Gemini 7/7"
+  gcp_audit: "Gemini 6/6 PASS"
 ```

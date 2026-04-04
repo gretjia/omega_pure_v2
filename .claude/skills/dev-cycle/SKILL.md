@@ -16,7 +16,28 @@ user-invocable: true
 
 如果没有提供描述，询问用户要做什么。
 
-## 十阶段流程
+## 前置门禁: Pipeline Validation Gate (C-065/C-066)
+
+**在任何涉及 Loss 函数或训练范式变更的 dev-cycle 开始之前，强制检查：**
+
+1. 读取 `handover/STRATEGY_B_PIPELINE_VALIDATION.md`
+2. 检查 Strategy B Step 1 是否已完成（历史 checkpoint 用修复后代码重跑 post-flight）
+3. 如果未完成：
+   ```
+   ⛔ PIPELINE VALIDATION GATE — BLOCKED
+   C-065/C-066: 不可在管线未验证时修改 Loss 或开始新训练。
+   Phase 6→12 已重复 7 次"训练好看→post-flight 失败"循环。
+   
+   必须先完成: Strategy B Step 1 (重跑历史 checkpoint post-flight)
+   详见: handover/STRATEGY_B_PIPELINE_VALIDATION.md
+   ```
+4. 如果已完成且结果记录在案 → 放行
+
+**豁免条件**：仅修改推理/评估代码（不涉及训练）的 dev-cycle 不受此门禁约束。
+
+---
+
+## 十一阶段流程
 
 每个阶段间有 PASS/FAIL 门禁。FAIL 时循环修复，不跳过。
 

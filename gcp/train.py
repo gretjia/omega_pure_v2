@@ -235,10 +235,10 @@ class OmegaTIBWithMasking(nn.Module):
         # === MASKING INSERTION POINT (spec: after input_proj, before tda) ===
         x = self.masking(x)
 
-        # Step 3-5: Topology → Bottleneck → Prediction
-        structured_features = self.model.tda_layer(x)
+        # Step 3-5: Topology (Pre-LN residual) → Bottleneck → Attention Pooling (Phase 13 B.1/B.2)
+        structured_features = self.model.tda_with_residual(x)
         z_core = self.model.epiplexity_bottleneck(structured_features)
-        pooled_z = torch.mean(z_core, dim=[1, 2])
+        pooled_z = self.model.attention_pool(z_core)
         prediction = self.model.intent_decoder(pooled_z)
 
         return prediction, z_core
@@ -517,7 +517,8 @@ def main():
     parser.add_argument("--steps_per_epoch", type=int, default=5000)
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--lambda_s", type=float, default=1e-4)
+    parser.add_argument("--lambda_s", type=float, default=0,
+                        help="L1 MDL weight (Phase 13 INS-069: fixed at 0, L1 kills signal at 2.4%% SNR)")
     parser.add_argument("--huber_delta", type=float, default=200.0,
                         help="DEPRECATED: Phase 12 Unbounded Spear removed Huber. Kept for YAML compat.")
     parser.add_argument("--static_mean_bp", type=float, default=40.0,

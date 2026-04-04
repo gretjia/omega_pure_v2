@@ -1,0 +1,47 @@
+workerPoolSpecs:
+- machineSpec:
+    machineType: g2-standard-8
+    acceleratorType: NVIDIA_L4
+    acceleratorCount: 1
+  replicaCount: 1
+  diskSpec:
+    bootDiskType: pd-ssd
+    bootDiskSizeGb: 100
+  containerSpec:
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase13-v1
+    command:
+    - bash
+    - -c
+    - |
+      set -e
+      echo "=== Phase 13 Crucible: 64-sample Overfit Test ==="
+      echo "Goal: loss→0.0, RPB grad_norm >> 0.08 (was dead under GMP)"
+      echo "Architecture: AttentionPooling + Pre-LN Residual (Mandate B)"
+
+      echo "=== Pipe mode: 1 shard, no staging needed ==="
+      SHARD_URL="pipe:gcloud storage cat gs://omega-pure-data/wds_shards_v3_full/omega_shard_00001.tar"
+
+      echo "=== Crucible Overfit Test (2000 steps, 64 samples) ==="
+      PYTHONUNBUFFERED=1 python3 /app/train.py \
+        --shard_dir=gs://omega-pure-data/wds_shards_v3_full \
+        --output_dir=/tmp/crucible_phase13 \
+        --hidden_dim=64 \
+        --window_size_t=32 \
+        --window_size_s=10 \
+        --lr=1e-3 \
+        --lambda_s=0 \
+        --batch_size=64 \
+        --coarse_graining_factor=1 \
+        --epochs=1 \
+        --steps_per_epoch=2000 \
+        --num_workers=2 \
+        --no_amp \
+        --overfit \
+        --mask_prob=0.0 \
+        --max_val_steps=1 \
+        --val_split=0.01
+
+      echo "=== Crucible Complete ==="
+      echo "Check: final loss should be ~0.0, pred_std should be non-trivial"
+scheduling:
+  strategy: ON_DEMAND
