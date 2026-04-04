@@ -158,6 +158,7 @@
 - **C-068**: **归档指令必须逐字对比原文，不可仅凭标题/日期判重复**。V2 directive（POST-MORTEM）含全新 §1 波动率幻觉诊断 + Mandate B.3 窗口隔离 + Crucible 测试标准，但 Claude 只看到日期相同就报"已摄取"，差点丢失 INS-070。判重复 = 读 diff，不是读标题（Ω1: 只信实测——读文件内容，不信文件名推断）
 - **C-069**: **Overfit/Crucible test 必须跳过验证阶段**。Crucible 目的是验证 64 样本能否 overfit 到 loss→0，读 399 val shards (~400GB) 完全无意义。提交前必须加 `--max_val_steps 1` 或 `--val_split 0.01`。2000 步 overfit ~2min 完事，不应花 15+min 读 val 数据（Ω2: 资源与目的不成比例 = 计划有误）
 - **C-070**: **train.py 的 Loss= 是 running average，不是瞬时值**。Crucible 2000 步后报 Loss=0.674，误判为"未归零"。实际增量分析：最后 200 步瞬时 loss≈0.15（RMSE≈39BP，R²≈0.96）。累积平均被早期高 loss (5.2, 2.2...) 拖高。读训练日志必须区分 running avg vs instantaneous，不可直接引用显示值下结论（Ω1: 只信实测 — "Loss=0.674"不是最终 loss）
+- **C-071**: **改 Loss 后 Docker tag 和 Dockerfile 依赖必须同步审计**。Mandate A 换 IC Loss 后：(1) crucible config 仍指向 phase13-v1 (旧 MSE 镜像)，如不修正 Crucible 会用旧代码跑 (2) validate() 新增 scipy.stats.spearmanr，但 Dockerfile 未装 scipy → 运行时 ImportError。两个 bug 都是"代码改了但部署链没跟上"。修改核心代码后必须审计: Docker tag、Dockerfile 依赖、YAML config 参数（Ω3: 测试环境=生产环境 + Ω1: 只信实测——本地编译通过≠容器能跑）
 
 ---
 

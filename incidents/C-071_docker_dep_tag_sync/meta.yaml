@@ -1,0 +1,9 @@
+id: C-071
+title: "Docker tag 和 Dockerfile 依赖必须同步审计"
+date: "2026-04-04"
+severity: medium
+pattern: deploy_alignment
+axiom: "Ω3 + Ω1"
+enforcement: active
+rule_id: R-018
+related: [C-053, C-058]

@@ -1,0 +1,43 @@
+# R-018: Docker Dockerfile 依赖 + YAML imageUri tag 必须与代码同步
+id: R-018
+name: "Check Docker dependency and image tag sync after code changes"
+source_incidents: [C-071]
+axiom: "Ω3 + Ω1"
+
+trigger:
+  event: PostToolUse
+  matcher: "Edit|Write"
+  file_glob: "gcp/Dockerfile|gcp/*.yaml|train.py|omega_epiplexity_plus_core.py|backtest_5a.py"
+
+check:
+  type: command
+  # Two checks:
+  # 1. Any new 'from X import' in gcp/*.py not covered by Dockerfile pip install
+  # 2. YAML imageUri tag should match latest safe_build version
+  pattern: |
+    echo "--- Dependency check ---" &&
+    for mod in scipy numpy torch webdataset; do
+      if grep -r "from ${mod}" gcp/train.py gcp/backtest_5a.py gcp/omega_epiplexity_plus_core.py 2>/dev/null | grep -q .; then
+        if ! grep -q "${mod}" gcp/Dockerfile; then
+          echo "WARN: ${mod} imported in gcp/*.py but not in Dockerfile pip install"
+        fi
+      fi
+    done &&
+    echo "--- Tag check ---" &&
+    echo "Verify gcp/*.yaml imageUri tags match your intended Docker build version"
+  scope: content
+
+enforcement: warn
+message: |
+  C-071: 代码改了但 Docker 部署链没跟上。两类常见 bug:
+  (1) 新 import (如 scipy) 未加到 Dockerfile pip install → 运行时 ImportError
+  (2) YAML config imageUri 仍指向旧 tag → 用旧代码跑新测试
+  修复: 改核心代码后必须检查 gcp/Dockerfile 依赖 + gcp/*.yaml tag 版本
+  trace: incidents/C-071_docker_dep_tag_sync/
+
+stats:
+  created: "2026-04-04"
+  times_triggered: 0
+  times_bypassed: 0
+  false_positives: 0
+  last_triggered: null

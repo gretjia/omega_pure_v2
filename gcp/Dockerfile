@@ -8,7 +8,7 @@
 FROM us-docker.pkg.dev/vertex-ai/training/pytorch-gpu.2-2.py310:latest
 
 # Pre-install dependencies (eliminates ~3 min pip install on every Spot restart)
-RUN pip install --no-cache-dir webdataset cloudml-hypertune
+RUN pip install --no-cache-dir webdataset cloudml-hypertune scipy
 
 # Copy training scripts (eliminates ~1 min gcloud storage cp on every restart)
 COPY train.py backtest_5a.py phase7_inference.py omega_epiplexity_plus_core.py omega_webdataset_loader.py /app/
