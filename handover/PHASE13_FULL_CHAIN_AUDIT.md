@@ -208,18 +208,25 @@ Phase 12 实测 D9-D0=4.48 BP < 25 BP 交易成本 (NOT TRADEABLE)
 | 1800 | 0.075 | -0.864 | ~0.86 |
 | **Final** | **0.073** | **-0.875** | **~0.88 (running avg)** |
 
-| 指标 | Phase 12 (MSE) | Phase 13 (IC Loss) |
-|------|---------------|-------------------|
-| Val D9-D0 | -1.35 BP | +435.51 BP |
-| Val Std_yhat | 41.65 BP | 333.38 BP |
-| Val Rank IC | (未测) | **0.140** |
-| Val Pearson IC | (未测) | **0.200** |
-| Pred_std 趋势 | 0.0078→0.0015 (↓5x) | 0.0092→0.0072 (↓1.3x) |
+| 指标 | Phase 12 (MSE) | Phase 13 (IC Loss) | 可比性 |
+|------|---------------|-------------------|--------|
+| **Val 样本量** | **5,000** | **64** | **不可比 — 78x 差异** |
+| Val D9-D0 | -1.35 BP | +435.51 BP | ❌ Phase 13 仅 top 6 vs bottom 6 样本，纯噪声 |
+| Val Std_yhat | 41.65 BP | 333.38 BP | ❌ 64 样本 std 不稳定 |
+| Val Rank IC | (未测) | 0.140 | ⚠️ 64 样本方向性参考，不可作为性能指标 |
+| Val Pearson IC | (未测) | 0.200 | ⚠️ 同上 |
+| **Train Pred_std 趋势** | **0.0078→0.0015 (↓5x)** | **0.0092→0.0072 (↓1.3x)** | **✅ 可比 — 同为训练集 64 样本** |
 
-**关键差异:**
-1. Phase 13 Pred_std 衰减幅度远小于 Phase 12 (1.3x vs 5x)
-2. Phase 13 Val Rank IC=0.140 (虽是 overfit 小样本，但方向正确)
-3. Phase 12 Val D9-D0 为负 (-1.35)，Phase 13 为正 (+435)
+**⚠️ 数据可信度警告:**
+- Phase 12 val: 1 shard = 5,000 samples (有一定统计意义)
+- Phase 13 val: `--max_val_steps=1` = 仅 1 batch = 64 samples (无统计意义)
+- D9-D0、Std_yhat、IC 三项 val 指标在 64 样本上不具备可信度
+- **唯一可靠对比: 训练集 Pred_std 趋势** (同为 64 样本 overfit，条件一致)
+
+**可靠结论 (仅基于可比数据):**
+1. Train Pred_std 衰减: Phase 13 (1.3x) 远优于 Phase 12 (5x) — 方差坍缩风险更低
+2. 两者均能 overfit: Phase 12 loss 8.35→0.073, Phase 13 IC 0.04→0.88
+3. Val 指标需等正式训练 (~190 万 val samples) 才有意义
 
 ### 3.4 linux1 本地验证
 
