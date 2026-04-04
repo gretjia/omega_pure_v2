@@ -60,6 +60,23 @@
             "type": "command",
             "command": ".claude/hooks/post-upload-verify.sh",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": ".claude/hooks/post-bash-error-tracker.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/post-bash-error-tracker.sh",
+            "timeout": 10
           }
         ]
       }

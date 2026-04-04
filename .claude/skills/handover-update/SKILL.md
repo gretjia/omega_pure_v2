@@ -16,6 +16,10 @@ user_invocable: true
 - `git log --oneline -10` 查看本次会话的 commits
 - `git diff --stat` 查看未提交的变更
 - 回顾本次会话的关键决策
+- **扫描未记录错误（Karpathy 兜底）**：
+  - 读取 `logs/session_errors.jsonl`，检查 `"recorded": false` 的条目
+  - 如有未记录错误，**必须先写入 OMEGA_LESSONS.md 并执行 /lesson-to-rule**，然后再继续 handover
+  - 将已处理的条目标记为 `"recorded": true`
 - 检查远程节点状态（如本次会话涉及 ETL/部署）：
   - `ssh linux1-lx 'ps aux | grep python3 | grep -v grep; df -h /omega_pool'` (如可达)
   - `ssh windows1-w1 'ps aux | grep python3 | grep -v grep; df -h /omega_pool'` (如可达)
