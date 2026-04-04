@@ -91,9 +91,10 @@ class OmegaVolumeClockStateMachine:
         self.bar_last_tick = None
         self.bar_first_price = 0.0
 
-        # Streaming bounded buffer: (spatial_bar, vwap) pairs
+        # Streaming bounded buffer: (spatial_bar, vwap, date) triples
         self.bar_buffer = []       # list of spatial_bar arrays
         self.vwap_buffer = []      # list of vwap floats
+        self.date_buffer = []      # list of date values (per bar)
         self.emit_cursor = 0       # next window start index
 
         # Daily tracking
@@ -154,10 +155,11 @@ class OmegaVolumeClockStateMachine:
 
         return None, None
 
-    def add_bar_and_try_emit(self, spatial_bar: np.ndarray, bar_vwap: float):
-        """Add bar to buffer. Yield (manifold, target) for each emittable window."""
+    def add_bar_and_try_emit(self, spatial_bar: np.ndarray, bar_vwap: float, bar_date=None):
+        """Add bar to buffer. Yield (manifold, target, date) for each emittable window."""
         self.bar_buffer.append(spatial_bar)
         self.vwap_buffer.append(bar_vwap)
+        self.date_buffer.append(bar_date)
 
         results = []
         n = len(self.bar_buffer)
@@ -174,8 +176,9 @@ class OmegaVolumeClockStateMachine:
             entry_vwap = self.vwap_buffer[last_bar_idx + 1]
             exit_vwap = self.vwap_buffer[target_exit_idx]
             target = (exit_vwap - entry_vwap) / (entry_vwap + 1e-8) * 10000.0
+            signal_date = self.date_buffer[last_bar_idx]  # date of the signal bar
 
-            results.append((manifold, target))
+            results.append((manifold, target, signal_date))
             self.emit_cursor += STRIDE
 
         # Trim consumed bars to bound memory (hard cap: MAX_BUFFER_SIZE)
@@ -184,6 +187,7 @@ class OmegaVolumeClockStateMachine:
             if trim > 0:
                 self.bar_buffer = self.bar_buffer[trim:]
                 self.vwap_buffer = self.vwap_buffer[trim:]
+                self.date_buffer = self.date_buffer[trim:]
                 self.emit_cursor = max(0, self.emit_cursor - trim)
 
         return results
@@ -366,6 +370,11 @@ def _worker_etl(worker_id, target_symbols, all_files, shard_dir,
             sample_idx = ckpt['sample_idx']
             total_ticks = ckpt['total_ticks']
             global_states = ckpt['global_states']
+            # Migrate v3 checkpoints: add date_buffer if missing
+            for sym, ctx in global_states.items():
+                sm = ctx['sm']
+                if not hasattr(sm, 'date_buffer'):
+                    sm.date_buffer = [None] * len(sm.bar_buffer)
             # Delete potentially incomplete last shard
             max_shard = _scan_max_shard(shard_dir)
             if max_shard >= 0:
@@ -469,14 +478,14 @@ def _worker_etl(worker_id, target_symbols, all_files, shard_dir,
 
                 spatial_bar, bar_vwap = sm.push_tick_fast(price, vol_tick, snapshot)
                 if spatial_bar is not None:
-                    emissions = sm.add_bar_and_try_emit(spatial_bar, bar_vwap)
-                    for manifold, target_val in emissions:
+                    emissions = sm.add_bar_and_try_emit(spatial_bar, bar_vwap, ctx['curr_date'])
+                    for manifold, target_val, sample_date in emissions:
                         sink.write({
                             "__key__": f"{symbol.replace('.', '_')}_{sample_idx:09d}",
                             "manifold_2d.npy": manifold,
                             "target.npy": np.array([target_val], dtype=np.float32),
                             "c_friction.npy": np.array([sm.c_friction], dtype=np.float32),
-                            "meta.json": {"symbol": symbol, "timestamp": str(sample_idx)}
+                            "meta.json": {"symbol": symbol, "date": str(sample_date), "timestamp": str(sample_idx)}
                         })
                         sample_idx += 1
 
