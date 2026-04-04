@@ -27,17 +27,18 @@ Quantitative finance research: Finite Window Topological Attention + MDL compres
 | **`gcp/phase7_inference.py`** | ~490 | 全量推理管线（输出 parquet + z_sparsity） | _orig_mod. strip / FUSE vs pipe |
 | **`omega_axioms.py`** | ~140 | 公理断言模块（37 checks） | `python3 omega_axioms.py --verbose` |
 
-### 模型架构一览（24,437 参数）
+### 模型架构一览（24,581 参数 — Phase 13）
 ```
 Input [B, 160, 10, 10] + c_friction [B, 1]
   │
   ├─ SRL Inverter (NO_GRAD): ch7/8/9 → q_metaorder [B, 160]    # 物理层，不可学
   ├─ FRT: ch0-4 → relative features [B, 160, 10, 5]             # 特征工程（在 wrapper 中）
   │
-  ├─ Concat [5 LOB + 1 SRL] → input_proj(6→64) → LayerNorm(64)
-  ├─ FiniteWindowTopologicalAttention(dim=64, window=(32,10), heads=4)  # 87% 参数
+  ├─ Concat [5 LOB + 1 SRL] → input_proj(6→64) → Pre-LN(64)    # Phase 13: Pre-LN
+  ├─ FiniteWindowTopologicalAttention(dim=64, window=(32,10), heads=4)
+  ├─ Residual: x + tda(LN(x))                                   # Phase 13: Residual
   ├─ EpiplexityBottleneck: Linear(64→32) → GELU → Linear(32→16)
-  ├─ Global Mean Pooling over [T, S] → [B, 16]
+  ├─ AttentionPooling over [T, S] → [B, 16]                     # Phase 13: replaces Mean Pool
   └─ IntentDecoder: Linear(16→1) → scalar prediction
 ```
 
@@ -47,14 +48,15 @@ Input [B, 160, 10, 10] + c_friction [B, 1]
 
 | Report | Location | Content |
 |--------|----------|---------|
+| **Phase 13 全链审计** | [`handover/PHASE13_FULL_CHAIN_AUDIT.md`](handover/PHASE13_FULL_CHAIN_AUDIT.md) | Phase 12→13 完整决策链 + 13 个证据附录 + GO/NO-GO 清单 |
 | **Phase 12 架构师审计简报** | [`handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md`](handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md) | 11 轮外部审计 + post-flight + overfit test + 6 个架构师裁决问题 |
 | **Handover 状态** | [`handover/LATEST.md`](handover/LATEST.md) | 当前状态 + machine-readable YAML |
-| **经验库** | [`OMEGA_LESSONS.md`](OMEGA_LESSONS.md) | 64 条教训 (C-001~C-064) + 6 条元公理 (Ω1-Ω6) |
-| **事件 Trace Vault** | [`incidents/INDEX.yaml`](incidents/INDEX.yaml) | 64 事件索引 + 10 个完整 trace |
-| **架构师指令时间线** | [`architect/INDEX.md`](architect/INDEX.md) | 37 条指令 (2026-03-18 ~ 04-02) |
+| **经验库** | [`OMEGA_LESSONS.md`](OMEGA_LESSONS.md) | 71 条教训 (C-001~C-071) + 6 条元公理 (Ω1-Ω6) |
+| **事件 Trace Vault** | [`incidents/INDEX.yaml`](incidents/INDEX.yaml) | 事件索引 + 完整 trace |
+| **架构师指令时间线** | [`architect/INDEX.md`](architect/INDEX.md) | 架构师指令时间线 (2026-03-18 ~ 04-04) |
 | **架构规范** | [`architect/current_spec.yaml`](architect/current_spec.yaml) | 张量形状 / 物理常数 / 训练参数 / HPO 搜索空间 |
-| **Insight Cards** | [`architect/insights/INDEX.md`](architect/insights/INDEX.md) | 64 张结构化洞察卡 (INS-001 ~ INS-064) |
-| **执法规则** | [`rules/active/`](rules/active/) | 16 条 YAML 规则（rule-engine.sh 自动执法） |
+| **Insight Cards** | [`architect/insights/INDEX.md`](architect/insights/INDEX.md) | 洞察卡 (INS-001 ~ INS-070) |
+| **执法规则** | [`rules/active/`](rules/active/) | YAML 规则（rule-engine.sh 自动执法） |
 
 ---
 
@@ -62,8 +64,9 @@ Input [B, 160, 10, 10] + c_friction [B, 1]
 
 ```
 gs://omega-pure-data/wds_shards_v3_full/          # 1992 shards, 556GB, 9.96M samples
-gs://omega-pure-data/checkpoints/phase12_unbounded_v1/  # best.pt (E0) + latest.pt (E19)
+gs://omega-pure-data/checkpoints/phase12_unbounded_v1/  # Phase 12: best.pt (E0) + latest.pt (E19)
 gs://omega-pure-data/postflight/                   # Phase 12 val predictions parquet
+# Phase 13 Docker: us-central1-docker.pkg.dev/.../omega-tib:phase13-v2 (IC Loss + AttentionPooling)
 ```
 
 ---
@@ -80,13 +83,15 @@ gs://omega-pure-data/postflight/                   # Phase 12 val predictions pa
 | 10 | Done | Softmax Portfolio | Asym=1.30 | PfRet=0.210 但 z_core 脑死亡 |
 | 11a-c | Failed | Various | — | NaN / Beta 走私 / 方差坍缩 |
 | 11d | Done | Pointwise Huber | D9-D0=6.84 | 方差恢复但 IC 下降 |
-| **12** | **Post-flight** | **Unbounded MSE** | **D9-D0=4.51** | **方差恢复 ✓ 但排序失败 (Rank IC=-0.02)** |
+| **12** | Done | Unbounded MSE | D9-D0=4.51 | 方差恢复 ✓ 但排序失败 (Rank IC=-0.02, 28σ 显著) |
+| **13** | **Crucible PASS** | **IC Loss (Pearson)** | **IC=0.88 overfit** | **Pending 正式训练 (T4 Spot)** |
 
-**Phase 12 诊断**（11 轮外部审计确认）：
-1. Leaky Blinding 导致模型预测波动率而非 Alpha（Gemini 数学证明）
-2. MSE 不适合排序任务（Phase 6 IC Loss 历史最佳）
-3. Global mean pooling 摧毁时空结构
-4. TDA 位置编码梯度极弱（0.08 vs decoder 4811）
+**Phase 12→13 诊断链** (详见 [`handover/PHASE13_FULL_CHAIN_AUDIT.md`](handover/PHASE13_FULL_CHAIN_AUDIT.md)):
+1. Leaky Blinding 100x 梯度压缩 → 波动率预测 (Gemini 数学证明) → **INS-065 删除**
+2. MSE 在 SNR=2.4% 下退化为条件均值 → **INS-066 换 IC Loss**
+3. Global Mean Pooling 摧毁时空结构 (RPB grad 60,000x 弱) → **INS-068 AttentionPooling + Pre-LN**
+4. L1 正则化在低 SNR 下杀信号 → **INS-069 lambda_s=0**
+5. 窗口隔离 0.64 天感受野 → **INS-070 Phase 14 计划**
 
 ---
 
@@ -94,7 +99,7 @@ gs://omega-pure-data/postflight/                   # Phase 12 val predictions pa
 
 | Script | Purpose |
 |--------|---------|
-| `train.py` | Training loop (Unbounded Spear + MDL, Phase 12) |
+| `train.py` | Training loop (Phase 13: IC Loss + AttentionPooling + Pre-LN Residual) |
 | `omega_epiplexity_plus_core.py` | Math core (SRL + FWT + MDL + Loss functions) |
 | `omega_webdataset_loader.py` | WebDataset streaming loader |
 | `tools/omega_etl_v3_topo_forge.py` | ETL: Parquet → WebDataset shards |
@@ -126,5 +131,5 @@ Self-evolving engineering governance. See [`LIVING_HARNESS.md`](LIVING_HARNESS.m
 
 ---
 
-*Current status: 2026-04-04. Phase 12 post-flight complete — signal insufficient, awaiting architect audit.*
-*For AI Agents: Start at [`handover/LATEST.md`](handover/LATEST.md). Full audit at [`handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md`](handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md).*
+*Current status: 2026-04-04. Phase 13 Crucible PASS (IC Loss + AttentionPooling), pending full training.*
+*For AI Agents: Start at [`handover/LATEST.md`](handover/LATEST.md). Full audit at [`handover/PHASE13_FULL_CHAIN_AUDIT.md`](handover/PHASE13_FULL_CHAIN_AUDIT.md).*

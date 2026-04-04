@@ -41,6 +41,7 @@ Step 3: 本文件              → 按任务导航到具体文档
 
 | Report | Location | Summary |
 |--------|----------|---------|
+| **Phase 13 全链审计** | [`PHASE13_FULL_CHAIN_AUDIT.md`](./PHASE13_FULL_CHAIN_AUDIT.md) | Phase 12→13 完整决策链 + 13 个证据附录 (A-M) + GO/NO-GO 清单 |
 | **Phase 12 架构师审计简报** | [`PHASE12_ARCHITECT_AUDIT_BRIEF.md`](./PHASE12_ARCHITECT_AUDIT_BRIEF.md) | 11 轮外部审计 + overfit test + gradient check + 6 个裁决问题 |
 | **Phase 11 数据汇总** | [`../reports/phase11_complete_data_summary.md`](../reports/phase11_complete_data_summary.md) | 11a-d 全阶段数据 |
 | **Phase 11 工程分析** | [`../reports/phase11_engineer_analysis_for_architect.md`](../reports/phase11_engineer_analysis_for_architect.md) | 工程视角诊断 |
@@ -50,9 +51,9 @@ Step 3: 本文件              → 按任务导航到具体文档
 
 | File | Content |
 |------|---------|
-| [`../OMEGA_LESSONS.md`](../OMEGA_LESSONS.md) | 64 条教训 (C-001~C-064) + 6 元公理 (Ω1-Ω6) + 操作手册 |
-| [`../incidents/INDEX.yaml`](../incidents/INDEX.yaml) | 64 事件索引 (machine-readable) + 10 完整 trace |
-| [`../rules/active/`](../rules/active/) | 16 条 YAML 执法规则 |
+| [`../OMEGA_LESSONS.md`](../OMEGA_LESSONS.md) | 71 条教训 (C-001~C-071) + 6 元公理 (Ω1-Ω6) + 操作手册 |
+| [`../incidents/INDEX.yaml`](../incidents/INDEX.yaml) | 事件索引 (machine-readable) + 完整 trace |
+| [`../rules/active/`](../rules/active/) | YAML 执法规则 (含 R-018 Docker dep/tag sync) |
 | [`../LIVING_HARNESS.md`](../LIVING_HARNESS.md) | Meta-Harness V3 架构说明 |
 
 ---
@@ -63,7 +64,7 @@ Step 3: 本文件              → 按任务导航到具体文档
 |-----------|---------|
 | **审计模型代码** | 上方 [Core Algorithm Files](#core-algorithm-files必审) + [`PHASE12_ARCHITECT_AUDIT_BRIEF.md`](./PHASE12_ARCHITECT_AUDIT_BRIEF.md) |
 | **理解项目物理** | [`CLAUDE.md`](../CLAUDE.md) §WHY + [`VIA_NEGATIVA.md`](../VIA_NEGATIVA.md) + `architect/insights/INS-019~020` |
-| **修改 Loss 函数** | [`PHASE12_ARCHITECT_AUDIT_BRIEF.md`](./PHASE12_ARCHITECT_AUDIT_BRIEF.md) §七（6 个裁决问题）+ Phase 6/9/10/11/12 Loss 历史 |
+| **修改 Loss 函数** | [`PHASE13_FULL_CHAIN_AUDIT.md`](./PHASE13_FULL_CHAIN_AUDIT.md) + INS-065~066 + Phase 6/9/10/11/12/13 Loss 历史 |
 | **修改 SRL / TDA** | `architect/insights/INS-005` (c 标定) + `INS-057` (SRL 捷径) + Codex TDA 审计结果 |
 | **修改 ETL** | [`ETL_ENGINEERING_LESSONS.md`](./ETL_ENGINEERING_LESSONS.md) + `INS-016` (cg 不可二次粗粒化) |
 | **回测 / 模拟** | `INS-023` (T+1 铁律) + `INS-022` (时空换算) + `backtest_5a.py` |
@@ -83,10 +84,14 @@ gs://omega-pure-data/postflight/                        # Phase 12 val predictio
 
 ## Model Checkpoint Info
 
+**Phase 12 Checkpoints:**
+
 | Checkpoint | Epoch | D9-D0 | pred_std | z_sparsity | Parquet |
 |-----------|-------|-------|----------|------------|---------|
 | best.pt | E0 | 4.51 BP | 26.61 BP | 5.4% | `phase12_val_predictions.parquet` |
 | latest.pt | E19 | 1.29 BP | 18.57 BP | 18.5% | `phase12_latest_val_predictions.parquet` |
+
+**Phase 13 Docker Image:** `omega-tib:phase13-v2` (IC Loss + AttentionPooling + Pre-LN Residual, Crucible PASS)
 
 ---
 
@@ -105,7 +110,7 @@ gs://omega-pure-data/postflight/                        # Phase 12 val predictio
 
 | Script | Purpose | Key Args |
 |--------|---------|----------|
-| `train.py` | Training (Unbounded Spear + MDL) | `--shard_dir --epochs 20 --lambda_s 1e-4 --static_mean_bp 40.0` |
+| `train.py` | Training (Phase 13: IC Loss) | `--shard_dir --epochs 20 --no_amp --lr 3.2e-4` |
 | `gcp/phase7_inference.py` | Full inference → parquet | `--checkpoint --shard_dir --val_only --hidden_dim 64 --window_size_t 32` |
 | `tools/postflight_analysis.py` | Post-flight analysis | `python3 tools/postflight_analysis.py predictions.parquet` |
 | `backtest_5a.py` | Statistical signal test | `--checkpoint --shard_dir --costs_bp 25` |
@@ -153,4 +158,4 @@ python3 omega_axioms.py --verbose
 
 ---
 
-*Last updated: 2026-04-04. Phase 12 post-flight complete, awaiting architect audit.*
+*Last updated: 2026-04-04. Phase 13 Crucible PASS, pending full training (T4 Spot). See [`PHASE13_FULL_CHAIN_AUDIT.md`](./PHASE13_FULL_CHAIN_AUDIT.md).*
