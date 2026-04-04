@@ -1,86 +1,130 @@
-# OMEGA PURE V3: The Topological Volume-Clock Forge
+# OMEGA PURE V3: Topological Information Bottleneck for Institutional Metaorder Detection
 
-This repository houses the **Omega Pure V3** architecture, a fundamental paradigm shift in high-frequency financial modeling. It moves beyond physical time ("Wall-Clock") to a pure **Volume-Clock (Turnover Clock)** topology, resolving the spatial-temporal tearing between high and low liquidity assets.
+Quantitative finance research: Finite Window Topological Attention + MDL compression, extracting institutional metaorder flow signals from A-share L1 tick data.
 
-## 🏛️ Core Philosophy: The Volume Clock Genesis
-The clock on the wall is a human illusion; the tape is the only truth. In V3, we reject uniform time-based sampling (e.g., 1-minute bars) in favor of **Event-Based Sampling**.
+**Tech Stack**: Python 3.10+, PyTorch, PyArrow, WebDataset, NumPy, Numba | GCP Vertex AI (T4/L4/A100) | 2.2TB raw → Volume-Clocked tensors
 
-*   **Relative Capacity Clock**: Every data point ("Bar") in our 2D matrix represents a fixed percentage of a stock's daily liquidity (typically 2% of Rolling ADV).
-*   **Geometric Equivalence**: By using a dynamic `vol_threshold`, a $100B mega-cap and a $1B micro-cap look **geometrically identical** to the neural network. Both occupy the same "Volume-Time" space.
-*   **Spatial Axis Restoration**: We preserve the full 10-level Limit Order Book (LOB) depth (Bid/Ask) at each volume step, enabling true Topological Data Analysis (TDA) of order-flow connectivity.
+---
 
-## 🛠️ System Components
+## Quick Start for AI Agents
 
-### 1. The Topo-Forge (`tools/omega_etl_v3_topo_forge.py`)
-A heavy-duty, anti-OOM ETL engine that transforms TB-scale raw L1 Ticks into WebDataset `.tar` shards.
-*   **Dynamic Thresholding**: Computes `vol_threshold` per symbol based on rolling ADV.
-*   **Ring Buffer Slicing**: Uses a sliding window (`MACRO_WINDOW=160`, `STRIDE=20`) to capture continuous causal manifolds without tumbling-window truncation.
-*   **Tensor Geometry**: Produces tensors of shape `[160, 10, 10]`.
-*   **Features**: `[Bid_P, Bid_V, Ask_P, Ask_V, Close, reserved, reserved, ΔP, macro_V_D, macro_σ_D]`.
+```
+1. Read CLAUDE.md              — Project constitution (auto-loaded)
+2. Read handover/LATEST.md     — Current status + machine-readable state
+3. Read this file              — File map + audit entry points
+```
 
-### 2. WebDataset Loader (`omega_webdataset_loader.py`)
-A stateless, event-driven dataloader designed for distributed training on GCP Vertex AI.
-*   **GPU Slicing**: Dynamically crops the 160-row window to an HPO-optimized `macro_window`.
-*   **Dynamic Pooling**: Implements temporal coarse-graining on-the-fly.
+---
 
-### 3. Mathematic Core (`omega_epiplexity_plus_core.py`)
-The axiomatic engine implementing **Finite Window Topological Attention** and **Epiplexity MDL Loss**.
+## Core Algorithm Files (审计入口)
 
-## 📊 Experimental Constants (Data-Driven)
-*   **`vol_threshold`**: Derived as `Rolling_ADV / 50` (Targeting ~50 bars per trading day).
-*   **`window_size`**: Locked at `160`, found via Autocorrelation (ACF) decay analysis to be the maximum memory limit of micro-structural signals.
+| File | Lines | Role | 审计重点 |
+|------|-------|------|----------|
+| **`omega_epiplexity_plus_core.py`** | ~255 | 数学核心：SRL 反演 + FWT 拓扑注意力 + MDL Loss | 物理公理 (δ=0.5) / Loss 量纲 / 梯度流 |
+| **`train.py`** | ~800 | 训练循环 + OmegaTIBWithMasking wrapper | Financial Relativity Transform / D9-D0 验证 / checkpoint 保存 |
+| **`backtest_5a.py`** | ~310 | 推理 + 统计测试（十分位分析） | Train-serve skew / pred_bp 量纲 / 默认值对齐 |
+| **`omega_webdataset_loader.py`** | ~98 | WebDataset 流式加载 | target 单位 (BP) / c_friction 默认值 |
+| **`gcp/phase7_inference.py`** | ~490 | 全量推理管线（输出 parquet + z_sparsity） | _orig_mod. strip / FUSE vs pipe |
+| **`omega_axioms.py`** | ~140 | 公理断言模块（37 checks） | `python3 omega_axioms.py --verbose` |
 
-## 🚀 Phase History
-| Phase | Status | Description |
-|-------|--------|-------------|
-| 1 | Done | TB-scale Parquet → 1992 WDS Shards (556GB) |
-| 2-4 | Done | HPO Blitzkrieg — Bayesian search on L4/A100 |
-| 6 | Done | IC Loss HPO — T29 flagship (hd=64, IC=0.066, OOS/IS=1.00) |
-| 7 | Done | Full inference + diagnostic (17-test) |
-| 8 | Done | Backtest simulate — board_loss_cap Sharpe +34% |
-| 9 | Failed | Asymmetric Pearson Loss — 7 jobs, all Reward Hacking |
-| 10 | Complete | Softmax Portfolio Loss — Val PfRet=0.210, Asym=1.30 |
-| 11a | Failed | Spear Protocol — NaN crash (勾股漂移 INS-046) |
-| 11b | Failed | Reforged Spear — Softmax Beta smuggling (INS-049) |
-| 11c | Abandoned | Pointwise Huber δ=50 — Variance collapse (pred_std=5.6 BP, 脑死亡, 216x 仪表盘幻觉) |
-| 11d | Complete | Pointwise Huber δ=200, λ_s=1e-4/1e-5 — pred_std 5.6→17 BP ✅ but IC 0.02→0.002 ⛔ (方差是噪声非信号) |
-| 11e | Branch | Moment-Matched Spear — 物理防止 Beta 走私和方差坍缩 |
-| **12** | **Code Ready** | **Unbounded Spear — Scaled MSE + D9-D0 Spread + Living Harness V3** |
+### 模型架构一览（24,437 参数）
+```
+Input [B, 160, 10, 10] + c_friction [B, 1]
+  │
+  ├─ SRL Inverter (NO_GRAD): ch7/8/9 → q_metaorder [B, 160]    # 物理层，不可学
+  ├─ FRT: ch0-4 → relative features [B, 160, 10, 5]             # 特征工程（在 wrapper 中）
+  │
+  ├─ Concat [5 LOB + 1 SRL] → input_proj(6→64) → LayerNorm(64)
+  ├─ FiniteWindowTopologicalAttention(dim=64, window=(32,10), heads=4)  # 87% 参数
+  ├─ EpiplexityBottleneck: Linear(64→32) → GELU → Linear(32→16)
+  ├─ Global Mean Pooling over [T, S] → [B, 16]
+  └─ IntentDecoder: Linear(16→1) → scalar prediction
+```
 
-## 📁 Key Scripts
+---
+
+## Audit Reports & Diagnostics
+
+| Report | Location | Content |
+|--------|----------|---------|
+| **Phase 12 架构师审计简报** | [`handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md`](handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md) | 11 轮外部审计 + post-flight + overfit test + 6 个架构师裁决问题 |
+| **Handover 状态** | [`handover/LATEST.md`](handover/LATEST.md) | 当前状态 + machine-readable YAML |
+| **经验库** | [`OMEGA_LESSONS.md`](OMEGA_LESSONS.md) | 64 条教训 (C-001~C-064) + 6 条元公理 (Ω1-Ω6) |
+| **事件 Trace Vault** | [`incidents/INDEX.yaml`](incidents/INDEX.yaml) | 64 事件索引 + 10 个完整 trace |
+| **架构师指令时间线** | [`architect/INDEX.md`](architect/INDEX.md) | 37 条指令 (2026-03-18 ~ 04-02) |
+| **架构规范** | [`architect/current_spec.yaml`](architect/current_spec.yaml) | 张量形状 / 物理常数 / 训练参数 / HPO 搜索空间 |
+| **Insight Cards** | [`architect/insights/INDEX.md`](architect/insights/INDEX.md) | 64 张结构化洞察卡 (INS-001 ~ INS-064) |
+| **执法规则** | [`rules/active/`](rules/active/) | 16 条 YAML 规则（rule-engine.sh 自动执法） |
+
+---
+
+## GCS Data Assets
+
+```
+gs://omega-pure-data/wds_shards_v3_full/          # 1992 shards, 556GB, 9.96M samples
+gs://omega-pure-data/checkpoints/phase12_unbounded_v1/  # best.pt (E0) + latest.pt (E19)
+gs://omega-pure-data/postflight/                   # Phase 12 val predictions parquet
+```
+
+---
+
+## Phase History
+
+| Phase | Status | Loss | Best Metric | Key Finding |
+|-------|--------|------|-------------|-------------|
+| 1 | Done | — | 1992 shards | TB-scale ETL complete |
+| 6 | Done | **IC Loss** | **IC=0.066** | 历史最高排序能力 |
+| 7 | Done | IC Loss | 17-test pass | Full inference + diagnostic |
+| 8 | Done | IC Loss | Sharpe +34% | board_loss_cap validated |
+| 9 | Failed | Asymmetric Pearson | — | 7 jobs, all Reward Hacking |
+| 10 | Done | Softmax Portfolio | Asym=1.30 | PfRet=0.210 但 z_core 脑死亡 |
+| 11a-c | Failed | Various | — | NaN / Beta 走私 / 方差坍缩 |
+| 11d | Done | Pointwise Huber | D9-D0=6.84 | 方差恢复但 IC 下降 |
+| **12** | **Post-flight** | **Unbounded MSE** | **D9-D0=4.51** | **方差恢复 ✓ 但排序失败 (Rank IC=-0.02)** |
+
+**Phase 12 诊断**（11 轮外部审计确认）：
+1. Leaky Blinding 导致模型预测波动率而非 Alpha（Gemini 数学证明）
+2. MSE 不适合排序任务（Phase 6 IC Loss 历史最佳）
+3. Global mean pooling 摧毁时空结构
+4. TDA 位置编码梯度极弱（0.08 vs decoder 4811）
+
+---
+
+## Key Scripts
+
 | Script | Purpose |
 |--------|---------|
 | `train.py` | Training loop (Unbounded Spear + MDL, Phase 12) |
-| `omega_epiplexity_plus_core.py` | Math core (SRL + FWT + MDL) |
+| `omega_epiplexity_plus_core.py` | Math core (SRL + FWT + MDL + Loss functions) |
 | `omega_webdataset_loader.py` | WebDataset streaming loader |
 | `tools/omega_etl_v3_topo_forge.py` | ETL: Parquet → WebDataset shards |
-| `tools/phase7_inference.py` | Full inference (exports predictions + z_sparsity) |
-| `tools/phase7_simulate.py` | T+1 overnight swing backtest simulator |
+| `gcp/phase7_inference.py` | Full inference (exports predictions + z_sparsity) |
+| `tools/postflight_analysis.py` | Post-flight 全量分析 (阈值标定+十分位+Epiplexity) |
+| `backtest_5a.py` | Statistical signal test (decile + correlation) |
 | `tools/spec_code_alignment.py` | Spec-Code 参数漂移检测 |
 | `gcp/safe_build_and_canary.sh` | Docker build + 1-shard canary |
 | `gcp/safe_submit.sh` | Full job submission with manifest tracking |
 
-## 🧬 Living Harness (Meta-Harness V3)
+## Living Harness (Meta-Harness V3)
 
-自我进化的工程治理系统。详见 [`LIVING_HARNESS.md`](LIVING_HARNESS.md)。
+Self-evolving engineering governance. See [`LIVING_HARNESS.md`](LIVING_HARNESS.md).
 
-| 层 | 组件 | 功能 |
-|---|---|---|
-| 记忆 | `incidents/` Trace Vault | 完整失败上下文 (不压缩, Meta-Harness 论文: raw traces >> summaries) |
-| 执法 | `rules/active/*.yaml` | 16 条数据驱动规则 (添加 YAML 即生效, 无需改代码) |
-| 进化 | `/harness-reflect` | 自评健康分 + 规则效果统计 + 管线追踪 |
-| 管线 | `chain_of_custody.yaml` | 每个指令从 ingest 到 deploy 的全生命追踪 |
+| Layer | Component | Function |
+|-------|-----------|----------|
+| Memory | `incidents/` Trace Vault | Raw failure context (never compressed) |
+| Enforcement | `rules/active/*.yaml` | 16 data-driven rules (add YAML = instant enforcement) |
+| Evolution | `/harness-reflect` | Self-assessment + rule pruning + health score |
+| Pipeline | `chain_of_custody.yaml` | Directive → Deploy full lifecycle tracking |
 
-```
-失败 → 教训 → 规则 → 执法 → 拦截
-  ↑                          ↓
-  └── 反思 ← 健康分 ← 追踪 ←┘
-```
+## External Audit Tools
+
+| Tool | Purpose | Invocation |
+|------|---------|------------|
+| **Codex** (GPT 5.4) | Code correctness / spec alignment / architecture | `codex exec --full-auto "<prompt>"` |
+| **Gemini** (3.1 Pro) | Math proofs / gradient analysis / statistical tests | `curl` API (key in `.env`) |
+| **omega_axioms.py** | 37 axiom assertions (self-check) | `python3 omega_axioms.py --verbose` |
 
 ---
-## 📊 Current Status (2026-04-03)
-Phase 12 code ready (Unbounded Spear Loss). Living Harness V3 deployed.
-Experience library: 60 lessons (C-001~C-060), 64 insights (INS-001~INS-064).
-Harness: 16 enforcement rules, 10 incident traces, 9 hooks, 9 skills.
 
-*For AI Agents: Start at [`handover/LATEST.md`](handover/LATEST.md). Harness architecture at [`LIVING_HARNESS.md`](LIVING_HARNESS.md). Experience library at [`OMEGA_LESSONS.md`](OMEGA_LESSONS.md).*
+*Current status: 2026-04-04. Phase 12 post-flight complete — signal insufficient, awaiting architect audit.*
+*For AI Agents: Start at [`handover/LATEST.md`](handover/LATEST.md). Full audit at [`handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md`](handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md).*
