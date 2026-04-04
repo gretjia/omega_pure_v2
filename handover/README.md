@@ -4,112 +4,153 @@ Critical handover state, architectural documentation, workflow automation, and e
 
 ---
 
-## Path Finder — AI Agent 快速导航
+## AI Agent Entry Protocol
 
-> **新 Agent 进场顺序**: CLAUDE.md → LATEST.md → 按任务查下表
+```
+Step 1: CLAUDE.md          → 不可违反的规则（自动加载）
+Step 2: handover/LATEST.md → 当前状态 + machine-readable YAML
+Step 3: 本文件              → 按任务导航到具体文档
+```
 
-| 你要做什么 | 先读这些 |
-|-----------|---------|
-| 理解项目核心物理 | [`CLAUDE.md`](../CLAUDE.md) §WHY + [`VIA_NEGATIVA.md`](../VIA_NEGATIVA.md) + [`architect/insights/INS-019`](../architect/insights/INS-019_implicit_compression_victory.md) + [`INS-020`](../architect/insights/INS-020_topology_epiplexity_unification.md) |
-| 修改损失函数 | [`INS-054`](../architect/insights/INS-054_variance_collapse_brain_death.md) (方差坍缩) + [`INS-055`](../architect/insights/INS-055_resuscitation_dual_track.md) (双轨复苏) + [`INS-033`](../architect/insights/INS-033_softmax_portfolio_loss_paradigm_shift.md) (Softmax) + [`INS-035`](../architect/insights/INS-035_phase9_asymmetric_pearson_postmortem.md) (Pearson 验尸) + [`reports/phase11_complete_data_summary.md`](../reports/phase11_complete_data_summary.md) |
-| 修改 SRL / 拓扑注意力 | [`architect/insights/INS-005`](../architect/insights/INS-005_srl_c_calibration.md) (c 标定) + [`reports/audits_and_insights/id4`](../reports/audits_and_insights/id4_srl_friction_calibration.md) + [`id6`](../reports/audits_and_insights/id6_vd_physics_ruling.md) |
-| 修改 ETL / 数据管线 | [`ETL_ENGINEERING_LESSONS.md`](./ETL_ENGINEERING_LESSONS.md) + [`architect/insights/INS-016`](../architect/insights/INS-016_cg_microstructure_protection.md) (cg 不可二次粗粒化) |
-| 回测 / 模拟 | [`architect/insights/INS-023`](../architect/insights/INS-023_t1_simulation_iron_rules.md) (T+1 三铁律) + [`INS-022`](../architect/insights/INS-022_spacetime_correction_20bars_04days.md) (时空换算) + [`reports/phase10/`](../reports/phase10/) |
-| 训练调参 | [`architect/current_spec.yaml`](../architect/current_spec.yaml) + [`OMEGA_LESSONS.md`](../OMEGA_LESSONS.md) 案例库 (C-001~057) + [`INS-051`](../architect/insights/INS-051_pointwise_spear_huber_loss.md)~[`056`](../architect/insights/INS-056_no_multi_gpu_for_micro_model.md) + [`tools/paradigm_shift_checklist.md`](../tools/paradigm_shift_checklist.md) (C-054) |
-| 部署到 GCP / 远程节点 | [`HARDWARE_TOPOLOGY.md`](./HARDWARE_TOPOLOGY.md) + [`GCP_PRICING_REFERENCE.md`](./GCP_PRICING_REFERENCE.md) + `gcp/safe_*.sh` 脚本 |
-| 追溯某个 Phase 的决策 | [`architect/INDEX.md`](../architect/INDEX.md) (指令时间线) + [`reports/phase{N}/`](../reports/) + [`architect/insights/INDEX.md`](../architect/insights/INDEX.md) |
-| 理解项目演进全貌 | [`reports/`](../reports/) 按 phase3→6→7→8→9→10 顺序 + [`reports/audits_and_insights/omega_core_insights.md`](../reports/audits_and_insights/omega_core_insights.md) |
+**如果你是来做审计的**：直接跳到 [审计入口](#audit-entry-points)。
 
 ---
 
-## Start Here
-- **[`LATEST.md`](./LATEST.md)**: Single Source of Truth — current status, file map, next steps, rules for next agent
-- **[`../CLAUDE.md`](../CLAUDE.md)**: Project constitution (auto-loaded by Claude CLI every session)
-- **[`../OMEGA_LESSONS.md`](../OMEGA_LESSONS.md)**: 唯一经验源 — 元公理 + 操作手册 + 案例库 (C-001~C-057)
+## Audit Entry Points
+
+### Core Algorithm Files（必审）
+
+| File | Role | 关键审计点 |
+|------|------|-----------|
+| [`omega_epiplexity_plus_core.py`](../omega_epiplexity_plus_core.py) | 数学核心 | SRL physics (δ=0.5 immutable) / Loss 量纲 / 梯度流 / bottleneck 压缩 |
+| [`train.py`](../train.py) | 训练循环 | FRT 特征工程 / D9-D0 验证指标 / checkpoint _orig_mod. strip / 单实例锁 |
+| [`backtest_5a.py`](../backtest_5a.py) | 推理+统计 | pred_bp * 10000 / defaults alignment (hd=64, wt=32, costs=25) |
+| [`omega_webdataset_loader.py`](../omega_webdataset_loader.py) | 数据加载 | target 单位 = BP (ETL 已 ×10000) / c_friction 默认 0.842 |
+| [`gcp/phase7_inference.py`](../gcp/phase7_inference.py) | 全量推理 | _orig_mod. strip / z_sparsity hook / pred_bp 输出 |
+
+### Spec & Architecture（规范对齐审计）
+
+| File | Content |
+|------|---------|
+| [`architect/current_spec.yaml`](../architect/current_spec.yaml) | 张量形状 [B,160,10,10] / 物理常数 / 训练参数 / HPO 搜索空间 |
+| [`architect/INDEX.md`](../architect/INDEX.md) | 37 条架构师指令时间线 (2026-03-18 ~ 04-02) |
+| [`architect/insights/INDEX.md`](../architect/insights/INDEX.md) | 64 张 Insight 卡 (INS-001 ~ INS-064) |
+| [`architect/chain_of_custody.yaml`](../architect/chain_of_custody.yaml) | Directive → Deploy 全链追踪 |
+
+### Audit Reports（已有审计结果）
+
+| Report | Location | Summary |
+|--------|----------|---------|
+| **Phase 12 架构师审计简报** | [`PHASE12_ARCHITECT_AUDIT_BRIEF.md`](./PHASE12_ARCHITECT_AUDIT_BRIEF.md) | 11 轮外部审计 + overfit test + gradient check + 6 个裁决问题 |
+| **Phase 11 数据汇总** | [`../reports/phase11_complete_data_summary.md`](../reports/phase11_complete_data_summary.md) | 11a-d 全阶段数据 |
+| **Phase 11 工程分析** | [`../reports/phase11_engineer_analysis_for_architect.md`](../reports/phase11_engineer_analysis_for_architect.md) | 工程视角诊断 |
+| **Gemini Bitter Lessons** | [`../reports/audits_and_insights/`](../reports/audits_and_insights/) | 外部数学审计历史 |
+
+### Experience & Governance
+
+| File | Content |
+|------|---------|
+| [`../OMEGA_LESSONS.md`](../OMEGA_LESSONS.md) | 64 条教训 (C-001~C-064) + 6 元公理 (Ω1-Ω6) + 操作手册 |
+| [`../incidents/INDEX.yaml`](../incidents/INDEX.yaml) | 64 事件索引 (machine-readable) + 10 完整 trace |
+| [`../rules/active/`](../rules/active/) | 16 条 YAML 执法规则 |
+| [`../LIVING_HARNESS.md`](../LIVING_HARNESS.md) | Meta-Harness V3 架构说明 |
+
+---
+
+## Task-Based Navigation
+
+| 你要做什么 | 先读这些 |
+|-----------|---------|
+| **审计模型代码** | 上方 [Core Algorithm Files](#core-algorithm-files必审) + [`PHASE12_ARCHITECT_AUDIT_BRIEF.md`](./PHASE12_ARCHITECT_AUDIT_BRIEF.md) |
+| **理解项目物理** | [`CLAUDE.md`](../CLAUDE.md) §WHY + [`VIA_NEGATIVA.md`](../VIA_NEGATIVA.md) + `architect/insights/INS-019~020` |
+| **修改 Loss 函数** | [`PHASE12_ARCHITECT_AUDIT_BRIEF.md`](./PHASE12_ARCHITECT_AUDIT_BRIEF.md) §七（6 个裁决问题）+ Phase 6/9/10/11/12 Loss 历史 |
+| **修改 SRL / TDA** | `architect/insights/INS-005` (c 标定) + `INS-057` (SRL 捷径) + Codex TDA 审计结果 |
+| **修改 ETL** | [`ETL_ENGINEERING_LESSONS.md`](./ETL_ENGINEERING_LESSONS.md) + `INS-016` (cg 不可二次粗粒化) |
+| **回测 / 模拟** | `INS-023` (T+1 铁律) + `INS-022` (时空换算) + `backtest_5a.py` |
+| **训练调参** | [`architect/current_spec.yaml`](../architect/current_spec.yaml) + `OMEGA_LESSONS.md` 案例库 |
+| **部署 GCP** | [`HARDWARE_TOPOLOGY.md`](./HARDWARE_TOPOLOGY.md) + [`GCP_PRICING_REFERENCE.md`](./GCP_PRICING_REFERENCE.md) + `gcp/safe_*.sh` |
+| **追溯 Phase 决策** | [`architect/INDEX.md`](../architect/INDEX.md) + `reports/phase{N}/` |
+
+---
+
+## GCS Data Assets
+
+```
+gs://omega-pure-data/wds_shards_v3_full/               # 1992 shards, 556GB, 9.96M samples
+gs://omega-pure-data/checkpoints/phase12_unbounded_v1/  # best.pt (E0) + latest.pt (E19)
+gs://omega-pure-data/postflight/                        # Phase 12 val predictions (E0 + E19)
+```
+
+## Model Checkpoint Info
+
+| Checkpoint | Epoch | D9-D0 | pred_std | z_sparsity | Parquet |
+|-----------|-------|-------|----------|------------|---------|
+| best.pt | E0 | 4.51 BP | 26.61 BP | 5.4% | `phase12_val_predictions.parquet` |
+| latest.pt | E19 | 1.29 BP | 18.57 BP | 18.5% | `phase12_latest_val_predictions.parquet` |
+
+---
+
+## Start Here (Legacy Navigation)
+- **[`LATEST.md`](./LATEST.md)**: Single Source of Truth — current status, machine-readable state
+- **[`../CLAUDE.md`](../CLAUDE.md)**: Project constitution (auto-loaded every session)
+- **[`../OMEGA_LESSONS.md`](../OMEGA_LESSONS.md)**: Experience library — axioms + operations manual + 64 cases
 - **[`../VIA_NEGATIVA.md`](../VIA_NEGATIVA.md)**: Falsified paths — what NOT to do (frozen archive)
-
-## Architecture & Insights
-- **[`../architect/current_spec.yaml`](../architect/current_spec.yaml)**: Current architecture params (tensor shape, physics constants, ETL config)
-- **[`../architect/INDEX.md`](../architect/INDEX.md)**: Architect directive timeline (25 directives, 2026-03-18 ~ 04-02)
-- **[`../architect/insights/INDEX.md`](../architect/insights/INDEX.md)**: 56 structured insight cards (INS-001 ~ INS-056)
-- **[`../omega_axioms.py`](../omega_axioms.py)**: Axiom assertions (37 checks, `python3 omega_axioms.py --verbose`)
-
-## Reports & Evidence (按 Phase 组织)
-- **[`../reports/phase3/`](../reports/phase3/)**: V15 训练报告
-- **[`../reports/phase6/`](../reports/phase6/)**: 回测结果 (Equity, Trades)
-- **[`../reports/phase7/`](../reports/phase7/)**: T29 旗舰回测 + 全量模拟方案 + 决策历史 (3 GDocs)
-- **[`../reports/phase8/`](../reports/phase8/)**: 物理法则重铸 + 14 组参数扫描 (Sweep)
-- **[`../reports/phase9/`](../reports/phase9/)**: 非对称 Pearson Loss 证据包 (7 jobs 全败)
-- **[`../reports/phase10/`](../reports/phase10/)**: Vanguard V5 + Softmax Portfolio Loss 结果
-- **[`../reports/phase11_complete_data_summary.md`](../reports/phase11_complete_data_summary.md)**: Phase 11 全阶段数据汇总 (11c 废弃 + 11d A/B + post-flight)
-- **[`../reports/phase11d_training_complete.md`](../reports/phase11d_training_complete.md)**: Phase 11d 训练记录 (Config A/B epoch tables)
-- **[`../reports/audits_and_insights/`](../reports/audits_and_insights/)**: Gemini 审计 + 架构师 GDoc 精选 ([INDEX](../reports/audits_and_insights/INDEX.md))
-- **[`../reports/general/`](../reports/general/)**: Epiplexity 理论文档
 
 ## Engineering & Infrastructure
 - **[`HARDWARE_TOPOLOGY.md`](./HARDWARE_TOPOLOGY.md)**: Physical nodes (omega-vm, linux1, windows1, mac), IPs, SSH routes
-- **[`GCP_PRICING_REFERENCE.md`](./GCP_PRICING_REFERENCE.md)**: GCP 计费参考 (Vertex AI / GCS / Nearline)
+- **[`GCP_PRICING_REFERENCE.md`](./GCP_PRICING_REFERENCE.md)**: GCP pricing reference (Vertex AI / GCS / Nearline)
 - **[`ETL_ENGINEERING_LESSONS.md`](./ETL_ENGINEERING_LESSONS.md)**: OOM deadlocks, cgroup CPU throttling, Python anti-patterns
 
-## Training & Backtest Scripts
-| Script | Purpose | Usage |
-|--------|---------|-------|
-| [`../train.py`](../train.py) | Training loop (Pointwise Huber + MDL) | `python3 train.py --shard_dir ... --epochs 20 --huber_delta 200 --lambda_s 1e-4` |
-| [`../tools/phase7_inference.py`](../tools/phase7_inference.py) | Full inference → predictions + z_sparsity parquet | `python3 tools/phase7_inference.py --checkpoint ... --shard_dir ... --val_only` |
-| [`../tools/postflight_analysis.py`](../tools/postflight_analysis.py) | Post-flight 全量分析 (阈值标定+十分位+Epiplexity) | `python3 tools/postflight_analysis.py predictions.parquet` |
-| [`../tools/paradigm_shift_checklist.md`](../tools/paradigm_shift_checklist.md) | 范式切换 6 步原子 checklist (C-054) | 手动执行 |
-| [`../tools/phase7_simulate.py`](../tools/phase7_simulate.py) | T+1 overnight swing backtest simulator | `python3 tools/phase7_simulate.py --predictions ... --cost_bp 25` |
-| [`../backtest_5a.py`](../backtest_5a.py) | Phase 5a spread backtest | `python3 backtest_5a.py ...` |
+## Scripts Quick Reference
 
-## Historical / Early Phase (参考价值，不再更新)
-- **[`EXPERIMENTAL_DESIGN_AND_ROADMAP.md`](./EXPERIMENTAL_DESIGN_AND_ROADMAP.md)**: Phase 2-4 物理常数推导 + 成功准则 (Phase 7+ 后已演进)
-- **[`V3_SMOKE_TEST_PLAN.md`](./V3_SMOKE_TEST_PLAN.md)**: V3 shard 验证计划 (已完成)
-- **[`PHASE3_V15_TRAINING_REPORT.md`](./PHASE3_V15_TRAINING_REPORT.md)**: Phase 3 报告副本 (canonical 版本在 `reports/phase3/`)
-- **[`agent_manuals.md`](./agent_manuals.md)**: Harness V1 操作手册 (已被 CLAUDE.md + harness_v2_spec 取代，保留供参考)
-- **[`claude_code_blueprint.md`](./claude_code_blueprint.md)**: Harness V1 蓝图 (已被 CLAUDE.md 取代，保留供参考)
+| Script | Purpose | Key Args |
+|--------|---------|----------|
+| `train.py` | Training (Unbounded Spear + MDL) | `--shard_dir --epochs 20 --lambda_s 1e-4 --static_mean_bp 40.0` |
+| `gcp/phase7_inference.py` | Full inference → parquet | `--checkpoint --shard_dir --val_only --hidden_dim 64 --window_size_t 32` |
+| `tools/postflight_analysis.py` | Post-flight analysis | `python3 tools/postflight_analysis.py predictions.parquet` |
+| `backtest_5a.py` | Statistical signal test | `--checkpoint --shard_dir --costs_bp 25` |
+| `omega_axioms.py` | Axiom self-check (37 assertions) | `python3 omega_axioms.py --verbose` |
+| `tools/spec_code_alignment.py` | Spec-Code drift detection | `python3 tools/spec_code_alignment.py` |
+
+## External Audit Invocation
+
+```bash
+# Codex (code audit)
+codex exec --full-auto "audit prompt here"
+
+# Gemini (math audit)
+source .env
+curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent?key=${GEMINI_API_KEY}" \
+  -H 'Content-Type: application/json' \
+  -d '{"contents": [{"parts": [{"text": "audit prompt"}]}], "generationConfig": {"temperature": 0.1}}'
+
+# Axiom self-check
+python3 omega_axioms.py --verbose
+```
 
 ## Workflow Automation
 
-### Hooks（自动质量门禁，`.claude/hooks/`）
-| Hook | 触发 | 功能 |
-|------|------|------|
-| [`block-destructive.sh`](../.claude/hooks/block-destructive.sh) | Bash 执行前 | 拦截 rm -rf、force push、物理常数修改 |
-| [`post-edit-axiom-check.sh`](../.claude/hooks/post-edit-axiom-check.sh) | Edit/Write 后 | 核心文件变更时自动公理检查 |
-| [`stop-guard.sh`](../.claude/hooks/stop-guard.sh) | 回复结束时 | 提醒未提交的核心变更 |
+### Hooks (`.claude/hooks/`)
+| Hook | Trigger | Function |
+|------|---------|----------|
+| `block-destructive.sh` | Pre-Bash | Block rm -rf, force push, physics constant changes |
+| `rule-engine.sh` | Pre-Edit/Write | 16-rule data-driven enforcement |
+| `post-edit-axiom-check.sh` | Post-Edit/Write | Auto axiom check on core file changes |
+| `post-bash-error-tracker.sh` | Post-Bash (fail) | Instant error tracking to session log |
+| `lesson-enforcer.sh` | Pre-Write | pd-ssd / disk size enforcement |
+| `pipeline-quality-gate.sh` | Pre-Write | Architect directive completeness check |
 
-### Skills（一键工作流，`.claude/skills/`）
-| 命令 | 功能 |
-|------|------|
-| `/architect-ingest` | 架构师指令摄取 + 公理影响检测 + spec 更新 |
-| `/dev-cycle` | 九阶段开发周期（Plan→Audit→Fix→Code→Audit→Fix→Axiom→**ExternalAudit**→Summary） |
-| `/deploy-cycle` | 六阶段部署周期（Pre-flight→Axiom→Health→Deploy→Verify→Document） |
-| `/axiom-audit` | 三层公理审计（omega_axioms.py + Codex recursive + Gemini 数学推理） |
-| `/pre-flight` | 部署前 9 项预检 |
-| `/node-health-check` | 集群健康巡检 |
+### Skills (`.claude/skills/`)
+| Command | Function |
+|---------|----------|
+| `/dev-cycle` | 10-stage dev cycle (PreMortem → External Audit → Summary) |
+| `/deploy-cycle` | 7-stage deploy cycle (Pre-flight → Verify → Document) |
+| `/axiom-audit` | 3-layer axiom audit (self + Codex + Gemini) |
+| `/architect-ingest` | Architect directive ingestion + axiom impact detection |
+| `/lesson-to-rule` | Convert lesson to executable YAML rule |
+| `/harness-reflect` | Self-assessment + health score |
+| `/pre-flight` | 9-item pre-deploy check |
 
-### Agents（智能委托，`.claude/agents/`）
-| Agent | 模型 | 职责 |
-|-------|------|------|
-| `recursive-auditor` | opus | 独立数学审计（只读） |
-| `architect-liaison` | opus | 架构师指令生命周期 + 公理影响检测 |
-| `infra-scout` | haiku | 快速集群健康检查 |
-| `deployment-guard` | sonnet | 部署门禁（任一失败→NO-GO） |
+---
 
-### External Audit Tools（独立交叉验证）
-
-防止 AI 自测自验 (Bitter Lesson #7)，使用外部 LLM 进行独立审计：
-
-| 工具 | 用途 | 调用方式 |
-|------|------|----------|
-| **Codex** (GPT 5.4 xhigh) | Spec↔Code recursive alignment audit | `codex exec --full-auto "<prompt>"` |
-| **Gemini** | 纯数学推理审计（公式、量纲、梯度） | `cat <file> \| gemini -p "<prompt>"` |
-| **gdocs** | 读取架构师 Google Docs 原文 | `gdocs list` / `gdocs read <doc_id>` |
-
-**触发规则**:
-- Codex: 每次修改 spec/核心代码/ETL/Loader 后必须运行
-- Gemini: 仅在涉及数学公式、物理常数、损失函数时运行
-- gdocs: 摄取架构师指令时用于获取原文
-
-### Config
-- [`.claude/settings.json`](../.claude/settings.json) — 项目级 hooks 配置（提交到 git）
-- `.claude/settings.local.json` — 本地权限（不提交）
+*Last updated: 2026-04-04. Phase 12 post-flight complete, awaiting architect audit.*
