@@ -212,6 +212,36 @@ class OmegaMathematicalCompressor(nn.Module):
         return main_force_prediction, z_core
 
 
+def compute_ic_loss(prediction, target, ic_epsilon=1e-8):
+    """Phase 13 Mandate A: Pearson IC Loss (INS-066)
+
+    IC = corr(pred, target) over the batch cross-section.
+    Loss = -IC (maximize correlation = minimize negative IC).
+    Must be computed in FP32 (Gemini audit: FP16 std precision insufficient).
+
+    Epsilon guard: sqrt(var + eps) not clamp(std, min=eps) (Gemini audit —
+    clamp only fixes forward; std() backward = 1/(2*std) is NaN at var=0.
+    sqrt(var+eps) backward = 1/(2*sqrt(var+eps)) is always finite).
+    """
+    pred = prediction.float().view(-1)
+    tgt = target.float().view(-1)
+
+    if pred.numel() < 2:
+        return torch.tensor(0.0, device=pred.device, requires_grad=True)
+
+    pred_centered = pred - pred.mean()
+    tgt_centered = tgt - tgt.mean()
+
+    cov = (pred_centered * tgt_centered).mean()
+    # Use sqrt(var + eps) not clamp(std, min=eps) — clamp only fixes forward pass,
+    # but std() backward = 1/(2*std) is NaN when variance=0 (Gemini audit fix #2)
+    pred_std = torch.sqrt((pred_centered ** 2).mean() + ic_epsilon)
+    tgt_std = torch.sqrt((tgt_centered ** 2).mean() + ic_epsilon)
+
+    ic = cov / (pred_std * tgt_std)
+    return -ic  # minimize negative IC = maximize IC
+
+
 def compute_epiplexity_mdl_loss(prediction: torch.Tensor, target: torch.Tensor,
                                 z_core: torch.Tensor, lambda_s: float = 1e-4):
     """

@@ -210,11 +210,19 @@ def main():
     # --- Statistical Analysis ---
     results = {}
 
-    # 1. Overall correlation
+    # 1. Overall correlation (Pearson IC)
     corr = np.corrcoef(preds, targets)[0, 1]
     results["correlation"] = float(corr)
+    results["pearson_ic"] = float(corr)
     results["r_squared"] = float(corr ** 2)
-    logger.info(f"Correlation: {corr:.6f}, R²: {corr**2:.6f}")
+    logger.info(f"Pearson IC: {corr:.6f}, R²: {corr**2:.6f}")
+
+    # 1b. Rank IC (Spearman — Phase 13 primary metric, INS-067)
+    from scipy.stats import spearmanr
+    rank_ic, rank_ic_pval = spearmanr(preds, targets)
+    results["rank_ic"] = float(rank_ic)
+    results["rank_ic_pval"] = float(rank_ic_pval)
+    logger.info(f"Rank IC (Spearman): {rank_ic:.6f} (p={rank_ic_pval:.2e})")
 
     # 2. Decile analysis
     percentiles = [10, 20, 30, 40, 50, 60, 70, 80, 90]
