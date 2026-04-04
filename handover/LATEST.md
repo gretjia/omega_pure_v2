@@ -1,88 +1,75 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-04-04 — **STATUS: Phase 12 post-flight COMPLETE — 信号弱但真实存在。Strategy B 管线验证通过，阻塞新训练直到架构修复。**
+Last Updated: 2026-04-04 — **STATUS: Phase 13 Mandate B COMPLETE — AttentionPooling + Pre-LN 残差已实现并通过 Crucible overfit test。下一步: Mandate A (IC Loss)。**
 
 ## Current State
-- **Phase 12 post-flight COMPLETE**: E0 CS D9-D0=5.99 BP (t=2.23 显著), Rank IC=-0.019 (排序反转)
+- **Phase 13 Mandate B DONE**: AttentionPooling 替换 GMP + Pre-LN 残差 + RPB 梯度解锁
+- **Crucible overfit test PASS**: 瞬时 loss≈0.15 (R²=0.96), pred_std 非零, 单调递减
+- **Docker phase13-v1 已构建**: canary 正确拒绝旧 checkpoint (Phase 13 key guard 工作)
 - **Phase 13 spec FINAL**: IC Loss + Cross-Sectional + Topological Unblocking (Codex+Gemini 审计通过)
-- **Strategy B 管线验证**: 代码管线确认无 Train-Serve Skew（Codex 审计）。Phase 6 D9-D0=-5.92 是真实模型行为，非代码 bug
-- **Pipeline Validation Gate (R-017)**: 新训练被阻塞，直到架构修复完成
-- **新教训 C-062~C-067**: torch.compile bug / GCS FUSE / staging 磁盘 / 管线验证优先 / 不用换 Loss 解决管线 bug / AI 口头同意≠执行
+- **Mandate A (IC Loss) 待实施**: Loss 函数仍是 Phase 12 Unbounded Spear MSE
 
-## Changes This Session (8 commits)
-- `f57861a` 11 轮外部审计 + torch.compile _orig_mod 修复 + 死代码清理 + gcp/ 同步
-- `eb940e2` README + handover/README 更新（审计入口 + 文件地图）
-- `cade569` Phase 12 审计 prompt（供外部 AI agent 审计）
-- `58fcdb2` Phase 13 spec FINAL（IC Loss + Cross-Sectional + Topological Unblocking）
-- `64a28a1` Strategy B 管线验证门禁 + C-065/C-066 教训
-- `dd7ba30` R-017 推理对齐门禁 + C-067 教训
+## Changes This Session (3 commits)
+- `481870b` feat: Phase 13 Mandate B — AttentionPooling + Pre-LN Residual (8 文件, +144 params)
+- `3018cb0` fix: lambda_s 0→0 spec 对齐 + gcp/ 完全同步 + q_metaorder clamp
+- `3a5a249` docs: C-068~C-070 + Ω2 进化 + harness 硬化
 
 ## Key Decisions
-- **Strategy B > Strategy A**: Gemini 裁定"不要用换 Loss 解决管线 bug"。先验证管线，再训练
-- **截面排序改善 33% 但不翻转根因**: CS D9-D0=5.99 > 全局 4.51，但仍远 < 25 BP 成本
-- **Phase 6 IC=0.066 基准不可信**: post-flight daily IC 只有 0.028，D9-D0=-5.92（负值）
-- **MDL 只杀信号**: E0 (lambda_s=0) 全面优于 E19 (lambda_s=1e-4)
-- **Leaky Blinding 导致波动率预测**: Gemini 数学证明，pred_mean=34.42 精确匹配变换目标期望 32.07
+- **Pipeline Gate Override for Mandate B**: 架构修复不是"换 Loss"，Crucible test 替代 Strategy B Step 1
+- **Pre-LN > Post-LN**: V2 directive 说 Post-LN, Gemini 审计选 Pre-LN (防方差爆炸), 保持 spec [FINAL]
+- **B.3 窗口隔离推迟**: 先验证 B.1+B.2，跨窗注意力推迟到 Phase 13 P2 (INS-070)
+- **Ω2 进化**: "du -sh/df -h" → "资源承诺必须与任务目的成比例" (meta 原则, 非补窟窿)
+- **einsum 替换 broadcast-multiply-sum**: Gemini 建议 /sqrt(D) 缩放 + simplify 建议 einsum
 
 ## Next Steps
-1. **[P0] 架构修复 (INS-068)**: 去 Global Mean Pooling → Attention Pooling + 加残差+Pre-LN + RPB 修复
-2. **[P0] 用修复后架构跑 overfit test**: 验证 loss 能否归零
-3. **[P1] Phase 13 训练**: IC Loss + 修复后架构 + 截面评估
-4. **[P2] 历史基准重验**: Phase 6 T29 用修复后代码重跑 post-flight（确认 IC=0.066 是否可信）
+1. **[P0] Mandate A — IC Loss + Cross-Sectional Evaluation**: 替换 MSE → Per-Date IC Loss, 重构 validate() 和 backtest_5a.py 的截面评估
+2. **[P1] Phase 13 全面训练**: IC Loss + 修复后架构, Vizier HPO, Cross-Sectional Rank IC 为主指标
+3. **[P2] Mandate B.3 — Window Isolation**: 如 P0+P1 效果不够, 实施跨窗注意力 (INS-070)
 
 ## Warnings
-- **linux1 SSH 不稳定**: OOM 后 Connection refused，推理已改用 Vertex AI
-- **所有新训练被 R-017 + Strategy B 阻塞**: 必须先完成架构修复
-- **postflight_analysis.py 已修改但未提交**: 新增 Step 7 截面分析
-- **Phase 13 spec 中 RPB 修复方案未最终选定**: "先 debug，不行换 sinusoidal"
+- **Loss 函数仍是 Phase 12 MSE**: Mandate A 尚未实施, 当前训练无意义
+- **Crucible loss=0.674 是 running average**: 实际瞬时 loss≈0.15 (C-070 教训, 必须增量分析)
+- **lambda_s default 已改为 0**: 旧 YAML 如果不指定 lambda_s, 现在会用 0 (Phase 13 正确行为)
+- **gcp/ 镜像已完全同步**: 但结构性债务仍在 (5 文件手动 cp)
 
 ## Remote Node Status
-- linux1: SSH 不稳定 (OOM 恢复缓慢)，推理改用 Vertex AI
-- Vertex AI: T4 GPU 正常，GCS FUSE 模式推理已验证
+本次会话未涉及远程节点。Crucible test 在 Vertex AI L4 ON_DEMAND 完成。
 
 ## Architect Insights (本次会话)
-- INS-065: Drop Leaky Blinding (100x 梯度压缩 → 波动率预测)
-- INS-066: Revert to IC Loss (MSE 在 2.4% SNR 下退化)
-- INS-067: Cross-Sectional Evaluation (全局 D9-D0 有波动率偏差)
-- INS-068: Topological Unblocking (残差 + Attention Pooling + RPB)
-- INS-069: Remove MDL L1 (杀信号不杀噪声)
-- 架构师审计裁决已归档: architect/directives/2026-04-04_phase13_audit_verdict_and_roadmap.md
+- INS-070: Shatter Window Isolation — 跨窗注意力打破 0.64 天感受野 (deferred to P2)
+- V2 directive 已归档: architect/directives/2026-04-04_phase13_audit_verdict_and_roadmap_v2.md
 
 ## Machine-Readable State
 ```yaml
-phase: "13_ic_loss_topological_unblocking"
-status: "spec_final_awaiting_architecture_fix"
-blocking_gate: "R-017 + Strategy B — no training until architecture fixed"
+phase: "13_mandate_b_done_mandate_a_next"
+status: "mandate_b_complete_crucible_pass"
+blocking_gate: "Mandate A (IC Loss) 未实施 — MSE 仍在代码中"
 harness:
   version: "v3_living"
-  rules_active: 17  # +R-017
-  incidents_total: 67  # +C-062~C-067
+  rules_active: 17
+  incidents_total: 70  # +C-068~C-070
   hooks: 10
   skills: 9
-docker: "omega-tib:phase12-postflight-v1"
-postflight:
-  e0_cs_d9d0: 5.99
-  e0_cs_pearson_ic: 0.0095
-  e0_cs_rank_ic: -0.0193
-  e0_cs_positive_days: "229/399 (57.4%)"
-  e19_cs_d9d0: 4.55
-  verdict: "signal exists but too weak (5.99 < 25 BP cost)"
+  omega2_evolved: "proportionality principle (not just du/df)"
+docker: "omega-tib:phase13-v1"
+crucible:
+  job_id: "5402703665888755712"
+  instantaneous_loss_final: 0.15
+  running_avg_loss: 0.674
+  r_squared: 0.96
+  pred_std: 0.010
+  verdict: "PASS — architecture learns, gradients flow, model not collapsed"
 spec:
   status: "FINAL — Codex 9/9 + Gemini 7/7"
-  loss: "Per-Date IC Loss (Pearson)"
-  pooling: "AttentionPooling (pending implementation)"
-  residual: "Pre-LN (pending implementation)"
+  loss: "Per-Date IC Loss (Pearson) — NOT YET IMPLEMENTED"
+  pooling: "AttentionPooling — IMPLEMENTED (phase13-v1)"
+  residual: "Pre-LN — IMPLEMENTED (phase13-v1)"
   lambda_s: 0
-strategy_b:
-  step1_rerun_historical: "NOT NEEDED — Codex confirmed no train-serve skew"
-  step2_frt_investigation: "NOT NEEDED — old inference also had FRT"
-  step3_cross_sectional: "DONE — CS D9-D0=5.99, improves 33% but doesn't flip"
-  step4_architecture_fix: "NEXT — INS-068"
-  step5_phase13_training: "BLOCKED until step4"
-new_lessons: ["C-062", "C-063", "C-064", "C-065", "C-066", "C-067"]
-new_insights: ["INS-065", "INS-066", "INS-067", "INS-068", "INS-069"]
-new_rules: ["R-017"]
-audit_reports:
-  - "handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md"
-  - "handover/PHASE12_AUDIT_PROMPT.md"
-  - "handover/STRATEGY_B_PIPELINE_VALIDATION.md"
+  window_isolation: "INS-070 — DEFERRED to P2"
+new_lessons: ["C-068", "C-069", "C-070"]
+new_insights: ["INS-070"]
+new_harness_rules: ["15b external audit mandatory", "15c pre-audit quality", "24b Spot only >2h", "25/25a two-layer error tracking"]
+external_audits:
+  plan_audit: "Codex 6/4→fixed, Gemini 6/1"
+  code_audit: "Codex 7/8 (1 deferred=Mandate A), Gemini 7/7"
+  gcp_audit: "Gemini 6/6 PASS"
 ```
