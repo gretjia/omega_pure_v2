@@ -1,75 +1,76 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-04-04 — **STATUS: Phase 13 Mandate B COMPLETE — AttentionPooling + Pre-LN 残差已实现并通过 Crucible overfit test。下一步: Mandate A (IC Loss)。**
+Last Updated: 2026-04-04 — **STATUS: Phase 13 Mandate A COMPLETE — IC Loss 替换 MSE, Rank IC 为主指标。待 Docker rebuild + Crucible overfit test 验证。**
 
 ## Current State
-- **Phase 13 Mandate B DONE**: AttentionPooling 替换 GMP + Pre-LN 残差 + RPB 梯度解锁
-- **Crucible overfit test PASS**: 瞬时 loss≈0.15 (R²=0.96), pred_std 非零, 单调递减
-- **Docker phase13-v1 已构建**: canary 正确拒绝旧 checkpoint (Phase 13 key guard 工作)
-- **Phase 13 spec FINAL**: IC Loss + Cross-Sectional + Topological Unblocking (Codex+Gemini 审计通过)
-- **Mandate A (IC Loss) 待实施**: Loss 函数仍是 Phase 12 Unbounded Spear MSE
+- **Phase 13 Mandate A DONE**: IC Loss 替换 Unbounded Spear MSE, Rank IC 替换 D9-D0 为 best.pt/Vizier 主指标
+- **Phase 13 Mandate B DONE**: AttentionPooling + Pre-LN Residual (上一 session)
+- **Mandate B Crucible PASS**: 瞬时 loss≈0.15, pred_std 非零 (Phase 13 架构验证)
+- **Mandate A Crucible 待做**: 需 Docker rebuild (phase13-v2) + 新 Crucible test
+- **gcp/ 已同步**: 3 文件 + crucible config 已更新
+- **Spec [FINAL] + 2 APPROXIMATION**: batch-level IC + global Spearman (date 不在 shard 中)
 
 ## Changes This Session (3 commits)
-- `481870b` feat: Phase 13 Mandate B — AttentionPooling + Pre-LN Residual (8 文件, +144 params)
-- `3018cb0` fix: lambda_s 0→0 spec 对齐 + gcp/ 完全同步 + q_metaorder clamp
-- `3a5a249` docs: C-068~C-070 + Ω2 进化 + harness 硬化
+- `df2db3a` feat: Phase 13 Mandate A — IC Loss + Cross-Sectional Evaluation (5 files)
+- `d8d402a` merge: Phase 13 Mandate A (feature branch → main)
+- `1c11bbe` sync: gcp/ mirror + crucible config update
 
 ## Key Decisions
-- **Pipeline Gate Override for Mandate B**: 架构修复不是"换 Loss"，Crucible test 替代 Strategy B Step 1
-- **Pre-LN > Post-LN**: V2 directive 说 Post-LN, Gemini 审计选 Pre-LN (防方差爆炸), 保持 spec [FINAL]
-- **B.3 窗口隔离推迟**: 先验证 B.1+B.2，跨窗注意力推迟到 Phase 13 P2 (INS-070)
-- **Ω2 进化**: "du -sh/df -h" → "资源承诺必须与任务目的成比例" (meta 原则, 非补窟窿)
-- **einsum 替换 broadcast-multiply-sum**: Gemini 建议 /sqrt(D) 缩放 + simplify 建议 einsum
+- **Batch-level IC (非 per-date)**: ETL shard meta.json 无日期字段。Codex 审计标记 FAIL (spec 要求 per-date)，用户接受近似。Spec 标注 [APPROXIMATION]。
+- **sqrt(var+eps) 非 clamp(std,eps)**: Gemini 二轮审计发现 torch.std() backward 在 var=0 时 NaN。clamp 只修 forward，sqrt(var+eps) forward+backward 都安全。
+- **Rank IC 替换 D9-D0**: Spec primary_metric = Cross-Sectional Rank IC (Vizier MAXIMIZE)
+- **Pipeline Gate 豁免**: Strategy B Step 1 未执行，但外部审计已裁定所有历史基准作废 (strict=False + GMP + Leaky Blinding)
 
 ## Next Steps
-1. **[P0] Mandate A — IC Loss + Cross-Sectional Evaluation**: 替换 MSE → Per-Date IC Loss, 重构 validate() 和 backtest_5a.py 的截面评估
-2. **[P1] Phase 13 全面训练**: IC Loss + 修复后架构, Vizier HPO, Cross-Sectional Rank IC 为主指标
-3. **[P2] Mandate B.3 — Window Isolation**: 如 P0+P1 效果不够, 实施跨窗注意力 (INS-070)
+1. **[P0] Docker rebuild**: `bash gcp/safe_build_and_canary.sh 13 2` — 必须先构建 phase13-v2 镜像
+2. **[P0] Crucible overfit test**: IC Loss 应收敛到 loss→-1.0 (IC=1.0), pred_std 非零
+3. **[P1] Phase 13 全面训练**: Vizier HPO, Rank IC 为主指标, A100 Spot
+4. **[P2] ETL V4 加 date**: 升级 batch-level IC → per-date IC (消除 APPROXIMATION)
+5. **[P2] Mandate B.3 — Window Isolation**: 跨窗注意力 (INS-070, deferred)
 
 ## Warnings
-- **Loss 函数仍是 Phase 12 MSE**: Mandate A 尚未实施, 当前训练无意义
-- **Crucible loss=0.674 是 running average**: 实际瞬时 loss≈0.15 (C-070 教训, 必须增量分析)
-- **lambda_s default 已改为 0**: 旧 YAML 如果不指定 lambda_s, 现在会用 0 (Phase 13 正确行为)
-- **gcp/ 镜像已完全同步**: 但结构性债务仍在 (5 文件手动 cp)
+- **Docker 镜像过期**: phase13-v1 仅含 Mandate B，不含 IC Loss。必须 rebuild phase13-v2
+- **APPROXIMATION 标注**: Spec 中 loss_function 和 primary_metric 两处标注 batch-level 近似
+- **Stale CLI params**: train.py 保留 leaky_factor/static_mean_bp/mse_scale_factor 参数 (YAML backward-compat)，但不在活跃代码路径中
+- **Early stopping 阈值**: --early_stop_fvu 现在对比 Rank IC (非 D9-D0 BP)，阈值含义改变
 
 ## Remote Node Status
-本次会话未涉及远程节点。Crucible test 在 Vertex AI L4 ON_DEMAND 完成。
+本次会话未涉及远程节点。所有工作在 omega-vm 控制节点完成。
 
 ## Architect Insights (本次会话)
-- INS-070: Shatter Window Isolation — 跨窗注意力打破 0.64 天感受野 (deferred to P2)
-- V2 directive 已归档: architect/directives/2026-04-04_phase13_audit_verdict_and_roadmap_v2.md
+本次会话无新架构洞察。实施已有 INS-066 (IC Loss) + INS-067 (Rank IC 主指标)。
 
 ## Machine-Readable State
 ```yaml
-phase: "13_mandate_b_done_mandate_a_next"
-status: "mandate_b_complete_crucible_pass"
-blocking_gate: "Mandate A (IC Loss) 未实施 — MSE 仍在代码中"
+phase: "13_mandate_a_done"
+status: "ic_loss_implemented_pending_crucible"
+blocking_gate: "Docker rebuild phase13-v2 + Crucible overfit test"
 harness:
   version: "v3_living"
   rules_active: 17
-  incidents_total: 70  # +C-068~C-070
+  incidents_total: 70
   hooks: 10
   skills: 9
-  omega2_evolved: "proportionality principle (not just du/df)"
-docker: "omega-tib:phase13-v1"
+docker: "omega-tib:phase13-v1 (STALE — needs rebuild to phase13-v2)"
 crucible:
-  job_id: "5402703665888755712"
-  instantaneous_loss_final: 0.15
-  running_avg_loss: 0.674
-  r_squared: 0.96
-  pred_std: 0.010
-  verdict: "PASS — architecture learns, gradients flow, model not collapsed"
+  mandate_b:
+    job_id: "5402703665888755712"
+    instantaneous_loss_final: 0.15
+    verdict: "PASS"
+  mandate_a:
+    status: "PENDING — Docker rebuild required"
+    expected_loss: "-1.0 (IC=1.0 perfect overfit)"
 spec:
-  status: "FINAL — Codex 9/9 + Gemini 7/7"
-  loss: "Per-Date IC Loss (Pearson) — NOT YET IMPLEMENTED"
+  status: "FINAL + 2 APPROXIMATION annotations"
+  loss: "Pearson IC Loss — IMPLEMENTED (sqrt(var+eps) guard)"
   pooling: "AttentionPooling — IMPLEMENTED (phase13-v1)"
   residual: "Pre-LN — IMPLEMENTED (phase13-v1)"
   lambda_s: 0
+  approximations:
+    - "batch-level IC (no date in shard, pending ETL V4)"
+    - "global Spearman Rank IC (pending per-date average)"
   window_isolation: "INS-070 — DEFERRED to P2"
-new_lessons: ["C-068", "C-069", "C-070"]
-new_insights: ["INS-070"]
-new_harness_rules: ["15b external audit mandatory", "15c pre-audit quality", "24b Spot only >2h", "25/25a two-layer error tracking"]
 external_audits:
-  plan_audit: "Codex 6/4→fixed, Gemini 6/1"
-  code_audit: "Codex 7/8 (1 deferred=Mandate A), Gemini 7/7"
-  gcp_audit: "Gemini 6/6 PASS"
+  plan_audit: "Codex FAIL (per-date, user accepted batch-level), Gemini CONDITIONAL PASS"
+  code_audit: "Codex 7/8 PASS (stale CLI params intentional), Gemini 2-round PASS (sqrt fix)"
+new_commits: ["df2db3a", "d8d402a", "1c11bbe"]
 ```
