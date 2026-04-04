@@ -294,11 +294,73 @@ Failure: torch.compile + ROCm 不兼容 (aten::empty.memory_format HIP backend)
 **缓解**: validate() 有哨兵 (error<10BP, warn<30BP)，IC 梯度 ∝ 1/pred_std 有自纠正
 **验证方法**: 正式训练逐 epoch 监控 pred_std_bp，连续 3 epoch < 30BP 或单次 < 10BP 停训
 
-#### 疑惑 2: Batch-level IC vs Per-date IC 的信息泄露
-**数据**: Spec 标注 `[APPROXIMATION]`，当前 batch 混合不同日期样本
-**担忧**: 不同日期市场均值不同，batch IC 可能部分学到日期间均值差异
-**影响**: 可能高估 IC (排序能力部分来自日期均值差异，非 Alpha)
-**验证方法**: Post-Flight 计算 per-date IC 并与 global IC 对比
+#### 疑惑 2: Volume Clock 范式 vs Per-date IC 的根本矛盾
+
+**背景**: INS-067 要求 per-date cross-sectional IC，Spec 标注 `[APPROXIMATION]` 因为 ETL 无 date 字段。但更深层的问题是：per-date IC 是否与 Volume Clock 设计范式冲突？
+
+**证据 1 — ETL 实际输出验证** (linux1 生产 shard 实测):
+```
+$ tar 读取 omega_shard_00001.tar → meta.json:
+{"symbol": "000063.SZ", "timestamp": "0"}
+{"symbol": "000063.SZ", "timestamp": "1"}
+→ 只有 symbol + 递增序号，无 date 字段
+```
+> 源文件: `tools/omega_etl_v3_topo_forge.py:479`
+> `"meta.json": {"symbol": symbol, "timestamp": str(sample_idx)}`
+> date 在 ETL 内部用于计算日均量/波动率 (`:412-460`)，写 shard 时丢弃
+
+**证据 2 — Volume Clock 设计原则** (`architect/current_spec.yaml:56-67`):
+```yaml
+etl:
+  vol_threshold: 50000
+  adv_fraction: 0.02  # 动态阈值 = Rolling_ADV_20d × 此值
+  # 设计哲学: 容量时钟替代物理时钟，抹平大小盘异质性
+  # 每根 Bar 严格代表 "消耗了该标的 2% 日常流动性"
+```
+
+**证据 3 — Target 定义** (`architect/current_spec.yaml:72-79`):
+```yaml
+target:
+  type: "forward_vwap_return"
+  payoff_horizon: 20  # H bars — 固定值
+  # 单位: basis_points
+```
+Target = 未来 20 根 volume bars 的 VWAP return。一个高流动性股的 20 bars ≈ 数小时；一个低流动性股的 20 bars ≈ 数天。
+
+**矛盾分析:**
+
+| 维度 | Volume Clock 范式 | Per-date IC 范式 (INS-067) |
+|------|------------------|---------------------------|
+| 时间轴 | 流动性事件序列，无固定日期边界 | 日历日截面 |
+| 样本含义 | "消耗了 2% ADV 的一段市场活动" | "某天某股票的状态" |
+| 跨股可比性 | 同样消耗 2% ADV 的 bars 天然可比 | 同一天的股票天然可比 |
+| Target 时间跨度 | 因股票流动性而异 (数小时~数天) | 隐含假设同一天的 returns 可比 |
+| Bar 产出频率 | 高流动性股 ~50 bars/day, 低流动性 ~5 bars/day | 每股每天 1 个观测 |
+
+**核心问题 (待审计师裁决):**
+
+1. **Per-date grouping 是否违反 Volume Clock 设计?**
+   - 把不同流动性股票按日历日分组，等于重新引入了 Volume Clock 要消除的时间异质性
+   - 高流动性股贡献 ~50 个样本/天，低流动性股贡献 ~5 个，per-date IC 被高流动性股主导
+
+2. **当前 batch-level IC 是否反而更合理?**
+   - Batch 混合不同日期和股票的 volume bars
+   - 比较的是 "消耗了相似流动性的 windows"，不受日历日约束
+   - 但也可能引入日期间市场均值差异的虚假相关
+
+3. **部署端的时间对齐需求:**
+   - 实际交易必须在某个时间点做决策（"此刻该买哪些股"）
+   - 推理端的 daily cross-sectional Z-score (`architect/current_spec.yaml:134-138`) 已经处理了时间对齐
+   - Loss 函数是否需要也按日期对齐？还是 Loss 按 Volume Clock，推理按日历日？
+
+4. **如果不用 per-date IC，验证指标怎么定义?**
+   - 全局 batch IC 有日期均值漂移风险
+   - Per-date IC 有 Volume Clock 范式冲突
+   - 是否需要第三种方案？(如 per-volume-regime IC)
+
+**当前状态:** batch-level IC ([APPROXIMATION])，ETL 无 date 字段。
+**影响范围:** 训练 loss、验证指标、HPO primary metric 三者均受此设计决策影响。
+**不阻断 Phase 13 训练:** 此问题影响评估框架而非模型本身，正式训练数据将提供对比依据。
 
 #### 疑惑 3: Phase 6 IC=0.066 基准是否有效
 **数据**: torch.compile `_orig_mod.` bug (C-062) 可能导致 Phase 6 推理用随机权重
