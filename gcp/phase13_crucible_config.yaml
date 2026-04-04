@@ -14,9 +14,9 @@ workerPoolSpecs:
     - -c
     - |
       set -e
-      echo "=== Phase 13 Crucible: 64-sample Overfit Test ==="
-      echo "Goal: loss→0.0, RPB grad_norm >> 0.08 (was dead under GMP)"
-      echo "Architecture: AttentionPooling + Pre-LN Residual (Mandate B)"
+      echo "=== Phase 13 Crucible: 64-sample Overfit Test (Mandate A: IC Loss) ==="
+      echo "Goal: IC_loss→-1.0 (IC=1.0 perfect correlation), pred_std non-trivial"
+      echo "Architecture: AttentionPooling + Pre-LN Residual + IC Loss (Mandates A+B)"
 
       echo "=== Pipe mode: 1 shard, no staging needed ==="
       SHARD_URL="pipe:gcloud storage cat gs://omega-pure-data/wds_shards_v3_full/omega_shard_00001.tar"
@@ -42,6 +42,6 @@ workerPoolSpecs:
         --val_split=0.01
 
       echo "=== Crucible Complete ==="
-      echo "Check: final loss should be ~0.0, pred_std should be non-trivial"
+      echo "Check: IC_loss should approach -1.0 (=IC→1.0), pred_std non-trivial"
 scheduling:
   strategy: ON_DEMAND
