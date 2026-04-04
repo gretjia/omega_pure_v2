@@ -124,6 +124,16 @@ pipelines:
     failures: []
     last_updated: "2026-04-04"
 
+  - directive: "2026-04-04_phase13_bag_of_windows_and_no_retreat_matrix.md"
+    stage: ins_created
+    insights: [INS-074]
+    spec_fields: []
+    code_files: []
+    audit_status: final
+    notes: "V4 — Bag-of-Windows diagnosis + No-Retreat Decision Matrix. Interpretive framework only, no code/spec changes."
+    failures: []
+    last_updated: "2026-04-04"
+
 # ── 模板 (新 directive 用) ──
 # pipeline_template:
 #   directive: "<filename>"

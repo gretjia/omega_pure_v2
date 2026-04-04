@@ -83,6 +83,7 @@
 | INS-071 | Dual-Paradigm — Volume Clock 训练 + Calendar 评估 | 架构 | 2026-04-04 | NONE | active |
 | INS-072 | Historical Baselines Invalidated — Phase 13 = Epoch 0 | 度量 | 2026-04-04 | L2 更新 | active |
 | INS-073 | Phase 13 Scope Downgrade — 日内 TWAP/VWAP 拆单摩擦 | 架构 | 2026-04-04 | NONE | active |
+| INS-074 | No-Retreat Decision Matrix — Phase 13 结果解读 + Phase 14 锁定 | 度量 | 2026-04-04 | NONE | active |
 
 ---
 
@@ -163,3 +164,4 @@
 | INS-071 | phase13_recursive_audit_and_joint_arbitration | — |
 | INS-072 | phase13_recursive_audit_and_joint_arbitration | — |
 | INS-073 | phase13_recursive_audit_and_joint_arbitration | — |
+| INS-074 | phase13_bag_of_windows_and_no_retreat_matrix | — |
