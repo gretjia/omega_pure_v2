@@ -16,7 +16,9 @@
 | `tools/omega_etl_v3_topo_forge.py` | V3 ETL 管线 |
 | `architect/current_spec.yaml` | 当前架构规范（动态公理源） |
 | `omega_axioms.py` | 公理断言模块 |
-| `OMEGA_LESSONS.md` | **唯一经验源**（元公理 + 操作手册 + 案例库） |
+| `OMEGA_LESSONS.md` | 经验索引（元公理 + 操作手册 + 案例库摘要） |
+| `incidents/` | **Trace Vault** — 完整事件上下文（Meta-Harness V3） |
+| `rules/active/` | **Rule Engine** — 数据驱动的自动执法规则 |
 
 ---
 
@@ -76,9 +78,45 @@
 
 ### 会话退出强制流程
 25. **Session 结束前**，必须将本次会话遇到的**所有 debug、错误、失误**压缩记录到 `OMEGA_LESSONS.md` 案例库（编号递增，每条 ≤ 2 行，归因到 Ω 公理）。包括但不限于：配置错误、API 拒绝、参数遗漏、工程踩坑、费用误判。**不可遗漏，不可延迟到下个 session。**
+25b. **新教训记录后**，**自动**运行 `/lesson-to-rule` 将教训转化为可执行规则（Meta-Harness V3: Ω4 amplifier）。post-lesson-trigger.sh 会提醒。规则生成需用户确认。
+25c. **Session 结束前**（如果本 session 有新教训或规则触发），**自动**运行 `/harness-reflect` 简报版（仅 Stage 1 盘点 + Stage 6 健康分，跳过详细分析）。
 
-### 上下文管理
-26. `OMEGA_LESSONS.md` — **唯一经验源**（元公理 + 操作手册 + 案例库）
+### Living Harness — 自我进化的有机体
+
+> 灵感: MIT Meta-Harness (raw traces >> summaries) + Karpathy autoresearch (propose→evaluate→keep/discard→LOOP)
+> 核心: Harness 不是规则手册, 是有生命的神经系统。它观察自己、学习、进化。
+
+**三层架构**:
+
+| 层 | 组件 | 功能 | 自动触发 |
+|---|---|---|---|
+| **记忆层** | `incidents/` Trace Vault | 完整失败上下文 (不压缩) | /lesson-to-rule 自动创建 |
+| **执法层** | `rules/active/` Rule Engine | 数据驱动规则 (YAML, 不改代码) | rule-engine.sh 每次 Edit/Write |
+| **进化层** | `/harness-reflect` | 自评 + 修剪 + 健康分 | Session 结束自动运行 |
+
+**管线神经系统** (Directive → Deploy 全链追踪):
+
+| 阶段 | 质量门禁 | 自动检查 |
+|---|---|---|
+| Ingest → INS | `pipeline-quality-gate.sh` | 6 个必填 section 完整性 |
+| INS → Spec | Spec 标记 `[DRAFT]` | 审计前不定稿 |
+| Spec → Code | `spec_code_alignment.py` | 代码默认值 = spec 值 |
+| Code → Docker | `safe_build_and_canary.sh` Step 1b+1d | 文件漂移 + 参数对齐 |
+| Docker → Deploy | `pre-deploy-gate.sh` | Canary PASS 才允许 |
+| Deploy → 失败 | Chain of Custody 回溯 | 失败追踪到源头 INS 假设 |
+
+**生命循环**:
+```
+失败 → 教训(OMEGA_LESSONS) → 规则(/lesson-to-rule) → 执法(rule-engine)
+  ↑                                                        ↓
+  └── 反思(/harness-reflect) ← 评估(健康分) ← 管线追踪 ←─┘
+```
+
+### 上下文文件地图
+26. `OMEGA_LESSONS.md` — 经验索引（元公理 + 操作手册 + 案例摘要）
+26b. `incidents/` — **Trace Vault**（完整事件上下文, 不压缩）
+26c. `rules/active/` — **Rule Engine**（数据驱动执法, YAML 格式）
+26d. `architect/chain_of_custody.yaml` — **管线追踪**（每个指令的全生命链）
 27. `handover/LATEST.md` — 当前项目状态（纯状态，不含经验）
 28. `VIA_NEGATIVA.md` — 已冻结归档（原始证据，不再追加）
 29. `architect/current_spec.yaml` — 架构规范 | `architect/INDEX.md` — 指令时间线

@@ -1,0 +1,204 @@
+# incidents/INDEX.yaml — Meta-Harness V3 Trace Vault Index
+# 机器可读事件索引, 供 rule-engine 和 /harness-reflect 查询
+# 渐进填充: 优先迁移重复模式组 + 高严重性事件
+
+schema_version: "1.0"
+last_updated: "2026-04-03"
+
+# ── 统计 ──
+summary:
+  total_incidents: 64
+  migrated_to_traces: 10    # 有完整 incidents/C-xxx/ 目录
+  enforcement_executable: 15 # 有 rule 或 hook 覆盖
+  enforcement_doc_only: 49   # 仅文档
+  health_score: null         # 待 /harness-reflect 首次计算
+
+# ── 事件清单 (已迁移到 Trace Vault 的事件) ──
+incidents:
+  # === GROUP 1: Checkpoint State Leakage ===
+  - id: C-020
+    title: "不同 HPO 复用同一 checkpoint 目录 → 架构不兼容崩溃"
+    pattern: checkpoint_state
+    axiom: "Ω1"
+    severity: high
+    enforcement: warn
+    rule_id: R-007
+    related: [C-044]
+    phase: "Phase 9"
+
+  - id: C-044
+    title: "resume + 同 output_dir 换 Loss → 加载旧 checkpoint 假完成"
+    pattern: checkpoint_state
+    axiom: "Ω1"
+    severity: high
+    enforcement: warn
+    rule_id: R-007
+    related: [C-020]
+    phase: "Phase 11"
+
+  # === GROUP 2: I/O Storage Strategy ===
+  - id: C-028
+    title: "pd-ssd 吞吐与容量挂钩 (0.48 MB/s/GB) → 训练瓶颈"
+    pattern: io_strategy
+    axiom: "Ω2"
+    severity: critical
+    enforcement: executable
+    enforcement_file: ".claude/hooks/lesson-enforcer.sh"
+    rule_id: R-001
+    related: [C-040, C-041, C-048]
+    phase: "Phase 9"
+
+  - id: C-040
+    title: "推理 job 重复用 pd-ssd + gen_config 硬编码 200GB"
+    pattern: io_strategy
+    axiom: "Ω2"
+    severity: high
+    enforcement: executable
+    enforcement_file: ".claude/hooks/lesson-enforcer.sh"
+    rule_id: R-001
+    related: [C-028]
+    phase: "Phase 10"
+
+  # === GROUP 3: Normalization Pathology ===
+  - id: C-042
+    title: "Z-score 仿射不变 → 梯度正交 → W² 膨胀 → NaN"
+    pattern: normalization
+    axiom: "Ω1"
+    severity: critical
+    enforcement: executable
+    rule_id: R-008
+    related: [C-045]
+    phase: "Phase 11a"
+
+  - id: C-045
+    title: "乱序 WebDataset + Batch Z-score → 跨期毒药 → logit 6956 BP"
+    pattern: normalization
+    axiom: "Ω1"
+    severity: critical
+    enforcement: executable
+    rule_id: R-008
+    related: [C-042]
+    phase: "Phase 10"
+
+  # === GROUP 4: Train-Serve Skew ===
+  - id: C-049
+    title: "Train 输出绝对 BP, 推理残留 *TARGET_STD → 4319 BP"
+    pattern: full_stack_sync
+    axiom: "Ω5"
+    severity: critical
+    enforcement: warn
+    rule_id: R-009
+    related: [C-050, C-054]
+    phase: "Phase 11c"
+
+  - id: C-050
+    title: "废弃代码残留: TARGET_STD + .squeeze() 未全栈清除"
+    pattern: full_stack_sync
+    axiom: "Ω5"
+    severity: high
+    enforcement: warn
+    rule_id: R-009
+    related: [C-049]
+    phase: "Phase 11c"
+
+  # === GROUP 5: Docker-Code Misalignment ===
+  - id: C-052
+    title: "20 epoch 长训练才发现脑死亡 (pred_std=5.6 BP)"
+    pattern: validation_skip
+    axiom: "Ω1"
+    severity: critical
+    enforcement: warn
+    rule_id: R-014
+    related: [C-053, C-054]
+    phase: "Phase 11c"
+
+  - id: C-053
+    title: "Docker 在代码修复前构建 → 15 epoch 用旧代码 → 216x 幻觉"
+    pattern: deploy_alignment
+    axiom: "Ω3"
+    severity: critical
+    enforcement: warn
+    rule_id: R-011
+    related: [C-052, C-058]
+    phase: "Phase 11c"
+
+  # === 其他已有执法的关键事件 ===
+  - id: C-032
+    title: "checkpoint_interval 为零 → 除零崩溃"
+    pattern: parameter_coupling
+    axiom: "Ω1"
+    severity: high
+    enforcement: executable
+    rule_id: R-002
+
+  - id: C-039
+    title: "device 硬编码 CPU → GPU 空转 23h/$25"
+    pattern: config_sync
+    axiom: "Ω6"
+    severity: critical
+    enforcement: executable
+    rule_id: R-003
+
+  - id: C-017
+    title: "bash -c 吞 HPO 超参 → 100 trial 同默认参数"
+    pattern: parameter_coupling
+    axiom: "Ω4"
+    severity: high
+    enforcement: executable
+    rule_id: R-005
+
+  - id: C-058
+    title: "gcp/ 文件副本与根目录漂移 → ImportError"
+    pattern: deploy_alignment
+    axiom: "Ω4"
+    severity: high
+    enforcement: executable
+    enforcement_file: "gcp/safe_build_and_canary.sh"
+    related: [C-053, C-060]
+
+  - id: C-059
+    title: "ETL 输出已是 BP, Loss 再乘 10000 → double-convert"
+    pattern: dimension_coupling
+    axiom: "Ω1"
+    severity: critical
+    enforcement: warn
+    rule_id: R-013
+    related: [C-043, C-051]
+
+  # === GROUP 6: Inference Pipeline (Phase 12 audit) ===
+  - id: C-062
+    title: "torch.compile _orig_mod. prefix → silent weight load failure"
+    pattern: full_stack_sync
+    axiom: "Ω1"
+    severity: critical
+    enforcement: executable
+    enforcement_detail: "train.py strip on save + backtest_5a.py strip on load + diagnostic log"
+    related: [C-049, C-053]
+    phase: "Phase 12"
+
+  - id: C-063
+    title: "GCS pipe:gcloud cat → EOF on inference (no mid-stream retry)"
+    pattern: io_strategy
+    axiom: "Ω6"
+    severity: high
+    enforcement: doc_only
+    enforcement_detail: "Use GCS FUSE /gcs/ for inference, pipe: only for training shuffle"
+    related: [C-048, C-028]
+    phase: "Phase 12"
+
+  - id: C-064
+    title: "Staging 全量 shards 到不够大的 pd-ssd → disk full FAILED"
+    pattern: io_strategy
+    axiom: "Ω2"
+    severity: high
+    enforcement: doc_only
+    enforcement_detail: "Calculate shard_count * avg_size < disk * 0.8 before staging"
+    related: [C-016, C-028]
+    phase: "Phase 12"
+
+  # === Doc-only 事件 (未迁移到 trace, 待后续补充) ===
+  # C-001~C-013, C-014~C-016, C-018~C-019, C-021~C-027,
+  # C-029~C-031, C-033~C-038, C-041, C-043, C-046~C-048,
+  # C-051, C-054~C-057, C-060~C-061
+  # 这些事件仍以 OMEGA_LESSONS.md 为 source of truth
+  # 待 /lesson-to-rule 逐步迁移

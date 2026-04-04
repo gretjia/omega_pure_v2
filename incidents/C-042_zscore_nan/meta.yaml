@@ -1,0 +1,12 @@
+id: C-042
+title: "Z-score affine invariance — gradient orthogonal to weights — Pythagorean drift — NaN"
+pattern: normalization
+axiom: "Ω1"
+severity: critical
+enforcement: doc_only
+enforcement_file: "none"
+related: [C-045, C-043, C-051]
+phase: "Phase 11a"
+date: "2026-03-31"
+commit: "d3f5352"
+cost: "~5h GPU (5 epochs all NaN) + 4h diagnosis"

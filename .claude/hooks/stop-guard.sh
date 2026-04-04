@@ -18,5 +18,14 @@ if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null; then
     fi
 fi
 
+# Check for new lessons without enforcement (Meta-Harness V3)
+if [ -f "rules/enforcement.log" ]; then
+    RECENT_TRIGGERS=$(wc -l < rules/enforcement.log 2>/dev/null || echo 0)
+    if [ "$RECENT_TRIGGERS" -gt 0 ]; then
+        echo "📊 Rule engine triggered $RECENT_TRIGGERS times this session."
+    fi
+fi
+
 echo "→ Consider /handover-update if this was a significant session."
+echo "→ Consider /harness-reflect if new lessons were added (Meta-Harness V3)."
 exit 0

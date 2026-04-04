@@ -1,0 +1,30 @@
+# R-007: output_dir 必须唯一, 禁止复用
+id: R-007
+name: "Warn when output_dir appears hardcoded without unique suffix"
+source_incidents: [C-020, C-044]
+axiom: "Ω1"
+
+trigger:
+  event: PreToolUse
+  matcher: "Edit|Write"
+  file_glob: "gcp/*.yaml|gcp/*.yml|gcp/*.py"
+
+check:
+  type: grep
+  # 检测 output_dir 指向固定路径 (无 timestamp/hash 变量)
+  pattern: "output.dir.*gs://.*/(phase|output|checkpoint)\\d"
+  scope: content
+
+enforcement: warn
+message: |
+  C-020/C-044: output_dir 复用导致 checkpoint 状态泄漏。
+  C-020: 不同 HPO 复用 → 架构不兼容崩溃。
+  C-044: 换 Loss 后 resume 旧 dir → 加载废弃 checkpoint 假完成。
+  必须包含唯一标识 (git hash, timestamp, 或 trial ID)。
+
+stats:
+  created: "2026-04-03"
+  times_triggered: 4
+  times_bypassed: 0
+  false_positives: 0
+  last_triggered: "2026-04-03"

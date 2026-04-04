@@ -1,0 +1,31 @@
+# R-009: 废弃变量必须全栈清除
+id: R-009
+name: "Warn about known deprecated variables still in code"
+source_incidents: [C-049, C-050]
+axiom: "Ω5"
+
+trigger:
+  event: PreToolUse
+  matcher: "Edit|Write"
+  file_glob: "*.py|gcp/*.py"
+
+check:
+  type: grep
+  # 检测已知废弃变量 (Phase 11c Softmax→Huber 迁移残留)
+  pattern: "TARGET_STD|TARGET_MEAN|\\.squeeze\\(\\)"
+  scope: content
+
+enforcement: warn
+message: |
+  C-049/C-050: 检测到已废弃变量/方法。
+  TARGET_STD/TARGET_MEAN: Phase 11c 遗留, 已不再使用。
+  .squeeze(): 对单 sample 导致维度坍塌, 用 .view(-1) 替代。
+  如这是新代码: 请确认这些引用确实已移除。
+  如这是修复: 请 grep -r 全栈确认无残留。
+
+stats:
+  created: "2026-04-03"
+  times_triggered: 12
+  times_bypassed: 0
+  false_positives: 0
+  last_triggered: "2026-04-03"

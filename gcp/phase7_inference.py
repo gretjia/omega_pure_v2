@@ -107,6 +107,7 @@ class OmegaTIBInference(torch.nn.Module):
         lob[..., 3] = torch.log1p(ask_v.clamp(min=0.0))
         lob_features = lob.to(x_2d.dtype)
 
+        q_metaorder = torch.clamp(q_metaorder, min=-1e12, max=1e12)
         q_metaorder = torch.sign(q_metaorder) * torch.log1p(torch.abs(q_metaorder))
         native_manifold = torch.cat([lob_features, q_metaorder], dim=-1)
 
@@ -198,12 +199,15 @@ def main():
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
     state = {}
     for k, v in ckpt["model_state_dict"].items():
+        if k.startswith("_orig_mod."):
+            k = k[len("_orig_mod."):]
         if k.startswith("masking."):
             continue
         state[k] = v
-    model.load_state_dict(state, strict=False)
+    result = model.load_state_dict(state, strict=False)
     model.eval()
-    log.info(f"Model loaded: hd={args.hidden_dim}, wt={args.window_size_t}")
+    log.info(f"Model loaded: hd={args.hidden_dim}, wt={args.window_size_t}, "
+             f"keys={len(state)}, missing={result.missing_keys}")
 
     # Discover shards (supports local paths and gs:// GCS URIs)
     if args.shard_dir.startswith("gs://"):
@@ -368,7 +372,7 @@ def main():
                     z_sparsity_accum.append(compute_z_sparsity(z_core_mb))
 
             preds = torch.cat(pred_parts)
-            pred_bp = preds.view(-1).numpy().copy()
+            pred_bp = (preds.view(-1) * 10000.0).numpy().copy()  # raw logit → BP (C-059b)
             # Concatenate per-sample z_sparsity
             if z_sparsity_parts:
                 z_sparsity_per_sample = np.concatenate(z_sparsity_parts)

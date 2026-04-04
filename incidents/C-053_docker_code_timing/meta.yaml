@@ -1,0 +1,12 @@
+id: C-053
+title: "Docker phase11-v3 built BEFORE code fix d744c4d — 15 epochs with 216x hallucinated dashboard"
+pattern: deploy_alignment
+axiom: "Ω3"
+severity: critical
+enforcement: doc_only
+enforcement_file: ""
+related: [C-052, C-049, C-054]
+phase: "Phase 11c"
+date: "2026-04-01"
+commit: "89b4ebf"
+cost: "9h GPU (shared with C-052) + masked diagnosis for hours"

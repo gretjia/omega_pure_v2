@@ -1,0 +1,108 @@
+
+=== Phase 12 Formal Training Monitor ===
+Started: 2026-04-03T08:25:00Z
+Job ID: 340079341608108032
+Docker: omega-tib:phase12-v5
+Config: 20 epochs × 5000 steps, n1-standard-8 + T4, On-Demand
+Smoke v6 baseline: pred_std=22.95 BP, D9-D0=+10.17 BP (2 epochs)
+
+[2026-04-03T08:25Z] Status: JOB_STATE_PENDING (provisioning)
+[2026-04-03T09:13Z] Status: RUNNING | E0 Step 3000/5000 | Loss=1.337 Std_yhat=21.78BP PfRet=7.48
+  - Corrupt shards auto-handled: 0906, 1580, 1581, 0909, 1171 (ReadError, expected)
+  - torch.compile active, checkpoint saved at step 2500, 3000
+  - No NaN/Inf, no variance collapse
+[2026-04-03T09:38Z] E0 DONE (2371s/~40min) | Val: loss=1.204 D9D0=+4.48BP Std_yhat=26.61BP PfRet=7.70 (1.9M samples)
+  - Val < Train (1.204 < 1.285) → good generalization, no overfit
+  - D9-D0 positive at E0 → genuine discriminative signal
+  - Std_yhat=26.61 BP → variance fully alive
+  - New best.pt saved
+  - E1 started, Step 500: Loss=1.222
+[2026-04-03T10:18Z] E1 DONE (2410s) | Val: loss=1.177 D9D0=+0.6BP Std_yhat=17.84BP PfRet=6.81
+  - Loss: 1.204->1.177 descent continues
+  - D9-D0: 4.48->0.6 still positive, warmup period
+  - Std_yhat: 26.61->17.84 BP, within range
+  - S_T: 2.09->1.62, compression improving
+  - NOTE: E2 begins MDL L1 engagement
+[2026-04-03T10:58Z] E2 DONE (2412s) | Val: loss=1.227 D9D0=+1.61BP Std_yhat=22.94BP PfRet=5.85
+  - Lambda_s now active: D9-D0 recovered (0.6->1.6), Std_yhat bounced (17.8->22.9)
+  - S_T 1.62->1.57 -- MDL compression continues
+  - Val loss slight uptick expected from L1 penalty
+  - HEALTHY trajectory: compression + signal preservation
+[2026-04-03T11:38Z] E3 DONE (2413s) | Val: loss=1.171 (best!) D9D0=-0.04BP Std_yhat=15.71BP PfRet=6.66
+  - Val Loss new best (1.171 < 1.177)
+  - D9-D0 oscillating near zero -- normal for early compression phase
+  - Std_yhat 15.71 BP -- above error threshold, monitoring
+  - S_T 1.51 -- steady compression
+  - No NaN/Inf, no anomalies. 4/20 epochs complete (~20%)
+[2026-04-03T12:19Z] E4 DONE | Val: loss=1.179 D9D0=-1.09BP Std_yhat=7.34BP (WARNING: near collapse)
+[2026-04-03T12:59Z] E5 DONE | Val: loss=1.163 (NEW BEST!) D9D0=-0.05BP Std_yhat=19.15BP (RECOVERED!)
+  - E4 variance dip was phase transition, not collapse
+  - E5 recovered: variance 7.34->19.15 BP
+  - Val loss new best: 1.163 (prev 1.171 E3)
+  - S_T 1.42 -- compression continues
+  - 6/20 epochs complete (30%)
+[2026-04-03T13:39Z] E6 DONE | Val: loss=1.180 D9D0=+3.27BP Std_yhat=23.63BP PfRet=7.91
+  - D9-D0 strongly positive again (+3.27!) -- best since E0
+  - Model found compressed+discriminative representation (S_T=1.39 + D9D0>0)
+  - Variance fully recovered (23.63 BP)
+  - 7/20 epochs (35%). Training progressing well.
+[2026-04-03T14:19Z] E7 DONE | Val: loss=1.170 D9D0=+1.67BP Std_yhat=15.80BP S_T=1.35
+  - Training stable. 8/20 epochs (40%) complete.
+  - D9-D0 oscillating in [0, +4] BP range -- healthy signal
+  - S_T steady descent (1.39->1.35) -- compression progressing
+  - No anomalies. Next check in 3hr (~E10-E11).
+[2026-04-03T14:59Z] CRON: RUNNING | E8 step 5000 done, validation running | Loss=1.200 Std=16.33BP S_T=1.294 | OK
+[2026-04-03T15:00Z] CRON: RUNNING | E8 validation in progress | OK
+[2026-04-03T15:10Z] CRON: RUNNING | E8 DONE: loss=1.173 D9D0=+2.87BP Std=15.77BP | E9 step 2000 | OK
+[2026-04-03T15:20Z] CRON: RUNNING | E9 step 4000/5000 | Loss=1.193 Std=19.35BP S_T=1.274 | OK
+[2026-04-03T15:30Z] CRON: RUNNING | E9 step 50000 (5000/5000), validation running | Std=18.93BP S_T=1.272 | OK
+[2026-04-03T15:40Z] CRON: RUNNING | E9 validation/E10 starting | OK
+[2026-04-03T15:50Z] CRON: RUNNING | E9 DONE: loss=1.238 D9D0=+0.48BP Std=12.75BP | val loss uptick, monitoring | 10/20
+[2026-04-03T16:00Z] CRON: RUNNING | E10 step 4000/5000 | Loss=1.214 Std=15.98BP S_T=1.244 | OK
+[2026-04-03T16:10Z] CRON: RUNNING | E10 in progress, E9 latest DONE | OK
+[2026-04-03T16:20Z] CRON: RUNNING | E10 step 55000, validation running | 11/20 (55%) | OK
+[2026-04-03T16:30Z] CRON: RUNNING | E10 DONE: loss=1.170 D9D0=+1.22BP Std=17.38BP | recovered from E9 dip | 11/20
+[2026-04-03T16:40Z] CRON: RUNNING | E11 step 4000/5000 | Loss=1.259 Std=17.80BP S_T=1.215 | OK 12/20 (60%)
+[2026-04-03T16:50Z] CRON: RUNNING | E11 validation/completing | OK
+[2026-04-03T17:00Z] CRON: RUNNING | E11 step 60000, validation running | 12/20 (60%) | OK
+[2026-04-03T17:10Z] CRON: RUNNING | E11 DONE: loss=1.165 D9D0=+0.57BP Std=19.07BP S_T=1.217 | 12/20 (60%) | OK
+[2026-04-03T17:20Z] CRON: RUNNING | E12 step 4000/5000 | Loss=1.193 Std=16.73BP S_T=1.203 | 13/20 (65%) | OK
+[2026-04-03T17:30Z] CRON: RUNNING | E12 validation/E13 starting | OK
+[2026-04-03T17:40Z] CRON: RUNNING | E12 step 65000, validation running | 13/20 (65%) | OK
+[2026-04-03T17:50Z] CRON: RUNNING | E12 DONE: loss=1.159 (NEW BEST!) D9D0=+1.19BP Std=17.99BP S_T=1.198 | 13/20 (65%) | OK
+[2026-04-03T18:00Z] CRON: RUNNING | E13 step 4000/5000 | Loss=1.270 Std=20.09BP S_T=1.185 | 14/20 (70%) | OK
+[2026-04-03T18:10Z] CRON: RUNNING | E13 validation/completing | OK
+[2026-04-03T18:20Z] CRON: RUNNING | E13 step 70000, validation running | 14/20 (70%) | OK
+[2026-04-03T18:30Z] CRON: RUNNING | E13 DONE: loss=1.160 D9D0=+2.30BP Std=17.99BP S_T=1.183 | strong | 14/20 (70%) | OK
+[2026-04-03T18:40Z] CRON: RUNNING | E14 step 4000/5000 | Loss=1.201 Std=16.85BP S_T=1.157 | 15/20 (75%) | OK
+[2026-04-03T18:50Z] CRON: RUNNING | E14 validation/completing | OK
+[2026-04-03T19:00Z] CRON: RUNNING | E14 step 75000, validation running | 15/20 (75%) | OK
+[2026-04-03T19:10Z] CRON: RUNNING | E14 DONE: loss=1.177 D9D0=+1.19BP Std=18.87BP S_T=1.158 | 15/20 (75%) | OK
+[2026-04-03T19:20Z] CRON: RUNNING | E15 step 3500/5000 | Loss=1.209 Std=17.98BP S_T=1.167 | 16/20 (80%) | OK
+[2026-04-03T19:30Z] CRON: RUNNING | E15 validation/completing | OK
+[2026-04-03T19:40Z] CRON: RUNNING | E15 step 80000, validation running | 16/20 (80%) | OK
+[2026-04-03T19:50Z] CRON: RUNNING | E15 DONE: loss=1.194 D9D0=+1.07BP Std=15.32BP S_T=1.170 | 16/20 (80%) | OK
+[2026-04-03T20:00Z] CRON: RUNNING | E16 step 3500/5000 | Loss=1.227 Std=15.83BP S_T=1.171 | 17/20 (85%) | OK
+[2026-04-03T20:10Z] CRON: RUNNING | E16 validation/completing | OK
+[2026-04-03T20:20Z] CRON: RUNNING | E16 step 85000, validation running | 17/20 (85%) | OK
+[2026-04-03T20:30Z] CRON: RUNNING | E16 DONE: loss=1.164 D9D0=+1.91BP Std=18.83BP S_T=1.170 | 17/20 (85%) | OK
+[2026-04-03T20:40Z] CRON: RUNNING | E17 step 3500/5000 | Loss=1.181 Std=17.88BP S_T=1.166 | 18/20 (90%) | OK
+[2026-04-03T20:50Z] CRON: RUNNING | E17 validation/completing | OK
+[2026-04-03T21:00Z] CRON: RUNNING | E17 step 90000, validation running | 18/20 (90%) | OK
+[2026-04-03T21:10Z] CRON: RUNNING | E17 DONE: loss=1.159 (ties best!) D9D0=+1.06BP Std=18.98BP | 18/20 (90%) | 2 left | OK
+[2026-04-03T21:20Z] CRON: RUNNING | E18 step 3500/5000 | Loss=1.242 Std=17.23BP S_T=1.164 | 19/20 (95%) | OK
+[2026-04-03T21:30Z] CRON: RUNNING | E18 step 95000, validation running | 19/20 (95%) | final epoch next | OK
+[2026-04-03T21:40Z] CRON: RUNNING | E18 validation still running (log delay) | OK
+[2026-04-03T21:50Z] CRON: RUNNING | E18 DONE: loss=1.158 (NEW BEST!) D9D0=+1.25BP Std=18.69BP | FINAL EPOCH E19 running | 19/20 (95%) | OK
+[2026-04-03T22:00Z] CRON: RUNNING | E19 (FINAL) step 3500/5000 | Loss=1.224 Std=16.57BP S_T=1.158 | ~20min to finish | OK
+[2026-04-03T22:10Z] CRON: RUNNING | E19 step 100000 (FINAL STEP!) validation running | completion in ~16min | OK
+[2026-04-03T22:20Z] CRON: RUNNING | E19 final validation still running | almost done | OK
+[2026-04-03T22:30Z] ===== TRAINING COMPLETE — JOB_STATE_SUCCEEDED =====
+  E19 FINAL: loss=1.160 D9D0=+1.28BP Std=18.57BP S_T=1.157
+  Best D9-D0: 4.48 BP (E0, best.pt)
+  Best Val Loss: 1.158 (E18)
+  Duration: ~13.8h, 20 epochs, 100K steps
+  No crashes, no NaN, no intervention.
+  D9-D0 positive 16/20 epochs.
+  Compression: S_T 2.09->1.16 (44% reduction)
+  NEXT: Post-flight analysis + backtest

@@ -1,118 +1,130 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-04-02 — **STATUS: Phase 11d 双轨复苏训练中 (g2+L4 Spot), A=E10/20, B=E6/20 (Spot 频繁抢占)**
+Last Updated: 2026-04-04 — **STATUS: Phase 12 post-flight COMPLETE — 信号不可交易，等待架构师审计。**
 
 ## Current State
-- **Phase 11d 双轨训练中** — 修复 Phase 11c 方差坍缩 (INS-054/055)
-  - **Config A** (λ_s=1e-4, δ=200): Job 1109662714260619264, E10/20, RUNNING
-  - **Config B** (λ_s=1e-5, δ=200): Job 2854869142517841920, E6/20, PENDING (Spot 抢占恢复中)
-  - Docker: omega-tib:phase11d-v1 (canary PASSED)
-  - Machine: g2-standard-8 + L4 (Spot), pd-ssd 1300GB staging
-  - Output: gs://omega-pure-data/checkpoints/phase11d_A_v1/ 和 phase11d_B_v1/
-  - 监控: cron 30min (自动重提交 FAILED jobs) + remote schedule 1h (CCR, 未确认可用)
+- **Phase 12 训练 COMPLETE**: 20 epochs, best D9-D0=4.48BP (E0), checkpoints 在 GCS
+- **Phase 12 Post-flight COMPLETE**: E0 + E19 双模型推理完成，信号不足
+- **8 轮外部审计 COMPLETE**: 代码正确，发现并修复 torch.compile 静默加载 bug
+- **Living Harness V3**: 16 规则 + 10 incidents + 10 hooks + 9 skills
 
-- **Phase 11c 废弃**: 烟测揭露方差坍缩 — pred_std=5.6 BP (模型输出常数 ~30 BP), z_core 脑死亡 (0.44%), 仪表盘 Std_yhat 被旧 Docker 代码 *216x 放大为幻觉
+## Phase 12 Post-Flight 结果
 
-- **训练曲线 (Phase 11d 半程)**:
+### E0 (best.pt, MDL 未激活) vs E19 (latest.pt, MDL 激活后)
 
-  Config A (λ_s=1e-4):
-  | Epoch | Val Loss | PfRet | Std_yhat | S_T |
-  |-------|----------|-------|----------|-----|
-  | E0 | 5283 | 7.15 | 8.22 | 176 |
-  | E2 | 5227 | 7.27 | 16.17 | 224 |
-  | E5 | 5219 | 7.34★ | 15.09 | 229 |
-  | E8 | 5287 | 7.30 | 19.93★ | 228 |
-  | E10 | 5228 | 7.32 | 14.79 | 225 |
+| 指标 | E0 | E19 | Phase 11c baseline | 判定 |
+|------|-----|------|-------------------|------|
+| pred_std | 26.61 BP | 18.57 BP | 5.64 BP | 方差恢复 ✓ |
+| D9-D0 spread | 4.51 BP | 1.29 BP | 8.90 BP | 不足 ✗ |
+| Pearson IC | 0.0046 | 0.0001 | 0.0210 | 退步 ✗ |
+| Spearman Rank IC | -0.0206 | -0.0297 | — | **负值** ✗ |
+| Monotonicity | 7/9 | 4/9 | — | E0 略好 |
+| z_sparsity | 5.4% | 18.5% | — | MDL 生效 |
+| Cost coverage | 4.5/25 BP | 1.3/25 BP | — | 不可交易 |
 
-  Config B (λ_s=1e-5):
-  | Epoch | Val Loss | PfRet | Std_yhat | S_T |
-  |-------|----------|-------|----------|-----|
-  | E0 | 5329 | 7.07 | 8.72 | 179 |
-  | E4 | 5253 | 7.41 | 22.52★ | 235 |
-  | E5 | 5219 | 7.42★ | 18.34 | 233 |
-  | E6 | 5216★ | 7.25 | 17.01 | 229 |
+### 关键诊断
+1. **方差坍缩已解决**: Unbounded Spear 成功恢复 pred_std (5.64→26.61 BP)
+2. **判别力消失**: D9-D0 从 Phase 11c 的 8.90 退步到 4.51 BP
+3. **Rank IC 为负**: 模型排序能力比随机差
+4. **MDL 压缩杀信号**: D9-D0 从 E0 的 4.51 单调降到 E19 的 1.29，lambda_s=1e-4 仍太强
+5. **结论**: 不是代码 bug（8 轮审计确认），是模型/Loss 架构层面问题
 
-  两者 Std_yhat 在 13-23 BP 振荡，未稳定突破 30 BP。B 略优 (更高峰值、更好 PfRet)。
-  Phase 11c 对比: pred_std 从 1.3-5.7 BP → 13-23 BP (3-4x 改善), S_T 从 116-157 → 225-235 (z_core 复苏)
+## Changes This Session
 
-## Changes This Session (18 commits)
-- `dd6aeae` fix: 全栈清理 TARGET_STD/MEAN + .squeeze()→.view(-1) + 重复 main() (回滚 Gemini 错误修复后重做)
-- `3565610` feat: Phase 11d — huber_delta=200 参数化 + lambda_s=1e-4 + 方差坍缩哨兵
-- `de004f3` fix: 推理 P0 — GCS gs:// shard discovery + backtest fast_npy_decoder
-- `092d65f` fix: phase7_inference.py 增加 --val_only (train/val 分离)
-- `9fcdbb7` chore: Config A/B 升级 L4 + 6 workers
-- `6f71ba9` docs: C-052/053/054 范式切换原子 checklist
-- `c47b684` fix: monitor 自动重提交 FAILED Spot jobs
-- `4376fc0` docs: Phase 11d post-flight plan (7 步)
-- 归档: INS-052~056, C-049~056, 3 份架构师指令, 烟测报告
+### 代码修复（8 轮外部审计驱动）
+1. **[CRITICAL] torch.compile `_orig_mod.` 静默加载修复**
+   - `train.py`: save 端 strip `_orig_mod.` 前缀
+   - `backtest_5a.py`: load 端防御性 strip + 诊断日志
+   - 此 bug 可能导致历次"训练成功推理失败"
+2. **[CRITICAL] backtest_5a.py 默认值对齐**: hidden_dim=64, window_t=32, costs_bp=25
+3. **[CRITICAL] pred_bp 量纲修复**: `prediction * 10000.0` (raw logit → BP)
+4. **[HIGH] SRL overflow clamp**: `±1e12` before symlog (train.py + backtest_5a.py)
+5. **[LOW] 死代码清理**: 删除 `compute_spear_loss_moment_matched`, 修复默认值, core SRL autocast
+6. **[SYNC] gcp/ 目录同步**: 所有 .py 文件与根目录一致
+
+### 新教训 (C-062~C-064)
+- C-062: torch.compile `_orig_mod.` 静默杀推理
+- C-063: GCS pipe 不可用于推理，用 FUSE `/gcs/`
+- C-064: 推理 staging 只下载需要的 split
 
 ## Key Decisions
-1. **Phase 11c 全面废弃**: 烟测证实 20 epoch 全是脑死亡模型 + 216x 仪表盘幻觉 (C-051)
-2. **δ=50→200**: 释放 97.6% 样本的 MSE 梯度，肥尾不再被削峰 (INS-055)
-3. **λ_s=1e-3→1e-4/1e-5**: 解除 z_core 结构税 (INS-054)
-4. **19.7K 模型禁止多卡 DDP**: Scale-Up only (INS-056)
-5. **方差哨兵阈值 10/30 BP 是粗估**: 训练完成后必须用数据重标定 (C-055)
-6. **范式切换 = 全栈原子事件**: 创建 tools/paradigm_shift_checklist.md (C-054)
+- **E0 作为 post-flight 模型**: MDL warmup=2 前的未压缩模型，val D9-D0 最优
+- **Rank IC 为负**: 模型排序能力比随机差，不是 lambda_s 问题
+- **Outlier clamp 维持架构师设计**: clamp 在居中后，右尾 540 BP 截断
+- **GCS FUSE 替代 pipe**: Gemini 确认 FUSE 是 Vertex AI 推荐方案
 
-## Next Steps (Phase 11d 完成后)
-1. **执行 Post-Flight Plan** (`architect/directives/2026-04-01_phase11d_post_flight_plan.md`)
-   - Step 0: 选 winner config (A vs B)
-   - Step 2: Val-only 推理 (--val_only)
-   - Step 3: **实测标定方差哨兵阈值** (C-055, 最高优先)
-   - Step 4-5: 回测 + 交易模拟
-   - Step 6: Epiplexity 公理验证 (十分位 Alpha 分解)
-2. 如 D9-D0 spread > 25 BP → Phase 12 (Epiplexity Gating 或实盘准备)
-3. 如 spread < 25 BP → HPO 精调或架构重构
+## Next Steps（等架构师裁决）
+1. **[P0] 架构师审计**: 汇报 D9-D0=4.51 BP 和 Rank IC=-0.02 的诊断
+2. **[P1] HPO 探索**: Vizier 70-trial, lambda_s 搜索含 0, 验证是否有可交易超参组合
+3. **[P2] 损失函数重新审视**: Rank IC 为负可能需要回到 IC-based Loss 或混合 Loss
 
 ## Warnings
-- **Config B Spot 频繁抢占**: us-central1 L4 紧张，已被抢占 2 次，cron 自动重提交 (max 3)
-- **Std_yhat 未突破 30 BP**: 在 13-23 BP 振荡，复苏方向对但幅度待观察
-- **方差哨兵阈值不可靠**: 10/30 BP 是粗估，Post-flight Step 3 必须重标定
-- **Docker phase11d-v1 不含推理 P0 修复**: 推理修复在 de004f3 (Docker 构建后)，post-flight 推理需在本地或重建 Docker
+- **linux1 SSH 不稳定**: OOM 后反复 Connection refused，推理已改用 Vertex AI
+- **gcp/phase7_inference.py 未被 Dockerfile COPY**: 需要更新 Dockerfile 或 YAML 内联
+
+## 8-Round External Audit Summary
+
+| 轮次 | 工具 | 结果 |
+|------|------|------|
+| R1: Core model+loss | Codex | 9 PASS, 1 FAIL (SRL overflow → 已修) |
+| R2: Spec-code alignment | Codex | 4 CRITICAL drift (默认值 → 已修) |
+| R3: Train-serve skew | Codex | FRT 一致, 2 外部问题 (→ 已修) |
+| R4: Math correctness | Gemini | 6 PASS, 2 WARNING (clamp 非对称 → 维持) |
+| R5: Directive compliance | Codex | 活跃路径全合规, 4 死代码 (→ 已清理) |
+| R6: Fix verification | Codex | 10 PASS, 2 FAIL (_orig_mod_ + gcp/ → 已修) |
+| R7: Fix math verification | Gemini | 3/3 PASS |
+| R8: Final torch.compile | Codex | 5/5 PASS |
 
 ## Remote Node Status
-- linux1: omega_pure_v2_code repo 已克隆 (~/omega_pure_v2_code), /omega_pool 有全量 1992 shards, 烟测已验证可用
-- Vertex AI: 2 jobs active (A=RUNNING E10, B=PENDING resume)
+- **linux1**: SSH 不稳定 (OOM 后恢复缓慢), 推理改用 Vertex AI
+- **Vertex AI**: T4 GPU, 推理正常 (GCS FUSE 模式)
 
-## Architect Insights (本次会话 — 5 条)
-- INS-052: Train-Serve Skew 216x 幽灵 → architect/insights/INS-052_train_serve_skew_216x_demon.md
-- INS-053: 净网回测协议 (superseded by INS-054/055)
-- INS-054: 方差坍缩 — Huber δ=50 + λ_s=1e-3 致特征脑死亡 → architect/insights/INS-054_variance_collapse_brain_death.md
-- INS-055: Phase 11d 双轨复苏 — λ_s↓ + δ↑ → architect/insights/INS-055_resuscitation_dual_track.md
-- INS-056: 19.7K 模型禁止多卡 DDP → architect/insights/INS-056_no_multi_gpu_for_micro_model.md
-
-## New Lessons (本次会话 — 8 条)
-- C-049: Train-Serve Skew (推理脚本未同步训练范式切换)
-- C-050: 死代码/幽灵 Bug (废弃变量必须 grep 全栈)
-- C-051: 量纲剧变与方差坍缩 (换 Loss 必须重标定 λ_s/δ)
-- C-052: 长训练前必须独立烟测 (不信仪表盘)
-- C-053: Docker 构建 vs 代码修复时间点对齐
-- C-054: 范式切换 = 全栈原子事件 (6 步 checklist)
-- C-055: 阈值必须实测标定 (不拍脑袋)
-- C-056: 监控不行动 = 没有监控
+## Architect Insights (本次会话)
+- **torch.compile _orig_mod. 是潜在历史元凶**: 可能解释历次 Phase 的"训练好推理差"
+- **方差恢复但判别力消失**: Unbounded Spear 解决了方差坍缩，但模型未学到排序信号
+- **MDL 确认有害**: D9-D0 从 E0→E19 单调下降，压缩杀信号
+- **GCS FUSE 是正确方案**: Gemini 确认 pipe:gcloud 是反模式
 
 ## Machine-Readable State
 ```yaml
-phase: 11d
-status: "training_in_progress"
-config_a:
-  job_id: 1109662714260619264
-  state: RUNNING
-  epoch: 10/20
-  best_pfret: 7.34
-  best_std_yhat: 19.93
-  params: {lambda_s: 1e-4, huber_delta: 200}
-config_b:
-  job_id: 2854869142517841920
-  state: PENDING (Spot resume)
-  epoch: 6/20
-  best_pfret: 7.42
-  best_std_yhat: 22.52
-  params: {lambda_s: 1e-5, huber_delta: 200}
-docker: "omega-tib:phase11d-v1"
-machine: "g2-standard-8 + L4 Spot"
-monitor: "cron 30min (auto-resubmit) + schedule 1h (CCR)"
-post_flight_plan: "architect/directives/2026-04-01_phase11d_post_flight_plan.md"
-commits_this_session: 18
-insights_this_session: [INS-052, INS-053, INS-054, INS-055, INS-056]
-new_lessons: [C-049, C-050, C-051, C-052, C-053, C-054, C-055, C-056]
+phase: "12_unbounded_spear"
+status: "postflight_complete_signal_insufficient"
+harness:
+  version: "v3_living"
+  rules_active: 16
+  incidents_total: 64
+  hooks: 10
+  skills: 9
+docker: "omega-tib:phase12-postflight-v1"
+formal_training:
+  job_id: "340079341608108032"
+  status: SUCCEEDED
+  best_d9d0: {epoch: 0, d9d0: 4.48, saved_as: "best.pt"}
+  checkpoint_dir: "gs://omega-pure-data/checkpoints/phase12_unbounded_v1/"
+postflight:
+  status: COMPLETE
+  e0_d9d0: 4.51
+  e19_d9d0: 1.29
+  e0_rank_ic: -0.0206
+  e0_pearson_ic: 0.0046
+  e0_pred_std: 26.61
+  e0_z_sparsity: 0.054
+  samples: 1904747
+  symbols: 5200
+  verdict: "NOT TRADEABLE — spread 4.51 < cost 25 BP"
+  parquet_e0: "gs://omega-pure-data/postflight/phase12_val_predictions.parquet"
+  parquet_e19: "gs://omega-pure-data/postflight/phase12_latest_val_predictions.parquet"
+audit:
+  rounds: 8
+  tools: ["Codex", "Gemini"]
+  critical_fix: "torch.compile _orig_mod. silent load failure"
+  all_active_paths: "COMPLIANT"
+code_fixes:
+  - "torch.compile _orig_mod_ strip (save+load)"
+  - "backtest defaults aligned (hd=64, wt=32, costs=25)"
+  - "pred_bp * 10000 scaling"
+  - "SRL overflow clamp ±1e12"
+  - "dead code cleanup"
+  - "gcp/ sync"
+new_lessons: ["C-062", "C-063", "C-064"]
+next_decision: "architect_audit"
 ```

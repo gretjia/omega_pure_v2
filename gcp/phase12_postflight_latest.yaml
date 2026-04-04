@@ -1,0 +1,60 @@
+workerPoolSpecs:
+- machineSpec:
+    machineType: n1-standard-8
+    acceleratorType: NVIDIA_TESLA_T4
+    acceleratorCount: 1
+  replicaCount: 1
+  diskSpec:
+    bootDiskType: pd-ssd
+    bootDiskSizeGb: 200
+  containerSpec:
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase12-postflight-v1
+    command:
+    - bash
+    - -c
+    - |
+      set -e
+      echo "=== Phase 12 Post-Flight: latest.pt (E19) via GCS FUSE ==="
+
+      echo "=== Stage 1: Verify GCS FUSE mount ==="
+      ls /gcs/omega-pure-data/checkpoints/phase12_unbounded_v1/latest.pt && echo "FUSE OK"
+      ls /gcs/omega-pure-data/wds_shards_v3_full/omega_shard_00000.tar | head -1 && echo "Shards FUSE OK"
+
+      echo "=== Stage 2: Build date map ==="
+      python3 -c "
+      import glob, json, re
+      shards = sorted(glob.glob('/gcs/omega-pure-data/wds_shards_v3_full/omega_shard_*.tar'))
+      n_train = int(len(shards) * 0.8)
+      val_shards = shards[n_train:]
+      shard_to_date = {}
+      for s in val_shards:
+          num = int(re.search(r'omega_shard_(\d+)', s).group(1))
+          shard_to_date[str(num)] = f'shard_{num:05d}'
+      json.dump({'shard_to_date': shard_to_date, 'total_dates': len(set(shard_to_date.values())), 'total_shards': len(val_shards)}, open('/tmp/date_map.json', 'w'))
+      print(f'Date map: {len(val_shards)} val shards (of {len(shards)} total)')
+      "
+
+      echo "=== Stage 3: Inference (latest.pt E19, GCS FUSE direct) ==="
+      # Create symlink dir with only val shards for phase7_inference
+      python3 -c "
+      import glob, os, re
+      shards = sorted(glob.glob('/gcs/omega-pure-data/wds_shards_v3_full/omega_shard_*.tar'))
+      n_train = int(len(shards) * 0.8)
+      val_shards = shards[n_train:]
+      os.makedirs('/tmp/val_shards', exist_ok=True)
+      for s in val_shards:
+          os.symlink(s, os.path.join('/tmp/val_shards', os.path.basename(s)))
+      print(f'Symlinked {len(val_shards)} val shards to /tmp/val_shards/')
+      "
+
+      PYTHONUNBUFFERED=1 python3 /app/phase7_inference.py \
+        --checkpoint /gcs/omega-pure-data/checkpoints/phase12_unbounded_v1/latest.pt \
+        --shard_dir /tmp/val_shards \
+        --date_map /tmp/date_map.json \
+        --output /gcs/omega-pure-data/postflight/phase12_latest_val_predictions.parquet \
+        --hidden_dim 64 \
+        --window_size_t 32 \
+        --batch_size 512 \
+        --checkpoint_interval 50
+
+      echo "=== DONE ==="

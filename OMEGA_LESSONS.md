@@ -135,6 +135,17 @@
 - **C-054**: **范式切换是全栈原子事件，不是单点修改**。Softmax→Pointwise Huber 触发 6 个级联故障（λ_s 量纲、推理缩放、仪表盘幻觉、Docker 错位、HPO 过时、Epiplexity 前提破坏），逐个发现逐个救火，耗 9h GPU + 4h 人力。范式切换必须执行**原子 checklist**：(1) grep 全栈受影响变量, (2) 重标定正则化超参, (3) 重建 Docker + canary, (4) E1 后独立烟测, (5) 更新 spec + HPO, (6) 同步推理/回测脚本。不走 checklist = 埋定时炸弹（Ω4: 可执行>可记忆）。
 - **C-056**: **监控不行动 = 没有监控**。Phase 11d 夜间 Config B 被 Spot 抢占→FAILED，cron 脚本只报告不重提交，用户醒来才发现。自动化监控必须包含自动修复能力（至少：Spot FAILED→重提交），否则"无人值守"是假的（Ω4: 可执行>可记忆）。
 - **C-055**: **阈值也要实测标定，不能拍脑袋**。Phase 11d 方差哨兵的 10/30 BP 红线来源：架构师直觉（基于 216x 幻觉时代）+ 5 shard 粗估的 1.6x 乘数。这只是早期预警粗估，不可作为最终判据。正确做法：训练完成后用全量 val 烟测，实测 pred_std 与 D9-D0 spread 的映射关系，用数据定阈值（Ω1: 只信实测，Ω2: 先量化后行动）。
+- **C-057**: **代码默认值必须与 spec 同步，OOM 补丁不可静默残留**。`train.py` 和 `gcp/train.py` 的 `--window_size_s` 默认值为 4（早期防 OOM 临时改的），而 spec `fixed_params.window_size_s=10`（完整 LOB 10 档深度）。Phase 11 全部训练只看了 4 档浅水区，Topology Attention 丧失 60% 深水区机构挂单信息，z_core 无特征可编码。临时 OOM 补丁必须在 issue 解决后立即回退，否则就是静默降级（Ω1: 只信实测 — 代码 default 才是实测值，不是 spec 文档）。
+
+- **C-058**: **双副本必然漂移——靠记忆同步违反 Ω4**。Phase 12 烟测 ImportError: `gcp/omega_epiplexity_plus_core.py` 缺新函数。根因：gcp/ 维护根目录文件副本，Dockerfile 从 gcp/ 构建，dev-cycle 只同步了 train.py 忘了核心模块。C-053 教训没防住因为它只说"重建 Docker"，没覆盖"构建源文件本身是旧的"。**结构性修复：`safe_build_and_canary.sh` Step 1b 自动解析 Dockerfile COPY 指令，diff 每个源文件与根目录，不一致则 ABORT。** 从此漂移被机器拦截，不靠人记忆（Ω4: 可执行>可记忆）。
+
+- **C-061**: **每次烟测必须用唯一 output_dir，否则旧 checkpoint 触发 resume 跳过训练**。Phase 12 烟测 v3b 复用 `phase12_smoke_v1` 目录，train.py 自动从旧 checkpoint resume 到 E2 直接完成，新 Loss 代码根本没执行。这是 C-044 的变种（换 Loss/超参后必须用新 output_dir），泛化为：任何需要验证新代码的运行，output_dir 必须唯一。格式建议 `phase12_smoke_v{N}`（Ω1: 只信实测 — "训练完成"不等于"新代码被执行"）。
+- **C-060**: **部署命令必须从目标环境反推，不可从本地路径假设**。烟测 YAML 写 `/app/tools/phase7_inference.py`，但 Dockerfile COPY 到 `/app/`。又写 `--shard_dir` 但漏了 `--date_map`（必需参数）。两次提交两次白跑。写远程命令前必须：(1) 读 Dockerfile 确认文件路径 (2) 读目标脚本 `argparse` 确认必需参数 (3) 不假设本地目录结构=容器目录结构（Ω1: 只信实测，Ω3: 测试环境=生产环境）。
+- **C-062**: **torch.compile 的 `_orig_mod.` 前缀会静默毁掉推理**。torch.compile 给 state_dict key 加 `_orig_mod.` 前缀，`load_state_dict(strict=False)` 不匹配时静默跳过所有 key → 推理用随机权重。修复：save 端 strip 前缀 + load 端防御性 strip + 打印诊断日志。`strict=False` 是危险的沉默杀手（Ω1: 只信实测 — "加载成功"不等于"权重被加载"）。
+- **C-063**: **GCS pipe (`pipe:gcloud storage cat`) 不可用于推理**。gcloud CLI 子进程缺少中途字节范围重试，网络微中断 → EOF → shard 丢失。训练可容忍（shuffle+handler 重试），推理不行（每个 shard 必须完整）。Vertex AI 正确方案：GCS FUSE `/gcs/` 路径直读（自动重试+预读缓冲+零安装）。`pipe:` 仅限训练容错场景（Ω6: 数据在哪计算在哪 + Ω2: 先量化 I/O 可靠性）。
+- **C-064**: **推理 job staging 必须只下载需要的 split，提前计算磁盘需求**。Phase 12 post-flight staging 全量 1992 shards (1.8TB) 到 500GB pd-ssd → 磁盘满 FAILED。val-only = 399 shards (~400GB)。下载前必须：`shard 数 × 平均 shard 大小 < disk * 0.8`（Ω2: 先量化后行动）。
+
+- **C-059**: **量纲必须从数据源头追溯，不可假设；修复时必须逐变量分析，不可一刀切**。ETL 输出 target 已是 BP，架构师指令假设 raw decimal 导致 target double-convert（C-059a）。修复时一刀切去掉 pred 和 target 的 ×10000，但 model output 是 raw logit（~0.07）vs target ~20 BP → 梯度冻死（5e-9/step），模型无法学习（C-059b）。正确组合：`pred×10000`（投影到 BP）+ target 不动（已是 BP）+ `/scale_factor` 抵消链式法则。教训：量纲修复必须对每个变量独立追溯源头，不可 batch 修（Ω1: 只信实测 — 读 ETL 源码 + 读 model output 量级）。
 
 ### AI 治理
 - **C-021**: AI 自己写烟测测自己 → 自洽性掩盖正确性。审计独立于作者（Ω5）

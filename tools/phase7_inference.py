@@ -368,7 +368,7 @@ def main():
                     z_sparsity_accum.append(compute_z_sparsity(z_core_mb))
 
             preds = torch.cat(pred_parts)
-            pred_bp = preds.view(-1).numpy().copy()
+            pred_bp = (preds.view(-1) * 10000.0).numpy().copy()  # raw logit → BP (C-059b)
             # Concatenate per-sample z_sparsity
             if z_sparsity_parts:
                 z_sparsity_per_sample = np.concatenate(z_sparsity_parts)

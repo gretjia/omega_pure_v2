@@ -52,7 +52,7 @@ class FiniteWindowTopologicalAttention(nn.Module):
     Layer 2 Topology: Finite Window 2D attention on native manifold.
     Absolutely NO 1D flattening. O(1) addressing per window.
     """
-    def __init__(self, dim: int, window_size: tuple = (4, 4), num_heads: int = 4):
+    def __init__(self, dim: int, window_size: tuple = (32, 10), num_heads: int = 4):
         super().__init__()
         self.dim = dim
         self.window_t, self.window_s = window_size
@@ -130,7 +130,7 @@ class OmegaMathematicalCompressor(nn.Module):
     Input: x_2d [B, T, S, 10] + c_friction [B, 1]
     Output: (prediction [B, 1], z_core [B, T, S, hidden//4])
     """
-    def __init__(self, hidden_dim: int = 64, window_size: tuple = (4, 4)):
+    def __init__(self, hidden_dim: int = 64, window_size: tuple = (32, 10)):
         super().__init__()
         self.srl_inverter = AxiomaticSRLInverter()
 
@@ -159,10 +159,11 @@ class OmegaMathematicalCompressor(nn.Module):
         v_d_macro = x_2d[:, :, 0, 8]       # [B, T]
         sigma_d_macro = x_2d[:, :, 0, 9]   # [B, T]
 
-        # 1. Physics layer: SRL inversion (non-learnable, torch.no_grad)
-        with torch.no_grad():
+        # 1. Physics layer: SRL inversion (non-learnable, torch.no_grad + fp32)
+        with torch.no_grad(), torch.autocast(device_type="cuda", enabled=False):
             q_metaorder = self.srl_inverter(
-                delta_p, sigma_d_macro, v_d_macro, c_friction
+                delta_p.float(), sigma_d_macro.float(),
+                v_d_macro.float(), c_friction.float()
             )  # [B, T]
         # Expand to [B, T, S, 1] for manifold concatenation
         q_metaorder = q_metaorder.unsqueeze(-1).unsqueeze(-1).expand(B, T, S, 1)
@@ -186,7 +187,7 @@ class OmegaMathematicalCompressor(nn.Module):
 
 
 def compute_epiplexity_mdl_loss(prediction: torch.Tensor, target: torch.Tensor,
-                                z_core: torch.Tensor, lambda_s: float = 1e-3):
+                                z_core: torch.Tensor, lambda_s: float = 1e-4):
     """
     Two-Part MDL Loss: Total = H_T + λ_s × S_T
     H_T = MSE(prediction, target) — time-bounded entropy (unpredictable noise)
@@ -207,3 +208,49 @@ def compute_fvu(predictions: torch.Tensor, targets: torch.Tensor) -> float:
     if target_var < 1e-8:
         return 1.0
     return mse / target_var
+
+
+def compute_spear_loss_unbounded(raw_logits, target, z_core,
+                                 lambda_s=1e-4, static_mean_bp=40.0,
+                                 outlier_clamp_bp=500.0, mse_scale_factor=10000.0,
+                                 leaky_factor=0.1):
+    """Phase 12: The Unbounded Spear (审计通过版, INS-060/062/063/064)
+
+    Scaled MSE with Static Centering — releases unbounded gradient for fat tails
+    while protecting against microstructure noise and dimensional overflow.
+
+    Key design: Only target is centered (Path A, INS-063). Prediction stays
+    uncentered, forcing the model's bias toward 0 and preventing Beta smuggling.
+    """
+    pred = raw_logits.float().view(-1)
+    tgt = target.float().view(-1)
+    z_core = z_core.float()
+
+    # 1. Leaky Blinding (INS-060): preserve 10% of negative returns
+    target_leaky = torch.where(tgt > 0, tgt, tgt * leaky_factor)
+
+    # 2. Dimensional alignment (C-059 fix + gradient analysis)
+    #    Target: already in BP from ETL (omega_etl_v3_topo_forge.py:176) — NO scaling
+    #    Pred: raw model logit (~0.07) — MUST project to BP space for gradient health
+    #    The ×10000 on pred and /scale_factor cancel in backprop: net grad ∝ BP error
+    pred_bp = pred * 10000.0  # project raw logit to BP space
+    tgt_leaky_bp = target_leaky  # already BP, no conversion
+
+    # 3. Static Centering — target only (Path A, INS-063)
+    target_centered_bp = tgt_leaky_bp - static_mean_bp
+
+    # 4. Physical Outlier Clipping (INS-062)
+    target_centered_bp = torch.clamp(target_centered_bp, min=-outlier_clamp_bp, max=outlier_clamp_bp)
+
+    # 5. Scaled Unbounded MSE (INS-060/062)
+    #    scale_factor still needed: 50 BP error → MSE=2500 → /10000 = 0.25
+    loss_err = F.mse_loss(pred_bp, target_centered_bp) / max(mse_scale_factor, 1.0)
+
+    # 6. MDL Compression — z_core L1 sparsity
+    z_core_safe = torch.clamp(z_core, min=-20.0, max=20.0)
+    s_t = torch.norm(z_core_safe, p=1, dim=-1).mean()
+
+    total_loss = loss_err + lambda_s * s_t
+
+    return total_loss, loss_err, s_t, pred
+

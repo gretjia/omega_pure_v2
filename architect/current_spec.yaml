@@ -1,6 +1,6 @@
 # OMEGA PURE 架构规范 — 由架构师联络官维护
-# 最后更新：2026-04-01
-# 更新来源：INS-049/050/051 (Phase 11c Pointwise Spear — Huber(δ=50) + λ_s=1e-3, 废除 Softmax/Z-score)
+# 最后更新：2026-04-03
+# 更新来源：INS-057~062 (Phase 12 Unshackling Protocol — Unbounded Spear + D9-D0 Spread + ws=10 修复)
 # 源文档：Google Docs id.1~id.6 (archived at architect/gdocs/)
 
 version: v3
@@ -81,21 +81,32 @@ target:
 # ============================================================
 training:
   target_model: Omega-TIB   # Topological Information Bottleneck (正名自 SpatioTemporal2DMAE)
-  loss: "Pointwise Spear (Huber δ=200) + MDL (INS-049/050/051/054/055)"
+  loss: "Unbounded Spear (Scaled MSE) + MDL (INS-057~062, supersedes INS-049/050/051/054/055)"
   loss_function: |
-    target_acc = clamp(target, min=0)                      # Asymmetric Target Blinding (INS-042)
-    loss_spear = huber_loss(pred, target_acc, delta=200)   # Pointwise — δ=200 释放肥尾梯度 (INS-055)
-    total = loss_spear + lambda_s * ||z_core||_1           # MDL Compression
-  # Phase 11d Resuscitated Spear: 修复 Phase 11c 方差坍缩 (INS-054)
-  # 1. target = clamp(raw_target, min=0) → 遮蔽左尾，纯建仓检测 (INS-042, 继承)
-  # 2. Pointwise Huber Loss (delta=200 BP) → 97.6% 样本 MSE 梯度，仅 2.4% 极端线性保护 (INS-055)
-  # 3. 无 Softmax/Z-score/Pearson — 乱序 WebDataset 免疫时空错位 (INS-049)
-  # Phase 11c 验尸: δ=50 + λ_s=1e-3 → z_core 脑死亡 (0.44%), pred_std=5.6 BP (INS-054)
-  # temperature: DELETED — 无 Softmax (INS-051 supersedes INS-047)
-  # variance_lock: DELETED — 无 Z-score (INS-051 supersedes INS-040)
-  # l2_weight: DELETED — 被方差之枷替代，后被 Pointwise Spear 替代
-  lambda_s: 1e-4             # Phase 11d Config A default (INS-055, Config B=1e-5 via CLI)
-  huber_delta: 200           # Phase 11d: 4x from 50→200, 释放肥尾 MSE 梯度 (INS-055)
+    target_leaky = where(target > 0, target, target * 0.1)  # Leaky Blinding (INS-060, supersedes INS-042 hard clamp)
+    pred_bp = pred * 10000; tgt_bp = target_leaky * 10000   # BP 空间投影 (INS-062)
+    tgt_centered = clamp(tgt_bp - 40.0, -500, 500)          # Static Centering + Outlier Clamp (INS-060/062)
+    loss_err = mse(pred_bp, tgt_centered) / 10000            # Scaled Unbounded MSE (INS-060)
+    total = loss_err + lambda_s * ||z_core||_1               # MDL Compression
+  # Phase 12 Unshackling Protocol: 打破捷径学习 + 方差坍缩 + 评价失效三重枷锁
+  # 1. Leaky Blinding: 负收益保留 10% 信号，不再硬截零 (INS-060 supersedes INS-042)
+  # 2. Unbounded MSE: 废弃 Huber 有界梯度，释放肥尾无上限奖赏 (INS-060 supersedes INS-055)
+  # 3. Static Centering: 仅居中 Target，pred 不居中 — 模型输出 Excess BP (INS-063)
+  #    路径 B（双居中）在反向传播中 -40 抵消，静态置零防线形同虚设，Bias 走私复活
+  #    推理端无需加回 40 — 评估指标 Rank IC / D9-D0 Spread 对常数平移免疫
+  # 4. Outlier Clamp ±500 BP: 防微观结构噪声毛刺炸毁权重 (INS-062)
+  # 5. SCALE_FACTOR=10000: MSE 量级压回 0.1~1.0，与 λ_s 公平博弈 (INS-062)
+  # 6. static_mean_bp 是 Config 注入的全局先验，严禁 Batch 内动态 mean() (INS-064, INS-049)
+  # 诊断链: SRL 捷径 (INS-057) + PfRet 失效 (INS-058) + IC Loss 翻案 (INS-059)
+  # [AUDIT OVERRIDDEN] Codex FAIL + Gemini CONDITIONAL PASS → 架构师 4 点裁决 (INS-063/064)
+  # huber_delta: DELETED — Unbounded MSE 取代 (INS-060 supersedes INS-055)
+  # temperature: DELETED — 无 Softmax (INS-051)
+  # variance_lock: DELETED — 无 Z-score (INS-051)
+  lambda_s: 1e-4             # Phase 12 安全水位，待 HPO 标定 (INS-063 override INS-060)
+  static_mean_bp: 40.0       # 全局先验锚点，由 IS 训练集一次性统计注入，严禁 Batch 内动态计算 (INS-064)
+  outlier_clamp_bp: 500      # A 股天地板物理极限 (INS-062)
+  mse_scale_factor: 10000    # 100 BP² 对齐 λ_s 博弈天平 (INS-062)
+  leaky_factor: 0.1          # 负收益衰减因子 (INS-060)
   loss_precision: "fp32"     # compute_spear_loss 强制 FP32 安全舱 (Phase 11a NaN 教训)
   lambda_s_warmup: 2         # Phase 3 值; Phase 6 搜索 [2, 3, 5]
   masking:
@@ -114,8 +125,8 @@ training:
 hpo:
   engine: google_vizier              # Bayesian optimization
   infrastructure: "A100 Spot (a2-highgpu-1g), 70 trials exploit, 8 parallel (INS-018 Phase 6)"
-  metric: "val_portfolio_return (Vizier MAXIMIZE, 直接度量 OOS 组合收益)"
-  # Phase 11c: Pointwise Huber Loss (INS-051) + 目标遮蔽 (INS-042)
+  metric: "D9-D0 Spread (Vizier MAXIMIZE, 头部10%减尾部10%收益差, INS-058 废弃 PfRet)"
+  # Phase 12: Unbounded Spear (INS-060) + Leaky Blinding + D9-D0 Spread
   search_space:
     learning_rate:                   # Huber Loss 梯度量级待实测
       type: loguniform

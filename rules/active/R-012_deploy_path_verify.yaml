@@ -1,0 +1,30 @@
+# R-012: 部署命令路径必须从目标环境验证
+id: R-012
+name: "Warn about container path assumptions in deployment configs"
+source_incidents: [C-060]
+axiom: "Ω1"
+
+trigger:
+  event: PreToolUse
+  matcher: "Edit|Write"
+  file_glob: "gcp/*.yaml|gcp/*.yml"
+
+check:
+  type: grep
+  # 检测容器内路径硬编码 (非标准 /app/ 路径)
+  pattern: "/app/tools/|/app/gcp/|/home/"
+  scope: content
+
+enforcement: warn
+message: |
+  C-060: 检测到容器内路径引用, 请验证:
+  1. 读 Dockerfile 确认 COPY 目标路径
+  2. 读目标脚本 argparse 确认必需参数 (--shard_dir, --date_map, etc.)
+  3. 不假设本地目录结构 = 容器目录结构
+
+stats:
+  created: "2026-04-03"
+  times_triggered: 0
+  times_bypassed: 0
+  false_positives: 0
+  last_triggered: null

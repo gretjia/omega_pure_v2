@@ -1,0 +1,30 @@
+# R-008: 绝对禁止 Batch 维度归一化
+id: R-008
+name: "Block Batch-dimension normalization (Softmax dim=0, BatchNorm on dim=0)"
+source_incidents: [C-042, C-045]
+axiom: "Ω1"
+
+trigger:
+  event: PreToolUse
+  matcher: "Edit|Write"
+  file_glob: "*.py|gcp/*.py"
+
+check:
+  type: grep
+  # 检测 Softmax(dim=0) 或对 batch 维度做归一化
+  pattern: "softmax\\(.*dim\\s*=\\s*0|Softmax\\(.*dim\\s*=\\s*0|BatchNorm|batch_norm"
+  scope: content
+
+enforcement: block
+message: |
+  C-042/C-045: Batch 维度归一化是致命毒药。
+  C-042: Z-score 仿射不变 → 梯度与权重正交 → Pythagorean drift → NaN。
+  C-045: 乱序 WebDataset + Batch Z-score → 模型学 Beta 不学 Alpha → logit 膨胀 6956 BP。
+  绝对禁止。如需归一化, 只在 Feature 或 Time 维度操作。
+
+stats:
+  created: "2026-04-03"
+  times_triggered: 12
+  times_bypassed: 0
+  false_positives: 0
+  last_triggered: "2026-04-03"

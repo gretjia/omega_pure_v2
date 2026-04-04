@@ -1,0 +1,30 @@
+# R-016: Spec-Code 漂移检测
+id: R-016
+name: "Warn when spec-related parameter defaults are modified in code"
+source_incidents: [C-057, C-037]
+axiom: "Ω1"
+
+trigger:
+  event: PostToolUse
+  matcher: "Edit|Write"
+  file_glob: "train.py|gcp/train.py"
+
+check:
+  type: grep
+  # 检测 argparse default 值修改 (可能导致 spec-code 漂移)
+  pattern: "default\\s*=\\s*"
+  scope: content
+
+enforcement: warn
+message: |
+  C-057/C-037: 检测到代码 default 值变更。
+  运行 spec-code 对齐检查: python3 tools/spec_code_alignment.py
+  Phase 11 全部训练用了 window_size_s=4 而 spec 写的是 10。
+  代码默认值才是实测值, 不是 spec 文档。
+
+stats:
+  created: "2026-04-03"
+  times_triggered: 5
+  times_bypassed: 0
+  false_positives: 0
+  last_triggered: "2026-04-04"

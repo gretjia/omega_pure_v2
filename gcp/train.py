@@ -50,8 +50,8 @@ except ImportError:
 _preemption_state = {
     "model": None, "optimizer": None, "scaler": None, "scheduler": None,
     "epoch": 0, "global_step": 0,
-    "best_pf_ret": float("-inf"),        # Best val portfolio return (epoch-level)
-    "best_batch_pf_ret": float("-inf"),   # Best train batch portfolio return (step-level)
+    "best_d9_d0_spread": float("-inf"),        # Best val D9-D0 Spread (epoch-level, INS-058)
+    "best_batch_pf_ret": float("-inf"),         # Best train batch portfolio return (step-level, monitoring only)
     "ckpt_path": None,
 }
 
@@ -66,19 +66,17 @@ def _sigterm_handler(signum, frame):
                         s["epoch"], s["global_step"], {"emergency": True},
                         scheduler=s.get("scheduler"))
     if _hpt is not None:
-        # Use best available portfolio return: val > batch > -999.0 (Vizier rejects inf)
-        report_pf = s["best_pf_ret"]
-        if report_pf == float("-inf"):
-            report_pf = s.get("best_batch_pf_ret", float("-inf"))
-        if report_pf == float("-inf"):
-            report_pf = -999.0
+        # Report best D9-D0 Spread to Vizier; fallback -999.0 (Vizier rejects inf)
+        report_val = s["best_d9_d0_spread"]
+        if report_val == float("-inf"):
+            report_val = -999.0
         _hpt.report_hyperparameter_tuning_metric(
-            hyperparameter_metric_tag="best_val_portfolio_return",
-            metric_value=report_pf, global_step=s["global_step"])
+            hyperparameter_metric_tag="best_val_d9_d0_spread",
+            metric_value=report_val, global_step=s["global_step"])
     # C-047: Force FUSE flush before exit — prevent incomplete checkpoint on GCS
     os.sync()
     logger.warning(f"Emergency checkpoint saved (epoch={s['epoch']}, step={s['global_step']}, "
-                   f"pf_ret={s['best_pf_ret']:.4f}, batch_pf_ret={s.get('best_batch_pf_ret', float('-inf')):.4f}). Exiting 143.")
+                   f"d9d0={s['best_d9_d0_spread']:.2f}). Exiting 143.")
     sys.exit(143)  # 128+SIGTERM(15) — signals abnormal termination for Spot VM restart
 
 
@@ -86,41 +84,31 @@ signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
 def compute_spear_loss(pred, target, z_core, lambda_s, epoch,
-                       warmup_epochs=2, huber_delta=200.0, **kwargs):
-    """Phase 11d: The Resuscitated Spear (INS-054/055)
-
-    Phase 11c→11d: δ=50→200 释放肥尾梯度, λ_s=1e-3→1e-4 解除 z_core 死刑。
-    Pointwise Huber Loss 锚定绝对 BP 尺度，免疫时空错位。
+                       warmup_epochs=2, static_mean_bp=40.0,
+                       outlier_clamp_bp=500.0, mse_scale_factor=10000.0,
+                       leaky_factor=0.1, **kwargs):
+    """Phase 12: The Unbounded Spear (INS-060/062/063/064)
+    Wrapper that calls the audited unbounded loss from omega_epiplexity_plus_core
+    and computes PfRet as a monitoring-only metric (not used for best.pt).
     """
-    # 0. FP32 Safe Room (继承 INS-046: fp16 溢出防护)
-    pred = pred.float().view(-1)   # [B]
-    target = target.float().view(-1)
-    z_core = z_core.float()
-    eps = 1e-8
+    from omega_epiplexity_plus_core import compute_spear_loss_unbounded
 
-    # 1. Asymmetric Target Blinding (INS-042, 继承)
-    #    纯建仓检测: 下跌/噪音归零，只保留右尾
-    target_acc = torch.clamp(target, min=0.0)
-
-    # 2. Pointwise Huber Loss — 零跨 Batch 依赖
-    #    Phase 11d: δ=200 释放 97.6% 样本的 MSE 二次方梯度 (INS-055)
-    loss_spear = F.huber_loss(pred, target_acc, delta=huber_delta)
-
-    # 3. MDL Compression (warmup 保留: 先学信号再压缩)
-    z_core_safe = torch.clamp(z_core, min=-20.0, max=20.0)
     lambda_s_eff = lambda_s if epoch >= warmup_epochs else 0.0
-    s_t = torch.norm(z_core_safe, p=1, dim=-1).mean()
+    total, loss_err, s_t, pred_val = compute_spear_loss_unbounded(
+        raw_logits=pred, target=target, z_core=z_core,
+        lambda_s=lambda_s_eff, static_mean_bp=static_mean_bp,
+        outlier_clamp_bp=outlier_clamp_bp, mse_scale_factor=mse_scale_factor,
+        leaky_factor=leaky_factor,
+    )
 
-    total = loss_spear + lambda_s_eff * s_t
-
-    # 4. Pointwise portfolio return proxy (监控指标，不参与梯度)
-    #    Long-only 加权收益: clamp(pred,min=0) 归一化 → 加权 target
+    eps = 1e-8
+    # PfRet as monitoring-only proxy (INS-058: NOT used for best.pt, D9-D0 Spread replaces it)
     with torch.no_grad():
-        pred_pos = torch.clamp(pred, min=0.0)
+        pred_pos = torch.clamp(pred_val, min=0.0)
         total_pos = pred_pos.sum()
         if total_pos > eps:
             weights = pred_pos / total_pos
-            pf_ret = (weights * target).sum()
+            pf_ret = (weights * target.float().view(-1)).sum()
         else:
             pf_ret = torch.tensor(0.0, device=pred.device)
 
@@ -185,7 +173,7 @@ class OmegaTIBWithMasking(nn.Module):
     Wraps OmegaMathematicalCompressor to inject VolumeBlockInputMasking
     at the spec-mandated insertion point: after input_proj, before tda_layer.
     """
-    def __init__(self, hidden_dim=64, window_size=(4, 4),
+    def __init__(self, hidden_dim=64, window_size=(32, 10),
                  min_mask_bars=10, max_mask_bars=30, mask_prob=0.5, keep_last=5):
         super().__init__()
         self.model = OmegaMathematicalCompressor(hidden_dim, window_size)
@@ -235,7 +223,9 @@ class OmegaTIBWithMasking(nn.Module):
 
         lob_features = lob.to(x_2d.dtype)  # back to model dtype (fp16 if AMP)
 
-        # symlog for q_metaorder: handles negative values + sigma_d≈0 singularity
+        # Overflow clamp before symlog: prevent Inf from sigma_d≈0 singularity
+        q_metaorder = torch.clamp(q_metaorder, min=-1e12, max=1e12)
+        # symlog for q_metaorder: handles negative values + compresses dynamic range
         q_metaorder = torch.sign(q_metaorder) * torch.log1p(torch.abs(q_metaorder))
 
         native_manifold = torch.cat([lob_features, q_metaorder], dim=-1)
@@ -284,10 +274,13 @@ def save_checkpoint(path, model, optimizer, scaler, epoch, global_step, metrics,
     # Risk: Spot SIGTERM during torch.save to /gcs/ FUSE → incomplete flush → corrupt checkpoint.
     # Fix: local staging guarantees atomic local write, then shutil.copy2 to FUSE is a single small I/O.
     local_staging = "/tmp/_omega_ckpt_staging.pt"
+    # Strip torch.compile _orig_mod. prefix so downstream loaders work directly
+    raw_state = model.state_dict()
+    clean_state = {k.replace("_orig_mod.", ""): v for k, v in raw_state.items()}
     torch.save({
         "epoch": epoch,
         "global_step": global_step,
-        "model_state_dict": model.state_dict(),
+        "model_state_dict": clean_state,
         "optimizer_state_dict": optimizer.state_dict(),
         "scaler_state_dict": scaler.state_dict() if scaler is not None else {},
         "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else {},
@@ -328,7 +321,9 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                     grad_clip, device, epoch, steps_per_epoch, global_step,
                     use_amp, warmup_epochs=2, overfit_batch=None, scheduler=None,
                     start_step=0, ckpt_path=None, ckpt_every=0,
-                    temperature=0.1, huber_delta=200.0):
+                    temperature=0.1, huber_delta=200.0,
+                    static_mean_bp=40.0, outlier_clamp_bp=500.0,
+                    mse_scale_factor=10000.0, leaky_factor=0.1):
     model.train()
     running = {"total": 0.0, "pf_ret": 0.0, "s_t": 0.0, "count": 0}
     loader_iter = iter(loader) if overfit_batch is None else None
@@ -365,7 +360,8 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                     prediction, z_core = model(manifold, c_friction)
                     total_loss, pf_ret, s_t = compute_spear_loss(
                         prediction, target, z_core, lambda_s, epoch, warmup_epochs,
-                        huber_delta=huber_delta, temperature=temperature
+                        static_mean_bp=static_mean_bp, outlier_clamp_bp=outlier_clamp_bp,
+                        mse_scale_factor=mse_scale_factor, leaky_factor=leaky_factor,
                     )
                 scaler.scale(total_loss).backward()
                 scaler.unscale_(optimizer)
@@ -376,7 +372,8 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
                 prediction, z_core = model(manifold, c_friction)
                 total_loss, pf_ret, s_t = compute_spear_loss(
                     prediction, target, z_core, lambda_s, epoch, warmup_epochs,
-                    huber_delta=huber_delta, temperature=temperature
+                    static_mean_bp=static_mean_bp, outlier_clamp_bp=outlier_clamp_bp,
+                    mse_scale_factor=mse_scale_factor, leaky_factor=leaky_factor,
                 )
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -386,7 +383,7 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
             logger.error("CUDA OOM — parameter space INFEASIBLE for this trial")
             if _hpt is not None:
                 _hpt.report_hyperparameter_tuning_metric(
-                    hyperparameter_metric_tag="best_val_portfolio_return",
+                    hyperparameter_metric_tag="best_val_d9_d0_spread",
                     metric_value=-999.0, global_step=0)
             sys.exit(0)  # Clean exit — prevents infinite restart on Spot VM
 
@@ -413,7 +410,7 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
         if ckpt_path and ckpt_every > 0 and global_step % ckpt_every == 0:
             save_checkpoint(ckpt_path, model, optimizer, scaler,
                             epoch, global_step,
-                            {"step_ckpt": True, "best_pf_ret": _preemption_state.get("best_pf_ret", float("-inf"))},
+                            {"step_ckpt": True, "best_d9_d0_spread": _preemption_state.get("best_d9_d0_spread", float("-inf"))},
                             scheduler=scheduler)
 
         if step_i % max(1, steps_per_epoch // 10) == 0:
@@ -441,7 +438,10 @@ def train_one_epoch(model, loader, optimizer, scaler, lambda_s,
 # ============================================================
 
 def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
-             warmup_epochs=2, temperature=0.1, huber_delta=200.0):
+             warmup_epochs=2, temperature=0.1, huber_delta=200.0,
+             sentinel_error=10.0, sentinel_warn=30.0,
+             static_mean_bp=40.0, outlier_clamp_bp=500.0,
+             mse_scale_factor=10000.0, leaky_factor=0.1):
     model.eval()
     all_preds, all_targets = [], []
     running = {"total": 0.0, "pf_ret": 0.0, "s_t": 0.0, "count": 0}
@@ -457,7 +457,8 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
             prediction, z_core = model(manifold, c_friction)
             total_loss, pf_ret, s_t = compute_spear_loss(
                 prediction, target, z_core, lambda_s, epoch, warmup_epochs,
-                huber_delta=huber_delta, temperature=temperature
+                static_mean_bp=static_mean_bp, outlier_clamp_bp=outlier_clamp_bp,
+                mse_scale_factor=mse_scale_factor, leaky_factor=leaky_factor,
             )
             bs = target.size(0)
             running["total"] += total_loss.item() * bs
@@ -469,15 +470,27 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
 
     n = max(running["count"], 1)
     preds = torch.cat(all_preds)
+    targets_cat = torch.cat(all_targets).view(-1)
 
     # Cross-sectional prediction std (INS-017: Std Expansion monitoring)
-    pred_std_bp = preds.std().item()
+    # Model outputs raw logit; project to BP for sentinel comparison
+    pred_std_bp = preds.std().item() * 10000.0
 
-    # Variance Collapse Sentinel (INS-054: detect brain death early)
-    if pred_std_bp < 10.0 and preds.numel() > 10:
-        logger.error(f"VARIANCE COLLAPSE: pred_std={pred_std_bp:.2f} BP < 10.0. Brain death detected.")
-    elif pred_std_bp < 30.0:
-        logger.warning(f"LOW VARIANCE: pred_std={pred_std_bp:.2f} BP. Nearing collapse.")
+    # Variance Collapse Sentinel (INS-054, C-055: thresholds must be empirically calibrated)
+    if pred_std_bp < sentinel_error and preds.numel() > 10:
+        logger.error(f"VARIANCE COLLAPSE: pred_std={pred_std_bp:.2f} BP < {sentinel_error}. Brain death detected.")
+    elif pred_std_bp < sentinel_warn:
+        logger.warning(f"LOW VARIANCE: pred_std={pred_std_bp:.2f} BP < {sentinel_warn}. Nearing collapse.")
+
+    # D9-D0 Spread (INS-058: replaces PfRet as best.pt saving criterion)
+    # Targets already in BP from ETL (omega_etl_v3_topo_forge.py:176), no * 10000
+    n_samples = preds.numel()
+    k = max(n_samples // 10, 1)
+    _, top_idx = torch.topk(preds, k)
+    _, bot_idx = torch.topk(preds, k, largest=False)
+    d9_mean = targets_cat[top_idx].mean().item()  # already BP
+    d0_mean = targets_cat[bot_idx].mean().item()  # already BP
+    d9_d0_spread = d9_mean - d0_mean
 
     return {
         "total": running["total"] / n,
@@ -485,6 +498,7 @@ def validate(model, val_loader, lambda_s, device, max_steps=0, epoch=0,
         "s_t": running["s_t"] / n,
         "pred_std_bp": pred_std_bp,
         "portfolio_return": running["pf_ret"] / n,
+        "d9_d0_spread": d9_d0_spread,
         "n_samples": running["count"],
     }
 
@@ -499,21 +513,29 @@ def main():
     parser.add_argument("--shard_dir", type=str, required=True)
     parser.add_argument("--output_dir", type=str, default="./checkpoints")
     # Training
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--steps_per_epoch", type=int, default=10000)
+    parser.add_argument("--epochs", type=int, default=15)
+    parser.add_argument("--steps_per_epoch", type=int, default=5000)
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--lambda_s", type=float, default=1e-4)
     parser.add_argument("--huber_delta", type=float, default=200.0,
-                        help="Huber loss delta (BP). Phase 11c=50, Phase 11d=200 (INS-055)")
+                        help="DEPRECATED: Phase 12 Unbounded Spear removed Huber. Kept for YAML compat.")
+    parser.add_argument("--static_mean_bp", type=float, default=40.0,
+                        help="Static centering anchor in BP (INS-064: IS global stat, not batch dynamic)")
+    parser.add_argument("--outlier_clamp_bp", type=float, default=500.0,
+                        help="Physical outlier clipping range in BP (INS-062)")
+    parser.add_argument("--mse_scale_factor", type=float, default=10000.0,
+                        help="MSE divisor to align loss magnitude with lambda_s (INS-062)")
+    parser.add_argument("--leaky_factor", type=float, default=0.1,
+                        help="Negative return dampening factor for Leaky Blinding (INS-060)")
     parser.add_argument("--grad_clip", type=float, default=1.0)
     parser.add_argument("--val_split", type=float, default=0.2)
     # HPO-searchable (lambda x: int(float(x)) handles Vertex AI "128.0" format)
     _int = lambda x: int(float(x))
     parser.add_argument("--macro_window", type=_int, default=160)
     parser.add_argument("--coarse_graining_factor", type=_int, default=1)
-    parser.add_argument("--window_size_t", type=_int, default=4)
-    parser.add_argument("--window_size_s", type=_int, default=4)
+    parser.add_argument("--window_size_t", type=_int, default=32)
+    parser.add_argument("--window_size_s", type=_int, default=10)
     parser.add_argument("--hidden_dim", type=_int, default=64)
     # Infra
     parser.add_argument("--num_workers", type=int, default=6,
@@ -522,7 +544,11 @@ def main():
     parser.add_argument("--max_val_steps", type=int, default=0,
                         help="Max validation steps (0=all, useful for CPU smoke tests)")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--mask_prob", type=float, default=0.5,
+    parser.add_argument("--sentinel_error", type=float, default=10.0,
+                        help="Variance collapse ERROR threshold (BP). C-055: calibrate with data")
+    parser.add_argument("--sentinel_warn", type=float, default=30.0,
+                        help="Low variance WARNING threshold (BP). C-055: calibrate with data")
+    parser.add_argument("--mask_prob", type=float, default=0.0,
                         help="Block masking probability (0.0 to disable)")
     parser.add_argument("--overfit", action="store_true",
                         help="Overfit test: repeat first batch for all steps")
@@ -621,6 +647,14 @@ def main():
         mask_prob=args.mask_prob,
     ).to(device)
 
+    # torch.compile: 10-50% speedup for tiny models by reducing Python overhead
+    if device.type == "cuda" and hasattr(torch, "compile"):
+        try:
+            model = torch.compile(model, mode="reduce-overhead")
+            logger.info("torch.compile enabled (mode=reduce-overhead)")
+        except Exception as e:
+            logger.warning(f"torch.compile failed, continuing without: {e}")
+
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Model: OmegaTIBWithMasking, {n_params:,} parameters")
     logger.info(f"Config: hidden_dim={args.hidden_dim}, "
@@ -668,12 +702,13 @@ def main():
         logger.info(f"OVERFIT MODE: repeating single batch of {overfit_batch['target'].shape[0]} samples")
 
     # --- Training ---
-    logger.info(f"Starting training [Phase 11c Pointwise Spear]: epochs={args.epochs}, "
+    logger.info(f"Starting training [Phase 12 Unbounded Spear]: epochs={args.epochs}, "
                 f"steps/epoch={args.steps_per_epoch}, batch={args.batch_size}, "
                 f"lr={args.lr}, lambda_s={args.lambda_s}, "
-                f"warmup={args.warmup_epochs}, mask_prob={args.mask_prob}")
+                f"warmup={args.warmup_epochs}, mask_prob={args.mask_prob}, "
+                f"static_mean_bp={args.static_mean_bp}")
 
-    best_pf_ret = _resumed_metrics.get("best_pf_ret", float("-inf"))
+    best_d9_d0_spread = _resumed_metrics.get("best_d9_d0_spread", float("-inf"))
 
     for epoch in range(start_epoch, args.epochs):
         t0 = time.time()
@@ -688,22 +723,30 @@ def main():
             overfit_batch=overfit_batch, scheduler=scheduler,
             start_step=start_step, ckpt_path=ckpt_path,
             ckpt_every=args.ckpt_every_n_steps,
-            temperature=args.temperature,
-            huber_delta=args.huber_delta,
+            static_mean_bp=args.static_mean_bp,
+            outlier_clamp_bp=args.outlier_clamp_bp,
+            mse_scale_factor=args.mse_scale_factor,
+            leaky_factor=args.leaky_factor,
         )
 
         val_metrics = validate(model, val_loader, args.lambda_s, device,
                                max_steps=args.max_val_steps, epoch=epoch,
                                warmup_epochs=args.warmup_epochs,
-                               temperature=args.temperature,
-                               huber_delta=args.huber_delta)
+                               static_mean_bp=args.static_mean_bp,
+                               outlier_clamp_bp=args.outlier_clamp_bp,
+                               mse_scale_factor=args.mse_scale_factor,
+                               leaky_factor=args.leaky_factor,
+                               sentinel_error=args.sentinel_error,
+                               sentinel_warn=args.sentinel_warn)
         elapsed = time.time() - t0
 
+        d9_d0 = val_metrics.get('d9_d0_spread', 0)
         logger.info(
             f"Epoch {epoch} DONE ({elapsed:.0f}s) | "
             f"Train: loss={train_metrics['total']:.6f} "
             f"PfRet={train_metrics['pf_ret']:.6f} S_T={train_metrics['s_t']:.4f} | "
             f"Val: loss={val_metrics['total']:.6f} "
+            f"D9D0={d9_d0:.2f}BP "
             f"PfRet={val_metrics.get('portfolio_return',0):.6f} "
             f"Std_yhat={val_metrics.get('pred_std_bp',0):.2f}BP "
             f"({val_metrics['n_samples']} samples)"
@@ -712,47 +755,46 @@ def main():
         # Save checkpoint every epoch (including scheduler for Spot VM resume)
         save_checkpoint(ckpt_path, model, optimizer, scaler, epoch + 1,
                         global_step, {"train": train_metrics, "val": val_metrics,
-                                      "best_pf_ret": best_pf_ret},
+                                      "best_d9_d0_spread": best_d9_d0_spread},
                         scheduler=scheduler)
 
-        # Save best model by portfolio return (higher = better)
-        val_pf_ret = val_metrics["portfolio_return"]
-        if val_pf_ret > best_pf_ret:
-            best_pf_ret = val_pf_ret
+        # Save best model by D9-D0 Spread (INS-058: replaces PfRet)
+        val_d9_d0 = val_metrics["d9_d0_spread"]
+        if val_d9_d0 > best_d9_d0_spread:
+            best_d9_d0_spread = val_d9_d0
             best_path = os.path.join(args.output_dir, "best.pt")
             save_checkpoint(best_path, model, optimizer, scaler, epoch + 1,
                             global_step, {"train": train_metrics, "val": val_metrics,
-                                          "best_pf_ret": best_pf_ret},
+                                          "best_d9_d0_spread": best_d9_d0_spread},
                             scheduler=scheduler)
-            logger.info(f"New best Portfolio Return: {best_pf_ret:.6f}")
+            logger.info(f"New best D9-D0 Spread: {best_d9_d0_spread:.2f} BP")
 
-        # Report metric for Vertex AI HPO (Vizier) — MAXIMIZE portfolio return
+        # Report metric for Vertex AI HPO (Vizier) — MAXIMIZE D9-D0 Spread
         if _hpt is not None:
             _hpt.report_hyperparameter_tuning_metric(
-                hyperparameter_metric_tag="best_val_portfolio_return",
-                metric_value=best_pf_ret,
+                hyperparameter_metric_tag="best_val_d9_d0_spread",
+                metric_value=best_d9_d0_spread,
                 global_step=epoch,
             )
 
         # Update preemption state (for SIGTERM handler on Spot VMs)
         _preemption_state.update({
             "epoch": epoch + 1, "global_step": global_step,
-            "best_pf_ret": best_pf_ret,
+            "best_d9_d0_spread": best_d9_d0_spread,
         })
 
         # Early stopping (MDL-shock aware: wait for warmup + 1 absorption epoch)
-        # Direction reversed: portfolio return should increase, stop if below threshold
         safe_epoch = max(args.early_stop_patience, args.warmup_epochs + 1)
         if args.early_stop_fvu > 0 and epoch >= safe_epoch:
-            if best_pf_ret < args.early_stop_fvu:
+            if best_d9_d0_spread < args.early_stop_fvu:
                 logger.info(
-                    f"Early stopping: best PfRet {best_pf_ret:.6f} < "
+                    f"Early stopping: best D9-D0 {best_d9_d0_spread:.2f} BP < "
                     f"{args.early_stop_fvu} after {epoch + 1} epochs "
                     f"(safe_epoch={safe_epoch})"
                 )
                 break
 
-    logger.info(f"Training complete. Best Portfolio Return: {best_pf_ret:.6f}")
+    logger.info(f"Training complete. Best D9-D0 Spread: {best_d9_d0_spread:.2f} BP")
 
 
 if __name__ == "__main__":

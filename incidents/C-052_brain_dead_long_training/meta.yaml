@@ -1,0 +1,12 @@
+id: C-052
+title: "Brain-dead model ran 20 epochs (9h GPU) without independent smoke test at E0-E1"
+pattern: validation_skip
+axiom: "Ω1"
+severity: critical
+enforcement: doc_only
+enforcement_file: ""
+related: [C-053, C-051, C-049]
+phase: "Phase 11c"
+date: "2026-04-01"
+commit: "6f71ba9"
+cost: "9h GPU + ~$25 + 4h human diagnosis"

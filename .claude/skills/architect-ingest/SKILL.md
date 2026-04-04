@@ -84,9 +84,14 @@ Layer 1 物理公理由人类锁定，AI 不可修改。
 ```
 
 等待用户确认后：
-1. 更新 `architect/current_spec.yaml`
-2. 运行 `python3 omega_axioms.py --verbose` 验证新 spec 一致性
+1. 更新 `architect/current_spec.yaml`，**标记变更字段为 `# [DRAFT — pending audit]`**
+2. 运行 `python3 omega_axioms.py --verbose` 验证新 spec 基本一致性
 3. 如果验证失败，回滚 spec 变更并报告
+4. **不标记为 final** — spec 变更在外部审计通过后才移除 `[DRAFT]` 标记
+
+> ⚠️ C-059 教训: spec 在审计前定稿 → 错误假设被固化 → 9h GPU 浪费。
+> Draft 状态 = "这是架构师的意图, 但未被验证"。
+> Final 状态 = "经过 Codex + Gemini 审计确认"。
 
 **AXIOM VIOLATION**:
 ```
@@ -114,6 +119,7 @@ category: <physics|architecture|training|metrics|nomenclature>
 date: <YYYY-MM-DD>
 axiom_impact: <NONE|UPDATE_REQUIRED|LAYER1_TO_LAYER2_DOWNGRADE|VIOLATION>
 status: <active|pending_<blocker>>
+audit_status: <draft|audited|final>   # NEW: draft until external audit passes
 source_directive: <directive 文件名>
 source_gdoc: <gdoc 文件名 or null>
 ---
@@ -126,8 +132,38 @@ source_gdoc: <gdoc 文件名 or null>
 ## 理由
 <为什么这样做，物理/工程/哲学层面>
 
+## 前提假设（C-059 教训: 假设不写明 = 定时炸弹）
+<此决策依赖的隐含假设，必须逐条列出>
+- **数据格式**: target 的单位是什么? (raw decimal / BP / normalized)
+  → 验证方法: `grep -n "target" tools/omega_etl_v3_topo_forge.py | head -5`
+- **上游依赖**: 哪些 INS/spec 字段必须先就位?
+- **环境假设**: GPU 型号 / 内存 / 磁盘等硬件约束
+
+## 被拒绝的替代方案（防止下一个 session 重蹈覆辙）
+<列出考虑过但拒绝的方案，每个附一行拒绝理由>
+- **方案 B**: <描述> → 拒绝原因: <一句话>
+- **方案 C**: <描述> → 拒绝原因: <一句话>
+如果来自外部审计的建议被拒绝，标注 `[AUDIT OVERRIDE]` 及数学/物理理由。
+
+## 验证协议（C-052 教训: 未验证的诊断 = 未诊断）
+<如何确认此决策有效，必须是可执行的步骤>
+1. 验证命令: `<具体命令或脚本>`
+2. 预期结果: `<具体数值范围>`
+3. 失败时的回退方案: `<回退到什么状态>`
+
+## 参数标定来源（C-055 教训: 直觉阈值 ≠ 物理常数）
+<每个新参数的来源，三选一>
+- 🔬 **实测标定**: 来自 <实验/数据/commit>，置信度 <高/中>
+- 📐 **理论推导**: 来自 <公式/论文>，需实测验证
+- 🎯 **架构师直觉**: 来自 <经验/类比>，**必须标注"待实测标定"**
+
 ## 影响文件
 <受影响的代码文件及变更描述>
+
+## spec 参数映射（溯源链）
+<此 INS 对应的 spec 参数，用于 spec-code 对齐检查>
+- `spec.loss_function` → 实现在 `omega_epiplexity_plus_core.py:compute_spear_loss_*`
+- `spec.hpo.fixed_params.lambda_s` → 实现在 `train.py:--lambda_s default=`
 ```
 
 同时更新 `architect/insights/INDEX.md` 索引表。
@@ -138,7 +174,28 @@ source_gdoc: <gdoc 文件名 or null>
 
 输出需要变更的代码文件清单及变更描述。
 
-### 7. 后续提醒
+### 7. 更新 Chain of Custody（Living Harness 管线追踪）
+
+在 `architect/chain_of_custody.yaml` 的 `pipelines:` 下追加新条目：
+
+```yaml
+  - directive: "<归档文件名>"
+    stage: ins_created       # ingest 完成 + INS 已创建
+    insights: [INS-xxx, ...]
+    spec_fields: ["<变更的 spec 字段>"]
+    code_files: ["<受影响文件>"]
+    audit_status: draft      # 尚未经过外部审计
+    failures: []
+    last_updated: "<today>"
+```
+
+此条目将被后续 skill 自动推进:
+- `/dev-cycle` Stage 4 (CODE) → `stage: coded`
+- `/dev-cycle` Stage 8 (AUDIT) → `audit_status: final`
+- `/deploy-cycle` → `stage: deployed` + `docker_tag: <tag>`
+- 如果失败 → `/lesson-to-rule` 追加 `failures` 记录
+
+### 8. 后续提醒
 
 如果涉及公理变更（AXIOM UPDATE REQUIRED），提醒用户：
 ```

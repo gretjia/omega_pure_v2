@@ -1,0 +1,34 @@
+# R-001: Vertex AI 大容量 pd-ssd staging 拦截
+id: R-001
+name: "Block large pd-ssd boot disk without Local SSD reference"
+source_incidents: [C-028, C-040]
+axiom: "Ω2"
+
+trigger:
+  event: PreToolUse
+  matcher: "Edit|Write"
+  file_glob: "gcp/*.yaml|gcp/*.yml"
+
+check:
+  type: compound
+  description: |
+    bootDiskSizeGb > 500 且无 Local SSD/NVMe 引用 且非 canary job
+    → 在用 pd-ssd 装数据（C-028 已证实: 0.48 MB/s per GB = 384 MB/s for 800GB）
+  steps:
+    - grep: "bootDiskType.*(pd-ssd|pd-balanced|pd-standard)"
+    - grep: "bootDiskSizeGb:\\s*[5-9]\\d{2,}|bootDiskSizeGb:\\s*\\d{4,}"
+    - grep_inverse: "local.ssd|nvme|localssd|/mnt/localssd|/dev/nvme"
+    - grep_inverse: "canary"
+
+enforcement: block
+message: |
+  C-028/C-040: bootDiskSizeGb > 500 且无 Local SSD 引用 → pd-ssd 装数据。
+  pd-ssd 吞吐 = 0.48 MB/s × GB 容量, 远低于 Local SSD 4.8 GB/s。
+  详见 incidents/C-028_pd_ssd_throughput/trace.md
+
+stats:
+  created: "2026-03-15"
+  times_triggered: 7
+  times_bypassed: 1
+  false_positives: 0
+  last_triggered: "2026-04-04"

@@ -1,0 +1,31 @@
+# R-006: window_size 默认值必须与 spec 同步
+id: R-006
+name: "Detect window_size default mismatch with spec"
+source_incidents: [C-037, C-057]
+axiom: "Ω1"
+
+trigger:
+  event: PreToolUse
+  matcher: "Edit|Write"
+  file_glob: "*.py|gcp/*.py"
+
+check:
+  type: grep
+  # 检测 window_size_s 硬编码默认值 (非 10 的值, 如 =4)
+  # C-057: OOM 补丁把 window_size_s 从 10 改成 4, 从未回退
+  pattern: "window_size_s.*default\\s*=\\s*(?!10\\b)\\d+"
+  scope: content
+
+enforcement: warn
+message: |
+  C-037/C-057: window_size_s 默认值与 spec (=10) 不一致。
+  Phase 11 全部训练只看了 4 档浅水区, Topology Attention 丧失 60% 深水区信息。
+  OOM 补丁必须在问题解决后立即回退。
+  详见 incidents/C-057_window_size_oom_patch/
+
+stats:
+  created: "2026-04-03"
+  times_triggered: 5
+  times_bypassed: 0
+  false_positives: 0
+  last_triggered: "2026-04-03"

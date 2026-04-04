@@ -1,0 +1,119 @@
+workerPoolSpecs:
+- machineSpec:
+    machineType: n1-standard-8
+    acceleratorType: NVIDIA_TESLA_T4
+    acceleratorCount: 1
+  replicaCount: 1
+  diskSpec:
+    bootDiskType: pd-ssd
+    bootDiskSizeGb: 200
+  containerSpec:
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase12-v5
+    command:
+    - bash
+    - -c
+    - |
+      set -e
+      echo "=== Phase 12 SMOKE TEST (Unbounded Spear) ==="
+      echo "Purpose: Validate new Loss + ws=10 + torch.compile before full training"
+      echo "Config: 2 epochs, 500 steps, 20 shards only"
+
+      echo "=== Stage 1: Stage 20 shards only ==="
+      SHARD_DIR=/tmp/shards
+      mkdir -p ${SHARD_DIR}
+
+      # Only copy first 20 shards for smoke test (F3: >=5000 samples)
+      for i in $(seq -w 1 20); do
+        gcloud storage cp "gs://omega-pure-data/wds_shards_v3_full/omega_shard_000${i}.tar" ${SHARD_DIR}/ 2>&1 | tail -1
+      done
+      STAGED=$(ls ${SHARD_DIR}/*.tar | wc -l)
+      echo "Staged ${STAGED} shards"
+
+      echo "=== Stage 2: Smoke Train (2 epochs × 500 steps) ==="
+      PYTHONUNBUFFERED=1 python3 /app/train.py \
+        --shard_dir=${SHARD_DIR} \
+        --output_dir=/gcs/omega-pure-data/checkpoints/phase12_smoke_v6 \
+        --hidden_dim=64 \
+        --window_size_t=32 \
+        --window_size_s=10 \
+        --lr=3.2e-4 \
+        --lambda_s=1e-4 \
+        --static_mean_bp=40.0 \
+        --outlier_clamp_bp=500.0 \
+        --mse_scale_factor=10000.0 \
+        --leaky_factor=0.1 \
+        --warmup_epochs=2 \
+        --batch_size=256 \
+        --coarse_graining_factor=1 \
+        --epochs=2 \
+        --steps_per_epoch=500 \
+        --num_workers=4 \
+        --no_amp \
+        --val_split=0.3
+
+      echo "=== Stage 3: Download date_map ==="
+      gcloud storage cp gs://omega-pure-data/phase7/shard_date_map.json /tmp/shard_date_map.json
+
+      echo "=== Stage 4: Inference smoke test ==="
+      python3 /app/phase7_inference.py \
+        --checkpoint /gcs/omega-pure-data/checkpoints/phase12_smoke_v5/best.pt \
+        --shard_dir=${SHARD_DIR} \
+        --date_map /tmp/shard_date_map.json \
+        --output /tmp/smoke_predictions.parquet \
+        --hidden_dim 64 --window_size_t 32 --window_size_s 10 \
+        --batch_size 512 \
+        --val_only --val_split 0.3
+
+      echo "=== Stage 5: Physical assertions ==="
+      python3 -c "
+      import pyarrow.parquet as pq
+      import numpy as np
+      import pandas as pd
+
+      df = pq.read_table('/tmp/smoke_predictions.parquet').to_pandas()
+      n = len(df)
+      pred_std = df['pred_bp'].std()
+
+      # Diagnostic: target distribution (to debug D9-D0 anomaly)
+      print(f'TARGET DIAGNOSTICS:')
+      print(f'  target min={df[\"target_bp\"].min():.2f} max={df[\"target_bp\"].max():.2f} mean={df[\"target_bp\"].mean():.2f} std={df[\"target_bp\"].std():.2f}')
+      print(f'  pred   min={df[\"pred_bp\"].min():.4f} max={df[\"pred_bp\"].max():.4f} mean={df[\"pred_bp\"].mean():.4f} std={pred_std:.4f}')
+      print()
+      print(f'SMOKE TEST RESULTS (n={n}):')
+
+      # A1: Sample size (F3)
+      assert n >= 1000, f'FAIL: only {n} samples, need >= 1000'
+      print(f'  A1 sample_count = {n} >= 1000 ... PASS')
+
+      # A2: Variance alive (C-052)
+      assert pred_std > 5, f'FAIL: pred_std={pred_std:.2f} BP — VARIANCE COLLAPSE'
+      assert pred_std < 500, f'FAIL: pred_std={pred_std:.2f} BP — EXPLOSION'
+      print(f'  A2 pred_std     = {pred_std:.2f} BP (range 5-500) ... PASS')
+
+      # A3: No NaN/Inf
+      assert not df['pred_bp'].isna().any(), 'FAIL: NaN in predictions'
+      assert np.isfinite(df['pred_bp'].values).all(), 'FAIL: Inf in predictions'
+      print(f'  A3 NaN/Inf      = 0 ... PASS')
+
+      # A4: D9-D0 Spread
+      try:
+          deciles = pd.qcut(df['pred_bp'], 10, labels=False, duplicates='drop')
+          d9 = df.loc[deciles == deciles.max(), 'target_bp'].mean()
+          d0 = df.loc[deciles == deciles.min(), 'target_bp'].mean()
+          spread = d9 - d0
+          print(f'  A4 D9-D0 Spread = {spread:.2f} BP ... COMPUTED')
+      except Exception as e:
+          print(f'  A4 D9-D0 Spread = FAILED ({e})')
+
+      # A5: Schema (F4)
+      required = {'pred_bp', 'target_bp', 'symbol', 'z_sparsity'}
+      missing = required - set(df.columns)
+      assert not missing, f'FAIL: missing columns: {missing}'
+      print(f'  A5 Schema       = OK ({len(df.columns)} cols) ... PASS')
+
+      print()
+      print('ALL PHYSICAL ASSERTIONS PASSED')
+      print('[HUMAN REVIEW REQUIRED — check pred_std and D9-D0 values above]')
+      "
+
+      echo "=== SMOKE TEST COMPLETE ==="

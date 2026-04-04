@@ -53,13 +53,65 @@ if [[ $COMPILE_FAILED -ne 0 ]]; then
 fi
 echo "  All .py files compile OK"
 
-echo "[1b] Running regression tests..."
+echo "[1b] Dockerfile COPY source sync check (C-058: eliminate drift by design)..."
+# Parse Dockerfile COPY lines, extract source filenames, diff against root directory
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+DRIFT_FOUND=0
+# Extract files from "COPY file1 file2 ... /dest/" lines in Dockerfile
+COPY_FILES=$(grep '^COPY' "${SCRIPT_DIR}/Dockerfile" | sed 's|COPY ||; s| /app/||; s| /[^ ]*$||')
+for src_file in ${COPY_FILES}; do
+  root_file="${REPO_ROOT}/${src_file}"
+  gcp_file="${SCRIPT_DIR}/${src_file}"
+  # phase7_inference.py lives in tools/ in root
+  if [[ ! -f "$root_file" && -f "${REPO_ROOT}/tools/${src_file}" ]]; then
+    root_file="${REPO_ROOT}/tools/${src_file}"
+  fi
+  if [[ ! -f "$root_file" ]]; then
+    echo "  WARNING: ${src_file} not found in repo root or tools/"
+    continue
+  fi
+  if [[ ! -f "$gcp_file" ]]; then
+    echo "  FAIL: ${src_file} missing in gcp/ (Dockerfile expects it)"
+    DRIFT_FOUND=1
+    continue
+  fi
+  if ! diff -q "$root_file" "$gcp_file" > /dev/null 2>&1; then
+    echo "  DRIFT: ${src_file} differs between root and gcp/"
+    echo "    Fix: cp ${root_file} ${gcp_file}"
+    DRIFT_FOUND=1
+  else
+    echo "  OK: ${src_file}"
+  fi
+done
+if [[ $DRIFT_FOUND -ne 0 ]]; then
+  echo "ABORT: Dockerfile COPY sources out of sync with repo root."
+  echo "Run the 'cp' commands above, then retry."
+  exit 1
+fi
+echo "  All Dockerfile COPY sources in sync"
+
+echo "[1c] Running regression tests..."
 if [[ -f "tests/test_known_bugs.py" ]]; then
   if ! python3 -m pytest tests/test_known_bugs.py -v 2>&1; then
     echo "ABORT: Regression tests failed. Fix before building."
     exit 1
   fi
   echo "  Regression tests PASSED"
+fi
+
+echo "[1d] Spec-code alignment check (C-057: prevent parameter drift)..."
+if [[ -f "tools/spec_code_alignment.py" ]]; then
+  if ! python3 tools/spec_code_alignment.py 2>&1; then
+    echo "WARNING: Spec-code alignment drift detected."
+    echo "Fix code defaults to match architect/current_spec.yaml, or update spec."
+    read -p "Continue anyway? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+      echo "ABORT: Fix alignment before building."
+      exit 1
+    fi
+  fi
+  echo "  Spec-code alignment OK"
 else
   echo "  WARNING: tests/test_known_bugs.py not found — skipping"
 fi

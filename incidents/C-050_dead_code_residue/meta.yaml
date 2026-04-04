@@ -1,0 +1,12 @@
+id: C-050
+title: "Dead code residue: Gemini cleanup missed 4x .squeeze() + introduced IndentationError"
+pattern: full_stack_sync
+axiom: "Ω5"
+severity: high
+enforcement: doc_only
+enforcement_file: ""
+related: [C-049, C-051]
+phase: "Phase 11c"
+date: "2026-04-01"
+commit: "dd6aeae"
+cost: "1h human (revert + redo) + train.py uncompilable"

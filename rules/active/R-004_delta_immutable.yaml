@@ -1,0 +1,27 @@
+# R-004: delta 物理常数不可修改
+id: R-004
+name: "Block modification of delta (Layer 1 physical constant = 0.5)"
+source_incidents: []
+axiom: "Ω1"
+
+trigger:
+  event: PreToolUse
+  matcher: "Edit|Write"
+  file_glob: "*core*.py|*axiom*.py"
+
+check:
+  type: grep
+  pattern: "delta\\s*=\\s*(?!0\\.5)[\\d.]+"
+  scope: content
+
+enforcement: block
+message: |
+  AXIOM VIOLATION: delta 必须 = 0.5 (Layer 1 物理常数, 平方根法则指数)。
+  此常数不可修改、不可设为可学习参数。
+
+stats:
+  created: "2026-02-01"
+  times_triggered: 4
+  times_bypassed: 0
+  false_positives: 0
+  last_triggered: "2026-04-03"

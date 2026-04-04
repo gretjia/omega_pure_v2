@@ -1,0 +1,78 @@
+# chain_of_custody.yaml — Living Harness Pipeline Nervous System
+#
+# 每个架构师指令从诞生到部署的完整生命链。
+# 当训练失败时，从 C-xxx 反向追溯到源头 INS → 找到哪个假设出错。
+#
+# 自动维护者:
+#   - /architect-ingest: 创建条目 (stage: ingested)
+#   - /dev-cycle Stage 8.5: 升级到 spec_final
+#   - /deploy-cycle: 升级到 deployed
+#   - /lesson-to-rule: 失败时标记 failed + 链接到 C-xxx
+#   - /harness-reflect: 统计健康度
+
+schema_version: "1.0"
+last_updated: "2026-04-03"
+
+# ── Pipeline Stage 定义 ──
+# ingested → ins_created → spec_draft → spec_final → coded → audited → deployed
+# 任何阶段可以标记 failed (附带 C-xxx 编号)
+
+# ── 活跃管线 ──
+pipelines:
+  - directive: "2026-04-02_phase12_unshackling_protocol.md"
+    stage: deployed
+    insights: [INS-060, INS-063, INS-064]
+    spec_fields:
+      - "loss_function: Unbounded Spear"
+      - "hpo.fixed_params.lambda_s: 1e-4"
+    code_files: ["omega_epiplexity_plus_core.py", "train.py"]
+    audit_status: final
+    failures:
+      - lesson: C-059
+        stage_failed: coded
+        root_cause: "ETL 输出单位假设错误 — INS 未记录数据格式前提"
+        assumption_violated: "target 是 raw decimal (实际是 BP)"
+    docker_tag: null
+    last_updated: "2026-04-03"
+
+  - directive: "2026-04-02_audit_override_excess_alpha.md"
+    stage: deployed
+    insights: [INS-063]
+    spec_fields:
+      - "loss_function: pred 未居中, target 居中 (path A)"
+    code_files: ["omega_epiplexity_plus_core.py"]
+    audit_status: final
+    audit_overrides:
+      - rejected: "path B (both centered)"
+        reason: "代数消元 — 两个 -40 抵消, 优化器操控 Bias 飙升 +40"
+        auditor: "Codex"
+    failures: []
+    last_updated: "2026-04-03"
+
+  - directive: "2026-03-29_phase11e_moment_matched_spear.md"
+    stage: coded
+    insights: [INS-057, INS-058, INS-059]
+    spec_fields:
+      - "loss_function: Moment-Matched Spear"
+      - "model.window_size: (32, 10)"
+    code_files: ["omega_epiplexity_plus_core.py", "train.py"]
+    audit_status: final
+    failures:
+      - lesson: C-057
+        stage_failed: coded
+        root_cause: "window_size_s=4 OOM 补丁未回退 — 代码默认值与 spec 漂移"
+        assumption_violated: "代码默认值 = spec 值 (实际是早期 OOM 临时改的)"
+    last_updated: "2026-04-03"
+
+# ── 模板 (新 directive 用) ──
+# pipeline_template:
+#   directive: "<filename>"
+#   stage: ingested
+#   insights: []
+#   spec_fields: []
+#   code_files: []
+#   audit_status: draft
+#   audit_overrides: []
+#   failures: []
+#   docker_tag: null
+#   last_updated: "<date>"

@@ -1,0 +1,79 @@
+workerPoolSpecs:
+- machineSpec:
+    machineType: n1-standard-8
+    acceleratorType: NVIDIA_TESLA_T4
+    acceleratorCount: 1
+  replicaCount: 1
+  diskSpec:
+    bootDiskType: pd-ssd
+    bootDiskSizeGb: 500
+  containerSpec:
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase12-postflight-v1
+    command:
+    - bash
+    - -c
+    - |
+      set -e
+      echo "=== Phase 12 Post-Flight Inference ==="
+      echo "Checkpoint: best.pt (E0, D9-D0=+4.48BP)"
+      echo "Mode: val-only (last 20% shards), staged to local SSD"
+
+      echo "=== Stage 1: Stage val shards only to local SSD ==="
+      SHARD_DIR=/tmp/shards
+      mkdir -p ${SHARD_DIR}
+
+      # Only stage val shards (last 20% = shard 01594-01991, ~400GB)
+      t0=$(date +%s)
+      python3 -c "
+      import subprocess
+      # List all shards, take last 20%
+      result = subprocess.run(['gcloud', 'storage', 'ls', 'gs://omega-pure-data/wds_shards_v3_full/omega_shard_*.tar'],
+                              capture_output=True, text=True, check=True)
+      all_shards = sorted([u.strip() for u in result.stdout.strip().split('\n') if u.strip()])
+      n_train = int(len(all_shards) * 0.8)
+      val_shards = all_shards[n_train:]
+      print(f'Total: {len(all_shards)}, Val: {len(val_shards)} (from index {n_train})')
+      # Download val shards
+      for i, url in enumerate(val_shards):
+          subprocess.run(['gcloud', 'storage', 'cp', url, '/tmp/shards/'], check=True,
+                         capture_output=True)
+          if (i+1) % 50 == 0:
+              print(f'  Staged {i+1}/{len(val_shards)} val shards')
+      print(f'All {len(val_shards)} val shards staged')
+      "
+      t1=$(date +%s)
+      STAGED=$(ls ${SHARD_DIR}/*.tar 2>/dev/null | wc -l)
+      echo "Staged ${STAGED} val shards in $((t1-t0))s"
+      df -h ${SHARD_DIR}
+
+      echo "=== Stage 2: Download checkpoint ==="
+      mkdir -p /tmp/ckpt
+      gcloud storage cp gs://omega-pure-data/checkpoints/phase12_unbounded_v1/best.pt /tmp/ckpt/best.pt
+
+      echo "=== Stage 3: Build date map ==="
+      python3 -c "
+      import glob, json, re
+      shards = sorted(glob.glob('/tmp/shards/omega_shard_*.tar'))
+      shard_to_date = {}
+      for s in shards:
+          num = int(re.search(r'omega_shard_(\d+)', s).group(1))
+          shard_to_date[str(num)] = f'shard_{num:05d}'
+      json.dump({'shard_to_date': shard_to_date, 'total_dates': len(set(shard_to_date.values())), 'total_shards': len(shards)}, open('/tmp/date_map.json', 'w'))
+      print(f'Date map: {len(shards)} shards')
+      "
+
+      echo "=== Stage 4: Full Inference (val shards already staged) ==="
+      PYTHONUNBUFFERED=1 python3 /app/phase7_inference.py \
+        --checkpoint /tmp/ckpt/best.pt \
+        --shard_dir ${SHARD_DIR} \
+        --date_map /tmp/date_map.json \
+        --output /gcs/omega-pure-data/postflight/phase12_val_predictions.parquet \
+        --hidden_dim 64 \
+        --window_size_t 32 \
+        --batch_size 512 \
+        --checkpoint_interval 50
+
+      echo "=== Stage 5: Post-Flight Analysis ==="
+      python3 /app/postflight_analysis.py /gcs/omega-pure-data/postflight/phase12_val_predictions.parquet
+
+      echo "=== DONE ==="

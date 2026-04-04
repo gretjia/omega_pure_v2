@@ -57,7 +57,7 @@ def fast_npy_decoder(sample):
 
 class OmegaTIBInference(torch.nn.Module):
     """Inference wrapper — no masking, no training-only logic."""
-    def __init__(self, hidden_dim=128, window_size=(16, 10)):
+    def __init__(self, hidden_dim=64, window_size=(32, 10)):
         super().__init__()
         self.model = OmegaMathematicalCompressor(hidden_dim, window_size)
         self.post_proj_norm = torch.nn.LayerNorm(hidden_dim)
@@ -91,6 +91,7 @@ class OmegaTIBInference(torch.nn.Module):
         lob[..., 3] = torch.log1p(ask_v.clamp(min=0.0))
         lob_features = lob.to(x_2d.dtype)
 
+        q_metaorder = torch.clamp(q_metaorder, min=-1e12, max=1e12)
         q_metaorder = torch.sign(q_metaorder) * torch.log1p(torch.abs(q_metaorder))
         native_manifold = torch.cat([lob_features, q_metaorder], dim=-1)
 
@@ -112,10 +113,10 @@ def main():
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--macro_window", type=int, default=160)
     parser.add_argument("--coarse_graining_factor", type=int, default=1)
-    parser.add_argument("--hidden_dim", type=int, default=128)
-    parser.add_argument("--window_size_t", type=int, default=16)
+    parser.add_argument("--hidden_dim", type=int, default=64)
+    parser.add_argument("--window_size_t", type=int, default=32)
     parser.add_argument("--window_size_s", type=int, default=10)
-    parser.add_argument("--costs_bp", type=float, default=15.0)
+    parser.add_argument("--costs_bp", type=float, default=25.0)
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -132,11 +133,20 @@ def main():
     # Map state dict keys (training wrapper → inference wrapper)
     state = {}
     for k, v in ckpt["model_state_dict"].items():
+        # Strip torch.compile _orig_mod. prefix if present
+        if k.startswith("_orig_mod."):
+            k = k[len("_orig_mod."):]
         # Remove "masking." prefix if present, keep "model." and "post_proj_norm."
         if k.startswith("masking."):
             continue  # skip masking layer (inference doesn't need it)
         state[k] = v
-    model.load_state_dict(state, strict=False)
+    n_loaded = len(state)
+    result = model.load_state_dict(state, strict=False)
+    if result.unexpected_keys or len(result.missing_keys) > 0:
+        logger.warning(f"State dict: loaded {n_loaded} keys, "
+                       f"missing={result.missing_keys}, unexpected={result.unexpected_keys}")
+    else:
+        logger.info(f"State dict: loaded {n_loaded} keys, all matched")
     model.eval()
     logger.info(f"Model loaded from {args.checkpoint}")
 
@@ -178,7 +188,7 @@ def main():
             target = batch["target"]  # keep on CPU
 
             prediction = model(manifold, c_friction)
-            pred_bp = prediction.view(-1).cpu()
+            pred_bp = (prediction.view(-1) * 10000.0).cpu()
 
             all_preds.append(pred_bp.numpy().copy())
             all_targets.append(target.numpy().copy())

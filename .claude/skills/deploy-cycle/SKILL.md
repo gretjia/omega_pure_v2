@@ -1,6 +1,6 @@
 ---
 name: deploy-cycle
-description: 部署周期 — Pre-flight/Axiom/NodeHealth/Deploy/Verify/Document 六阶段自动编排
+description: 部署周期 — Pre-flight/Axiom/NodeHealth/Deploy/Verify/SmokeTest/Document 七阶段自动编排
 user-invocable: true
 ---
 
@@ -30,7 +30,7 @@ user-invocable: true
 | **GCP 推理** | Vertex AI Custom Job | gen_inference_config.sh → safe_submit.sh | Pipe 模式, 100GB disk |
 | **本地节点** | linux1 / windows1 | SCP + systemd-run | 走 Stage 1-6 |
 
-## 八阶段流程（含 Stage 0 I/O 决策）
+## 九阶段流程（含 Stage 0 I/O 决策 + Stage 5.5 烟测）
 
 ### Stage 0: I/O + 成本决策（GCP 部署必须执行）
 
@@ -190,15 +190,15 @@ Verdict: PASS / WARN / FAIL
 
 **如果 FAIL → 修复 config 后重新审计**
 
-### Stage 5: VERIFY
+### Stage 5: VERIFY (进程存活检查)
 
-部署后验证：
+部署后立即验证：
 1. 确认进程在目标节点运行：
    ```bash
    ssh <target> ps aux | grep python
    ```
 2. 检查初始日志输出（前 20 行）
-3. 确认无立即错误
+3. 确认无立即错误（import 失败、CUDA OOM、文件找不到）
 
 输出：
 ```
@@ -207,6 +207,111 @@ Process: RUNNING (PID: <pid>)
 Initial output: <summary>
 Verdict: HEALTHY / ERROR
 ```
+
+### Stage 5.5: SMOKE TEST (独立端到端烟测，C-052 强制)
+
+**训练部署必须执行此阶段。推理部署可跳过（但建议执行）。**
+
+等待 E0 完成后，在**目标节点**上用**生产推理脚本**跑 checkpoint，断言输出在物理区间。
+
+**已知的 8 种烟测失败模式及防御措施：**
+
+| # | 失败模式 | 防御 |
+|---|---------|------|
+| F1 | 烟测环境 ≠ 运行环境 | 必须在目标节点/Docker 内执行，严禁本地 CPU smoke 代替 (C-015, C-053, Ω3) |
+| F2 | 参数不一致 | 从训练 checkpoint 的 `meta` 中提取 `window_size`/`hidden_dim`，传给推理脚本，不用推理脚本默认值 (C-037, C-049) |
+| F3 | 样本量不足 | 最少跑 **20 shards**（~100K 样本），不是 1-2 shards。少于此量无法暴露截面方差坍缩 (C-055) |
+| F4 | 上下游不一致 | 推理输出的 parquet schema 必须能被 `backtest_5a.py` 直接读取，烟测中实际 `import backtest_5a` 校验 schema 列名 (C-038) |
+| F5 | 只验证"能跑"没验证"跑对了" | 必须有**物理断言**（见下），"跑完没报错" ≠ "结果正确" (C-013, C-052) |
+| F6 | AI 自测自验 | 烟测脚本/断言由 deploy-cycle 自动执行，但结果必须打印给人类肉眼确认，不可由 AI 自行判定 PASS (C-021, Ω5) |
+| F7 | 看日志 ≠ 看产出 | 断言必须基于 checkpoint 的**推理输出文件**，不是训练日志中的 loss/metric (C-052: 仪表盘可能被旧 Docker 污染) |
+| F8 | 阈值拍脑袋 | 物理断言的阈值必须有来源说明，首次部署新 Loss 时用宽松区间 + 人工确认，后续从实测数据收紧 (C-055) |
+
+**烟测执行流程：**
+
+1. **等待 E0 checkpoint 生成**：
+   ```bash
+   # 在目标节点上轮询 checkpoint 文件
+   ssh <target> "while [ ! -f <output_dir>/checkpoint.pt ]; do sleep 60; done"
+   ```
+
+2. **用生产推理脚本跑 checkpoint**（F1: 目标环境，F2: 从 ckpt 提取参数，F7: 看产出不看日志）：
+   ```bash
+   ssh <target> "python3 tools/phase7_inference.py \
+     --checkpoint <output_dir>/checkpoint.pt \
+     --shards '<val_shard_glob>' \
+     --output /tmp/smoke_test_output.parquet \
+     --hidden_dim <from_ckpt> --window_size_t <from_ckpt> --window_size_s <from_ckpt> \
+     --max_shards 20"
+   ```
+   **注意**：`--hidden_dim`, `--window_size_t`, `--window_size_s` 必须从 checkpoint 的 meta 中读取，不用推理脚本的默认值。如果推理脚本不支持 `--max_shards`，用 `head -20` 限制 shard 列表。
+
+3. **物理断言**（F5: 不只是"能跑"，F3: 足够样本量）：
+   ```bash
+   ssh <target> python3 -c "
+   import pyarrow.parquet as pq
+   import numpy as np
+   
+   df = pq.read_table('/tmp/smoke_test_output.parquet').to_pandas()
+   n = len(df)
+   pred_std = df['pred_bp'].std()
+   
+   # === 物理断言 (F5) ===
+   # A1: 样本量 (F3)
+   assert n >= 5000, f'FAIL: only {n} samples, need >= 5000 for cross-sectional stats'
+   
+   # A2: 方差存活 — 不是常数预测器 (C-052: 脑死亡检测)
+   # 阈值来源 (F8): Phase 12 Excess BP 输出，pred 围绕 0，
+   # 健康 std 应在 5-500 BP 区间（首次部署宽松区间，后续实测收紧）
+   assert pred_std > 5, f'FAIL: pred_std={pred_std:.2f} BP — VARIANCE COLLAPSE (brain death)'
+   assert pred_std < 500, f'FAIL: pred_std={pred_std:.2f} BP — EXPLOSION (gradient bomb)'
+   
+   # A3: 无 NaN/Inf (公理 9)
+   assert not df['pred_bp'].isna().any(), 'FAIL: NaN in predictions'
+   assert np.isfinite(df['pred_bp'].values).all(), 'FAIL: Inf in predictions'
+   
+   # A4: D9-D0 Spread 非零 — 模型有排序能力 (INS-058)
+   deciles = pd.qcut(df['pred_bp'], 10, labels=False, duplicates='drop')  
+   # 如果 qcut 失败(方差太小)，本身就是 FAIL
+   d9 = df.loc[deciles == deciles.max(), 'target_bp'].mean()
+   d0 = df.loc[deciles == deciles.min(), 'target_bp'].mean()
+   spread = d9 - d0
+   
+   # A5: Schema 兼容回测 (F4)
+   required_cols = {'pred_bp', 'target_bp', 'symbol', 'z_sparsity'}
+   missing = required_cols - set(df.columns)
+   assert not missing, f'FAIL: missing columns for backtest: {missing}'
+   
+   print(f'SMOKE TEST RESULTS (n={n}):')
+   print(f'  pred_std  = {pred_std:.2f} BP')
+   print(f'  D9-D0     = {spread:.2f} BP')
+   print(f'  NaN count = 0')
+   print(f'  Schema    = OK ({len(df.columns)} columns)')
+   print(f'  [HUMAN REVIEW REQUIRED — verify above values are physically reasonable]')
+   "
+   ```
+
+4. **人工确认**（F6: 不可 AI 自判）：
+   将上述输出打印给用户，询问：
+   ```
+   烟测输出如上。物理断言全部通过，但最终判定需要人工确认。
+   pred_std 和 D9-D0 Spread 是否在你预期的区间内？(yes/no)
+   ```
+   **用户说 yes 才进入 Stage 6。用户说 no 则停止部署，记录到 OMEGA_LESSONS.md。**
+
+输出：
+```
+=== STAGE 5.5: SMOKE TEST ===
+Samples: N
+pred_std: X.XX BP
+D9-D0 Spread: X.XX BP
+Schema: OK / MISSING [cols]
+Physical Assertions: ALL PASS / FAIL [details]
+Human Review: APPROVED / REJECTED
+Verdict: PASS / FAIL
+```
+
+**如果 FAIL → 停止部署，检查 Loss 函数/参数/Docker 版本对齐。不可跳过。**
 
 ### Stage 6: DOCUMENT
 
@@ -222,7 +327,7 @@ Verdict: HEALTHY / ERROR
 === DEPLOY CYCLE COMPLETE ===
 
 Target: <node>
-Stages: PRE-FLIGHT ✓ → AXIOM ✓ → HEALTH ✓ → DEPLOY ✓ → VERIFY ✓ → DOCUMENT ✓
+Stages: PRE-FLIGHT ✓ → AXIOM ✓ → HEALTH ✓ → DEPLOY ✓ → VERIFY ✓ → SMOKE ✓ → DOCUMENT ✓
 
 Deployed files:
   - <file1>

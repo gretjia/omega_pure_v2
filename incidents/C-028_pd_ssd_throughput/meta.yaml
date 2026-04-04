@@ -1,0 +1,12 @@
+id: C-028
+title: "pd-ssd throughput scales with disk size — 800GB only gets 384 MB/s"
+pattern: io_strategy
+axiom: "Ω2"
+severity: high
+enforcement: executable
+enforcement_file: ".claude/hooks/lesson-enforcer.sh"
+related: [C-040, C-041, C-048]
+phase: "Phase 9"
+date: "2026-03-30"
+commit: "bbad361"
+cost: "~12h GPU + $9 (Phase 10 C-030 cascading failure)"

@@ -23,6 +23,20 @@
 | [id5_mae_vs_intent_prediction.md](id5_mae_vs_intent_prediction.md) | id5 | MAE vs Intent Prediction 裁决 | INS-003, INS-008 |
 | [id6_vd_physics_ruling.md](id6_vd_physics_ruling.md) | id6 | V_D 物理规律判定 | INS-002 |
 
+## Phase 11 审计与烟测
+
+| 文件 | 日期 | 内容 | 结论 |
+|------|------|------|------|
+| [2026-04-01_inference_scale_explosion_fix.md](2026-04-01_inference_scale_explosion_fix.md) | 2026-04-01 | 推理 216x 尺度爆炸修复 | Train-Serve Skew 根因确认 |
+| [2026-04-01_phase11c_smoke_test_report.md](2026-04-01_phase11c_smoke_test_report.md) | 2026-04-01 | Phase 11c 烟测 — 216x 仪表盘幻觉揭秘 | pred_std=5.6 BP 脑死亡 |
+
+## Phase 11 全量数据 (项目根 reports/)
+
+| 文件 | 内容 |
+|------|------|
+| [../phase11_complete_data_summary.md](../phase11_complete_data_summary.md) | Phase 11 全阶段数据汇总 (11c + 11d A/B + post-flight) |
+| [../phase11d_training_complete.md](../phase11d_training_complete.md) | Phase 11d 训练记录 (Config A/B epoch tables + checkpoints) |
+
 ## 综合洞察
 
 | 文件 | 来源 | 内容 |
@@ -31,4 +45,4 @@
 
 ---
 
-> **导航提示**: 结构化决策卡片 (INS-001~048) 在 [`architect/insights/INDEX.md`](../../architect/insights/INDEX.md)；架构师原始指令在 [`architect/INDEX.md`](../../architect/INDEX.md)
+> **导航提示**: 结构化决策卡片 (INS-001~056) 在 [`architect/insights/INDEX.md`](../../architect/insights/INDEX.md)；架构师原始指令在 [`architect/INDEX.md`](../../architect/INDEX.md)

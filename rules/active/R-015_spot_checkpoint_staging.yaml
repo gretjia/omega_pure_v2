@@ -1,0 +1,28 @@
+# R-015: Spot VM checkpoint 必须先写 /tmp staging
+id: R-015
+name: "Warn about direct checkpoint writes to GCS FUSE on Spot VMs"
+source_incidents: [C-047]
+axiom: "Ω4"
+
+trigger:
+  event: PreToolUse
+  matcher: "Edit|Write"
+  file_glob: "*.py|gcp/*.py"
+
+check:
+  type: grep
+  # 检测 torch.save 直写 /gcs/ 或 gs:// 路径
+  pattern: "torch\\.save.*(/gcs/|/gcsfuse/|fuse)"
+  scope: content
+
+enforcement: warn
+message: |
+  C-047: Spot SIGTERM 期间 torch.save 直写 FUSE → 缓存来不及 flush → 0 byte checkpoint。
+  必须: 先写 /tmp staging → shutil.copy2 到 FUSE → os.sync() 强制刷盘。
+
+stats:
+  created: "2026-04-03"
+  times_triggered: 0
+  times_bypassed: 0
+  false_positives: 0
+  last_triggered: null
