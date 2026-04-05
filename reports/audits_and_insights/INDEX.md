@@ -37,6 +37,12 @@
 | [../phase11_complete_data_summary.md](../phase11_complete_data_summary.md) | Phase 11 全阶段数据汇总 (11c + 11d A/B + post-flight) |
 | [../phase11d_training_complete.md](../phase11d_training_complete.md) | Phase 11d 训练记录 (Config A/B epoch tables + checkpoints) |
 
+## Omega-TIB 模型审计底稿
+
+| 文件 | 日期 | 内容 | 说明 |
+|------|------|------|------|
+| [2026-04-05_omega_tib_audit_workpapers.md](2026-04-05_omega_tib_audit_workpapers.md) | 2026-04-05 | Omega-TIB 全生命周期审计底稿 (Phase 3-13) | 5-Agent协作编制：核心算法溯源 + 训练数据 + 模型产出 + Phase历史 + 数据交叉审核。含7个疑点、完整源码导航、Git考古命令 |
+
 ## 综合洞察
 
 | 文件 | 来源 | 内容 |
