@@ -1,5 +1,5 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-04-05 — **STATUS: ETL v5 Sort 在 linux1 运行中 (5/743, ETA ~33h)，Phase 13 Post-Flight 等待 ETL 完成**
+Last Updated: 2026-04-05 — **STATUS: ETL v5 Sort 在 linux1 运行中 (5/743, ETA ~33h) | 全生命周期审计完成，Phase 14 协议已锁定**
 
 ## Current State
 - **Phase 13 训练完成**: Job `6005517512886714368`, E9 best (Rank IC = +0.0292, D9-D0 = +7.00 BP)
@@ -8,6 +8,15 @@ Last Updated: 2026-04-05 — **STATUS: ETL v5 Sort 在 linux1 运行中 (5/743, 
 - **下游烟测已通过**: DuckDB 排序文件 → Scanner pushdown → ETL → shard → loader 全链 PASS
 - **Pushdown 效果实测**: 5 symbols/1 file 从 37.6s → 0.8s (47× 加速, 99.6% 数据跳过)
 - **Checkpoints**: `gs://omega-pure-data/checkpoints/phase13_v1/`
+
+## Audit Session (2026-04-05)
+- **审计底稿**: `reports/audits_and_insights/2026-04-05_omega_tib_audit_workpapers.md` (5-Agent 协作编制)
+- **Session 总结**: `handover/2026-04-05_SESSION_AUDIT_SUMMARY.md` (全流程记录)
+- **7 个疑点**: Phase 6 失效归因、窗口断裂、hd 理由链、post_proj_norm 幽灵层、7BP vs 25BP 鸿沟、SRL 遮蔽、FRT 审计盲区
+- **"2.4% SNR" 证伪**: 来自 Phase 12 失败模型输出，非数据固有属性。已废除常数地位
+- **新教训**: C-077 (伪常数传播), C-078 (三方审计元模式)
+- **Phase 14 协议已锁定**: Step 0 数据基线 → Step 1 Phase 6 复测(三分支门) → Step 2 宏观旁路 A/B → Step 3 HPO hd=[64,128]
+- **Phase 6 Checkpoint 已确认路径**: `gs://omega-pure-data/checkpoints/phase6_icloss/trial_29/best.pt` (需 gsutil ls 验证存在)
 
 ## Changes This Session
 - **ETL v5 性能重构** (未提交, `tools/omega_etl_v3_topo_forge.py`):
@@ -30,11 +39,20 @@ Last Updated: 2026-04-05 — **STATUS: ETL v5 Sort 在 linux1 运行中 (5/743, 
 - **large_string → string 降级可接受**: DuckDB 将 4 个 string 列从 64-bit offset 降为 32-bit offset, 对 ≤10 字符的 symbol/date 安全
 
 ## Next Steps
+### ETL v5 管线（进行中）
 1. **[P0] 等待 Sort 完成**: ~33h, linux1 tmux `sort_v5`, 断点续传保护
 2. **[P0] Sort 完成后启动 ETL v5**: `run_etl_v5_pipeline.py` 或直接 `omega_etl_v3_topo_forge.py --base_dir ...sorted --workers 8 --wait_for_files`
 3. **[P0] ETL 完成后**: merge shards → QC → upload GCS (`wds_shards_v4`)
-4. **[P1] Post-Flight per-date 截面评估**: 用 E9 best.pt + v4 shards 做推理
-5. **[P2] 提交代码**: 当前改动未 commit, 待 Sort + ETL 全链验证后提交
+
+### Phase 14 协议（绝对串行，上一步未出结果前禁止触发下一步）
+4. **[Step 0] 数据侧基线**: 在验证集上计算 Target 原生统计量 (Mean/Std/Skew/Kurtosis)，建立不依赖模型的 Ground Truth
+5. **[Step 1] Phase 6 纯净复测**: 禁用 torch.compile，加载 `gs://omega-pure-data/checkpoints/phase6_icloss/trial_29/best.pt`
+   - 前置: 确认 checkpoint 存在 + 解决模型类兼容性 (Phase 6: window=(4,4), hd=64, 无 AttentionPooling/Pre-LN)
+   - Branch A (RankIC≤0.01 或 D9-D0≤2BP): Phase 13 确认为唯一基线 → Step 2
+   - Branch B (RankIC>0.05 且 D9-D0>10BP): Stop the World，回滚研究小窗口
+   - Branch C (灰区): 两路保留 → Step 2 + 多尺度窗口 Backlog
+6. **[Step 2] 宏观旁路 A/B 实验**: σ_D + V_D 加入特征流形，成功标准=统计显著正向增量
+7. **[Step 3] 受控 HPO**: hd=[64,128]，严禁 hd≥256
 
 ## Warnings
 - **Sort ETA ~33h**: 每文件 73.6M 行 × 49 列, DuckDB 排序 ~160s/file, 不可加速 (I/O bound)
