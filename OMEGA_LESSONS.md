@@ -60,6 +60,15 @@
 - 部署前必跑 `/pre-flight <node>`
 - SSH 工作负载走 `systemd-run --slice=heavy-workload.slice`
 - 日志必须 `PYTHONUNBUFFERED=1`（否则 nohup 缓冲导致"无输出"）
+- **>30min 任务禁止 SSH 前台执行**（C-072）:
+  - Linux: `tmux`/`screen`/`nohup` + 完成标志文件
+  - Windows: Scheduled Task（PowerShell API 注册，C-076 完整流程）:
+    1. scp wrapper.cmd 到 Windows → **必须修复 LF→CRLF**
+    2. scp register.ps1 → `New-ScheduledTaskAction -Execute cmd.exe -Argument '/c wrapper.cmd' -WorkingDirectory ...`
+    3. `powershell -ExecutionPolicy Bypass -File register.ps1`
+    4. 通过 Python 读日志 + 输出目录 + task state 监控
+  - **禁止**: `Start-Process`/VBS/DETACHED_PROCESS/裸 `schtasks /tr`（C-072~C-076 实测全失败）
+- **远程进程监控**不可依赖 SSH 连通性（C-073），必须检查明确完成标志（日志尾部 "DONE" + exit code 文件）
 
 ---
 
@@ -159,6 +168,11 @@
 - **C-069**: **Overfit/Crucible test 必须跳过验证阶段**。Crucible 目的是验证 64 样本能否 overfit 到 loss→0，读 399 val shards (~400GB) 完全无意义。提交前必须加 `--max_val_steps 1` 或 `--val_split 0.01`。2000 步 overfit ~2min 完事，不应花 15+min 读 val 数据（Ω2: 资源与目的不成比例 = 计划有误）
 - **C-070**: **train.py 的 Loss= 是 running average，不是瞬时值**。Crucible 2000 步后报 Loss=0.674，误判为"未归零"。实际增量分析：最后 200 步瞬时 loss≈0.15（RMSE≈39BP，R²≈0.96）。累积平均被早期高 loss (5.2, 2.2...) 拖高。读训练日志必须区分 running avg vs instantaneous，不可直接引用显示值下结论（Ω1: 只信实测 — "Loss=0.674"不是最终 loss）
 - **C-071**: **改 Loss 后 Docker tag 和 Dockerfile 依赖必须同步审计**。Mandate A 换 IC Loss 后：(1) crucible config 仍指向 phase13-v1 (旧 MSE 镜像)，如不修正 Crucible 会用旧代码跑 (2) validate() 新增 scipy.stats.spearmanr，但 Dockerfile 未装 scipy → 运行时 ImportError。两个 bug 都是"代码改了但部署链没跟上"。修改核心代码后必须审计: Docker tag、Dockerfile 依赖、YAML config 参数（Ω3: 测试环境=生产环境 + Ω1: 只信实测——本地编译通过≠容器能跑）
+- **C-072**: **远程长任务必须脱离 SSH 会话——SSH 前台 = 定时炸弹**。ETL v4 在 windows1 以 SSH 前台跑 1.5h 后 SSH 断连，Python 进程随之被杀，1.5h 计算和 335 个 shard 作废。**修复: Windows 用 `screen` 等价方案（PowerShell `Start-Process` + 日志重定向），Linux 用 `tmux`/`screen`/`nohup`。绝对禁止 SSH 前台执行 >30min 任务**（Ω4: 可执行>可记忆 — 不靠 SSH 连接稳定性）
+- **C-073**: **监控脚本不可用 SSH 连通性做进程存活判断**。ETL v4 monitor 用 `ssh windows1 tasklist | grep python` 判断 ETL 是否完成，SSH 超时返回空结果被误判为"0 进程 = ETL 完成"，触发了对未完成数据的 merge 和上传。**修复: 监控应检查明确完成标志（如 ETL 在日志末尾写 "DONE" 标记 + 检查 exit code 文件），不可将 SSH 失败等价于进程退出**（Ω1: 只信实测 — "SSH 没看到进程" ≠ "进程不存在"）
+- **C-075**: **破坏性后处理必须验证前置条件，否则摧毁断点续作能力**。ETL v4 monitor 误判完成后调用 `merge_worker_shards()`，把 8 个 worker 目录的 shard 全部 move 到根目录。Checkpoint 在 file 100，但 worker 目录已空 → resume 扫描 max_shard=-1 → 从 shard 0 重写 → 与根目录 335 个 shard 冲突。1.5h 计算无法续作只能重跑。**修复: merge 前必须验证所有 worker 的 checkpoint 记录 file_idx == len(all_files)；merge 应先 copy 再 delete 而非 move，保留回退能力**（Ω4 + Ω1: 不可逆操作必须有前置门禁 + 只信实测验证完成状态）
+- **C-074**: **写完规则立刻违反 = 规则是装饰品（C-067 泛化失败）**。写 C-072/R-019（禁止 SSH 前台 >30min）后 3 分钟内，连续两次用 SSH 前台启动 ETL。根因三层：(1) R-019 是 YAML 文档不是代码，没有 hook 强制执行（Ω4 违反），(2) 遇到 VBS/PowerShell 全失败后放弃原则选择"能跑的方式"而非升级给用户，(3) C-067 教训"同意必须转化为可执行规则"没有泛化到所有新规则。**修复：无法在远程节点脱离 SSH 执行时，必须立即升级给用户从桌面执行，不可回退到已证明危险的方式**（Ω4: 可执行>可记忆 — 规则不可执行 = 规则不存在）
+- **C-076**: **Windows Scheduled Task 正确做法是 PowerShell API + 落地 wrapper + CRLF，不是 schtasks /tr 塞命令**。三个致命陷阱：(1) scp 从 Linux 传的 .cmd 是 LF 换行 → cmd.exe 静默失败不报错，必须转 CRLF；(2) `schtasks /create /tr "python -c ..."` 引号转义必崩 → 先落地 wrapper.cmd 再引用；(3) SSH 内联多行 PowerShell 转义损坏 → 写 .ps1 文件 scp 过去执行。正确流程: wrapper.cmd(CRLF) → register.ps1(New-ScheduledTaskAction + WorkingDirectory) → Start-ScheduledTask。`schtasks /run` 返回 0 只表示"调度器接受了"不是"脚本跑了"（Ω1: 只信实测 — 必须检查日志/进程/输出目录）
 
 ---
 

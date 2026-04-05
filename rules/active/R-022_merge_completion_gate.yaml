@@ -1,0 +1,28 @@
+# R-022: Merge 前必须验证所有 worker 完成 (C-075)
+# 触发: 调用 merge_worker_shards 或类似合并操作
+# 条件: 未验证所有 worker checkpoint 状态
+# 动作: BLOCK
+
+rule_id: R-022
+name: merge_completion_gate
+lesson: C-075
+axiom: [Ω1, Ω4]
+severity: critical
+description: |
+  merge_worker_shards() 是不可逆破坏性操作（move, not copy）。
+  C-075: monitor 误判完成后 merge 了未完成的数据，摧毁了 checkpoint resume 能力，
+  1.5h 计算只能重跑。
+
+trigger:
+  event: pre_merge_operation
+  condition: "multi_worker_output AND not_all_workers_verified_complete"
+
+action: BLOCK
+message: |
+  ⛔ R-022: Merge 前必须验证所有 worker 完成 (C-075)
+
+  检查项:
+  1. 每个 worker 的 checkpoint: file_idx == len(all_files)
+  2. 或: 每个 worker 进程已退出且 exit code == 0
+
+  merge 应先 copy 再 delete（保留回退），不可直接 move。

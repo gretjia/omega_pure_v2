@@ -1,0 +1,28 @@
+# R-020: 监控必须检查明确完成标志 (C-073)
+# 触发: 编写远程任务监控脚本
+# 条件: 使用 SSH 连通性/进程列表 作为完成判据
+# 动作: BLOCK — 改用文件标志
+
+rule_id: R-020
+name: monitor_completion_signal_required
+lesson: C-073
+axiom: Ω1
+severity: critical
+description: |
+  SSH 超时/断连会导致 tasklist/ps 返回空，被误判为"进程不存在=任务完成"。
+  ETL v4 monitor 在 SSH 超时后误触发 merge+upload，破坏了未完成的数据。
+
+trigger:
+  event: pre_monitor_script_creation
+  condition: "completion_check == 'ssh_process_list'"
+
+action: BLOCK
+message: |
+  ⛔ R-020: 不可用 SSH 进程列表判断远程任务完成 (C-073)
+  SSH 失败 ≠ 进程不存在。
+
+  必须使用明确完成标志:
+  1. 任务结束时写: echo $EXIT_CODE > /path/to/task_done.flag
+  2. 监控读取 flag 文件内容判断完成
+  3. SSH 失败时: 重试连接，不做任何状态变更
+  4. 双重确认: flag 存在 AND flag 内容为有效 exit code

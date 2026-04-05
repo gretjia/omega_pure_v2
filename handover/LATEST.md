@@ -1,89 +1,81 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-04-04 — **STATUS: Phase 13 训练已提交 (T4 Spot, Job 6005517512886714368)，ETL v4 在 windows1 并行执行中**
+Last Updated: 2026-04-05 — **STATUS: ETL v4 双节点并行运行中（linux1 tmux + windows1 Scheduled Task）**
 
 ## Current State
-- **Phase 13 训练 RUNNING**: Job `6005517512886714368`, T4 Spot, pipe mode, 15 epochs × 5000 steps, ~10h
-- **ETL v4 在 windows1 并行**: Session `add-date-field-shard-meta` (f5a109a7), 添加 date 字段到 shard
-- **Spec [FINAL]**: V3 Joint Arbitration 完成, 3×[DRAFT]→[FINAL], Codex+Gemini 审计通过
-- **Docker phase13-v2**: Crucible PASS (IC=0.88), 正式训练用同一镜像
+- **ETL v4 在 linux1 运行中**: tmux session `etl_v4`, 8 workers, 743 files, 22 shards 产出, ~440s/file (I/O 竞争较重)
+- **ETL v4 在 windows1 运行中**: Scheduled Task `ETL_V4_WIN` (SYSTEM, PowerShell API 注册), 16 workers, 372 files, symbol discovery 中
+- **Phase 13 训练**: Job 6005517512886714368 (T4 Spot), 状态需检查
+- **Spec [FINAL]**: V3 Joint Arbitration 完成, Codex+Gemini 审计通过
+- **Docker phase13-v2**: Crucible PASS (IC=0.88)
 
-## Changes This Session (5 commits)
-- `42ec896` docs: handover — architect rulings complete, Phase 13 GREEN LIGHT
-- `c896ce1` docs: architect-ingest V3 — joint arbitration rulings + spec DRAFT→FINAL (INS-071/072/073)
-- `9a70c37` feat: Phase 13 train config (T4 Spot, pipe mode) + Crucible manifest entry
-- `1f416e9` feat: ETL v4 — add date field to shard meta.json (代码改动，windows1 执行)
-- `7d67ba3` feat: submit Phase 13 training — job 6005517512886714368
+## Changes This Session (2 code commits + harness 大量更新)
+- `1f416e9` feat: ETL v4 — add date field to shard meta.json for per-date IC eval
+- `5bb0440` docs: architect-ingest V4 — Bag-of-Windows diagnosis + No-Retreat Decision Matrix (INS-074)
+- **未提交**: OMEGA_LESSONS C-072~C-076 (5 条新教训), R-019~R-022 (4 条新规则), 3 个 incident traces, upload_v4_shards_to_gcs.py (merge 门禁修复)
 
 ## Key Decisions
-- **架构师 V3 联合裁决**: 5 项悬案全部裁决 — Q1 波动率伪影(撤回信号), Q2 双轨制, Q3 Crucible PASS, Q4 基线作废, Q5 窗口隔离 Phase 14
-- **Spec 3×[DRAFT]→[FINAL]**: Pre-LN Residual + AttentionPooling + λ_s=0 升级为 FINAL (Crucible PASS + Architect GREEN LIGHT)
-- **Phase 6 基线作废 (INS-072)**: success_criterion 改为 "TBD from Phase 13 Post-Flight"
-- **双轨制范式 (INS-071)**: Volume Clock 训练 + Calendar 评估，ETL v4 补 date 字段
-- **Pipe mode 替代 staging**: pd-standard 100GB + GCS streaming，避免 1300GB pd-ssd
-- **pd-balanced 不合法**: Vertex AI 只接受 pd-ssd/pd-standard/hyperdisk-balanced，已修为 pd-standard
-- **Gemini 审计 7/8 PASS**: seed 参数已有默认值 42 (non-issue)
-- **Codex 审计**: 读完所有文件无 FAIL 信号，最终报告因超时未输出
+- **ETL v4 代码改动极小**: date_buffer 平行于 bar_buffer/vwap_buffer, ~35 行改动, Codex 审计 PASS
+- **linux1 8-worker vs 单 worker**: 440s/file vs 235s/file — 多 worker 因 I/O 竞争反而慢 (VIA_NEGATIVA #6 确认)
+- **Windows Scheduled Task 正确模式**: PowerShell API + 落地 wrapper (CRLF!) + SYSTEM 账户, 不要用裸 schtasks /tr
+- **SYSTEM 可以访问本地 USB SSD (D:)**: 不是网络映射盘就没问题
 
 ## Next Steps
-1. **[P0] 监控训练**: `gcloud ai custom-jobs stream-logs projects/269018079180/locations/us-central1/customJobs/6005517512886714368`
-2. **[P0] 检查 ETL v4**: windows1 session `add-date-field-shard-meta` 完成后上传到 GCS
-3. **[P1] Post-Flight**: 训练完成后用 v4 shards 做 per-date cross-sectional D9-D0 / Rank IC
-4. **[P1] backtest_5a.py 截面化**: 加 per-date 分组逻辑（依赖 v4 shards date 字段）
-5. **[P2] Codex 审计补完**: 如 Codex 后续返回 FAIL 需处理
+1. **[P0] 等待 ETL v4 完成**: linux1 ~87h ETA (8 workers), windows1 待 workers 启动后看速度
+2. **[P0] 对比双机速度后决策**: 如果 windows1 16-worker 速度合理, 可能只用 windows1; 否则 linux1 切单 worker (~50h)
+3. **[P1] ETL 完成后**: merge shards → QC (date/shape/size) → upload GCS → per-date IC post-flight
+4. **[P1] 检查 Phase 13 训练状态**: job 可能已完成或被 Spot 抢占
+5. **[P2] 修复 linux1 BIOS**: 64/64 CPU/GPU 分配不合理 (ETL 不用 GPU), 改为 96/32 或 112/16 可大幅提升 ETL 速度
 
 ## Warnings
-- **Spot preemption 风险**: T4 Spot 可能被抢占，--resume + ckpt_every=1000 步保护
-- **Pipe mode I/O**: 首次用 pipe mode 做全量训练，如果 GPU 饥饿可考虑切回 staging
-- **ETL v4 输出目标**: 确认 windows1 上传到 `gs://omega-pure-data/wds_shards_v4/`
-- **Phase 13 成功阈值未定**: "稳定单调正向 Rank IC" 无具体数字，训练后看数据定
-- **RPB 梯度未直接验证**: 建议在训练日志中检查 per-param grad_norm
+- **linux1 8-worker 比单 worker 慢 2x**: VIA_NEGATIVA #6 在 linux1 上确认复现, 如需最快完成应切单 worker
+- **windows1 ETL 密码未解决**: schtasks /ru jiazi /rp 密码不匹配, 当前用 SYSTEM 账户绕过
+- **windows1 discovery 较慢**: SYSTEM I/O 优先级可能低于用户会话
+- **merge_worker_shards 已加门禁 (R-022)**: 必须验证所有 worker 完成才允许 merge
+- **scp .cmd 文件必须转 CRLF**: 否则 cmd.exe 静默失败 (C-076)
 
 ## Remote Node Status
-- **linux1**: 上次检查: llama-server 占 10.4GB RAM + ~8.4GB VRAM, sweep_v4.py 在跑。SSH via linux1-back。
-- **windows1**: ETL v4 session 运行中 (add-date-field-shard-meta)。128GB RAM, 8TB 外置 SSD。
+- **linux1**: 14 python processes (1 parent + 8 workers + monitoring), /omega_pool 2.4TB free, 33GB RAM available, tmux session `etl_v4`, llama-server 已停
+- **windows1**: 2 python processes (parent + discovery subprocess), D: 1.1TB free, Scheduled Task `ETL_V4_WIN` (SYSTEM)
 
 ## Architect Insights (本次会话)
-- **INS-071**: Dual-Paradigm — Volume Clock 训练 + Calendar 评估 → `architect/insights/INS-071_dual_paradigm_volume_clock_train_calendar_eval.md`
-- **INS-072**: Historical Baselines Invalidated — Phase 13 = Epoch 0 → `architect/insights/INS-072_historical_baselines_invalidated_epoch_zero.md`
-- **INS-073**: Phase 13 Scope Downgrade — 日内 TWAP/VWAP 拆单摩擦 → `architect/insights/INS-073_phase13_scope_intraday_twap_vwap.md`
+- **INS-074**: Bag-of-Windows 诊断 + No-Retreat Decision Matrix → `architect/directives/2026-04-04_...`
+
+## New Lessons This Session
+| # | 教训 | 规则 |
+|---|---|---|
+| C-072 | SSH 前台 = 定时炸弹 | R-019 |
+| C-073 | Monitor 不可用 SSH 连通性判断 | R-020 |
+| C-074 | 写规则后立刻违反 = 没规则 | R-021 |
+| C-075 | merge 摧毁 checkpoint 续作能力 | R-022 |
+| C-076 | Windows schtask 正确模式: PS API + CRLF wrapper | — |
 
 ## Machine-Readable State
 ```yaml
-phase: "13_training_submitted"
-status: "training_running + etl_v4_parallel"
+phase: "13_training_submitted + etl_v4_parallel"
+etl_v4:
+  linux1:
+    method: "tmux session etl_v4"
+    workers: 8
+    files: 743
+    speed: "~440s/file (I/O contention)"
+    shards_produced: 22
+    eta: "~87h"
+  windows1:
+    method: "Scheduled Task ETL_V4_WIN (SYSTEM, PowerShell API)"
+    workers: 16
+    files: 372
+    status: "symbol discovery"
+    shards_produced: 0
+    eta: "TBD (workers not yet started)"
 training:
   job_id: "projects/269018079180/locations/us-central1/customJobs/6005517512886714368"
-  display_name: "phase13-train-v1"
-  gpu: "T4 Spot (n1-standard-8)"
-  io_mode: "pipe (streaming from GCS)"
-  config: "gcp/phase13_train_config.yaml"
-  epochs: 15
-  steps_per_epoch: 5000
-  lr: 3e-4
-  estimated_time: "~10h"
-  estimated_cost: "$2-3"
-  monitor: "gcloud ai custom-jobs stream-logs projects/269018079180/locations/us-central1/customJobs/6005517512886714368"
-docker: "omega-tib:phase13-v2"
-etl_v4:
-  node: "windows1"
-  session: "add-date-field-shard-meta (f5a109a7)"
-  status: "running"
-  output_dest: "gs://omega-pure-data/wds_shards_v4/"
-audit:
-  gemini: "7/8 PASS (seed non-issue)"
-  codex: "thorough review, no FAIL signals, final report timeout"
-  spec_status: "FINAL (3x DRAFT upgraded)"
-architect_rulings:
-  q1: "Volatility artifact — signal claim withdrawn"
-  q2: "Dual-track paradigm (INS-071)"
-  q3: "Crucible PASS (IC=0.88)"
-  q4: "Phase 6 invalidated — Epoch 0 (INS-072)"
-  q5: "Window isolation Phase 14 (INS-073)"
-new_insights: [INS-071, INS-072, INS-073]
-new_commits: ["42ec896", "c896ce1", "9a70c37", "1f416e9", "7d67ba3"]
+  status: "check needed"
+new_lessons: [C-072, C-073, C-074, C-075, C-076]
+new_rules: [R-019, R-020, R-021, R-022]
+new_commits: ["1f416e9", "5bb0440"]
 harness:
-  lessons: 71
-  rules: 18
-  incidents: 71
-ssh_route: "linux1-back (反向隧道), windows1-w1 (WireGuard)"
+  lessons: 76
+  rules: 22
+  incidents: 76
+ssh_route: "linux1-lx (WireGuard), windows1-w1 (WireGuard)"
 ```

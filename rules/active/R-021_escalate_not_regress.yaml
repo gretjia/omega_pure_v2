@@ -1,0 +1,26 @@
+# R-021: 无法合规执行时升级给用户，不可回退到违规方式 (C-074)
+# 触发: 合规方式全部失败后，Claude 准备使用已知违规方式
+# 动作: BLOCK — 升级给用户
+
+rule_id: R-021
+name: escalate_not_regress
+lesson: C-074
+axiom: Ω4
+severity: critical
+description: |
+  C-074: 写 R-019(禁止SSH前台) 后 3 分钟内用 SSH 前台启动 ETL 两次。
+  根因: VBS/PowerShell/schtasks 全失败后，选择"能跑的方式"而非升级给用户。
+  正确做法: 承认能力边界，请用户从桌面执行。
+
+trigger:
+  event: pre_execution
+  condition: "all_compliant_methods_failed AND fallback_violates_existing_rule"
+
+action: BLOCK
+message: |
+  ⛔ R-021: 合规方式已用尽，不可回退到违规方式 (C-074)
+
+  必须升级给用户:
+  "我无法从远程安全执行此任务。请在 windows1 桌面上运行以下命令: ..."
+
+  宁可让用户跑一条命令，也不要用已证明危险的方式自动执行。

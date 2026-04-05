@@ -1,0 +1,30 @@
+# R-019: 禁止 SSH 前台执行长任务 (C-072)
+# 触发: 任何通过 SSH 在远程节点运行的命令
+# 条件: 预估执行时间 > 30 分钟
+# 动作: BLOCK — 改用持久化执行方式
+
+rule_id: R-019
+name: ssh_foreground_long_task_ban
+lesson: C-072
+axiom: Ω4
+severity: critical
+description: |
+  SSH 前台进程在连接断开时会被杀死。
+  ETL v4 在 windows1 以 SSH 前台跑 1.5h，SSH 断连导致进程被杀、1.5h 计算和 335 shards 作废。
+
+trigger:
+  event: pre_remote_execution
+  condition: "estimated_duration > 30min AND execution_mode == 'ssh_foreground'"
+
+action: BLOCK
+message: |
+  ⛔ R-019: SSH 前台执行 >30min 任务被禁止 (C-072)
+  SSH 断连 = 进程被杀 = 计算作废。
+
+  必须使用:
+  - Linux: tmux/screen/nohup + 完成标志文件
+  - Windows: powershell Invoke-CimMethod -ClassName Win32_Process -MethodName Create
+    (WMI 创建进程，完全独立于 SSH 会话，已验证可行)
+  - 禁止: Start-Process / VBS / DETACHED_PROCESS (均不可靠，C-074 实测)
+
+  完成标志: 任务结束时写 exit code 到独立文件，监控读取该文件判断完成。
