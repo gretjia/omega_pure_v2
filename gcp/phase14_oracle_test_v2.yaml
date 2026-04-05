@@ -1,0 +1,34 @@
+# Phase 14 Step 1 RETRY: Phase 6 Oracle Test (fixed window_size)
+# Phase 6 T29 HPO used window=(32,10), NOT code default (4,4)
+# Step 0 already completed in v1 run — only re-running Step 1
+workerPoolSpecs:
+- machineSpec:
+    machineType: n1-standard-4
+  replicaCount: 1
+  diskSpec:
+    bootDiskType: pd-standard
+    bootDiskSizeGb: 100
+  containerSpec:
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase13-v2
+    command:
+    - bash
+    - -c
+    - |
+      set -e
+      echo "=== Phase 14 Step 1 RETRY: Phase 6 Oracle Test ==="
+      echo "Fix: window=(32,10) per HPO config, not (4,4)"
+
+      gcloud storage cp gs://omega-pure-data/scripts/phase6_oracle_test.py /app/phase6_oracle_test.py
+
+      PYTHONUNBUFFERED=1 python3 /app/phase6_oracle_test.py \
+        --checkpoint gs://omega-pure-data/checkpoints/phase6_icloss/trial_29/best.pt \
+        --shard_dir gs://omega-pure-data/wds_shards_v3_full \
+        --output_dir /gcs/omega-pure-data/phase14_results \
+        --window_size_t 32 \
+        --window_size_s 10 \
+        --hidden_dim 64 \
+        --batch_size 512
+
+      echo "=== Oracle Test Complete ==="
+scheduling:
+  strategy: ON_DEMAND

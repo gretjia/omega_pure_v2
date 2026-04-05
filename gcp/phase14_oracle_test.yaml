@@ -1,0 +1,39 @@
+# Phase 14 Step 0+1: Data Baseline + Phase 6 Oracle Test
+# CPU-only, no GPU needed (19.7K param model, pure inference)
+# Pipe mode for GCS shard streaming
+# Uses existing phase13-v2 Docker image + downloads oracle_test script at runtime
+workerPoolSpecs:
+- machineSpec:
+    machineType: n1-standard-4
+  replicaCount: 1
+  diskSpec:
+    bootDiskType: pd-standard
+    bootDiskSizeGb: 100
+  containerSpec:
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase13-v2
+    command:
+    - bash
+    - -c
+    - |
+      set -e
+      echo "=== Phase 14: Data Baseline + Phase 6 Oracle Test ==="
+      echo "Step 0: Target statistics (model-independent)"
+      echo "Step 1: Phase 6 checkpoint re-test (window=(4,4), hd=64)"
+      echo "NO GPU — CPU-only inference on 19.7K param model"
+      echo "NO torch.compile"
+
+      # Download oracle test script (not in Docker image)
+      echo "=== Downloading phase6_oracle_test.py ==="
+      gcloud storage cp gs://omega-pure-data/scripts/phase6_oracle_test.py /app/phase6_oracle_test.py
+
+      echo "=== Running Phase 14 Oracle Test ==="
+      PYTHONUNBUFFERED=1 python3 /app/phase6_oracle_test.py \
+        --checkpoint gs://omega-pure-data/checkpoints/phase6_icloss/trial_29/best.pt \
+        --shard_dir gs://omega-pure-data/wds_shards_v3_full \
+        --output_dir /gcs/omega-pure-data/phase14_results \
+        --batch_size 512
+
+      echo "=== Oracle Test Complete ==="
+      echo "Results at: gs://omega-pure-data/phase14_results/phase14_step0_step1.json"
+scheduling:
+  strategy: ON_DEMAND

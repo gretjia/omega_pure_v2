@@ -197,9 +197,10 @@ def step0_target_statistics(val_shards, macro_window, coarse_graining_factor,
 # ============================================================
 
 def step1_phase6_retest(checkpoint_path, val_shards, device,
-                        macro_window, coarse_graining_factor, batch_size):
+                        macro_window, coarse_graining_factor, batch_size,
+                        hidden_dim=64, window_size=(32, 10)):
     logger.info("=" * 60)
-    logger.info("STEP 1: PHASE 6 ORACLE TEST (window=(4,4), hd=64)")
+    logger.info(f"STEP 1: PHASE 6 ORACLE TEST (window={window_size}, hd={hidden_dim})")
     logger.info("=" * 60)
 
     # --- Download checkpoint if GCS ---
@@ -213,7 +214,7 @@ def step1_phase6_retest(checkpoint_path, val_shards, device,
         checkpoint_path = local_path
 
     # --- Build model ---
-    model = Phase6Inference(hidden_dim=64, window_size=(4, 4)).to(device)
+    model = Phase6Inference(hidden_dim=hidden_dim, window_size=window_size).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"  Model params: {n_params}")
 
@@ -395,6 +396,11 @@ def main():
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--macro_window", type=int, default=160)
     parser.add_argument("--coarse_graining_factor", type=int, default=1)
+    parser.add_argument("--window_size_t", type=int, default=32,
+                        help="Phase 6 T29 HPO used 32 (not code default 4)")
+    parser.add_argument("--window_size_s", type=int, default=10,
+                        help="Phase 6 HPO hardcoded 10")
+    parser.add_argument("--hidden_dim", type=int, default=64)
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -416,7 +422,9 @@ def main():
     # --- Step 1 ---
     step1_results = step1_phase6_retest(
         args.checkpoint, val_shards, device,
-        args.macro_window, args.coarse_graining_factor, args.batch_size
+        args.macro_window, args.coarse_graining_factor, args.batch_size,
+        hidden_dim=args.hidden_dim,
+        window_size=(args.window_size_t, args.window_size_s)
     )
 
     # --- Save combined results ---
@@ -429,8 +437,8 @@ def main():
             "val_split": args.val_split,
             "batch_size": args.batch_size,
             "macro_window": args.macro_window,
-            "phase6_window_size": [4, 4],
-            "phase6_hidden_dim": 64,
+            "phase6_window_size": [args.window_size_t, args.window_size_s],
+            "phase6_hidden_dim": args.hidden_dim,
         }
     }
 
