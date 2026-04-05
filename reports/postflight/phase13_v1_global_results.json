@@ -1,0 +1,124 @@
+{
+  "correlation": 0.010083184703687773,
+  "pearson_ic": 0.010083184703687773,
+  "r_squared": 0.00010167061376868309,
+  "rank_ic": 0.029234323055692367,
+  "rank_ic_pval": 0.0,
+  "deciles": [
+    {
+      "label": "Bottom 10%",
+      "n": 190475,
+      "mean_pred_bp": 19512.771484375,
+      "mean_actual_bp": 1.8497084379196167,
+      "hit_rate": 0.4689434308964431,
+      "mean_win_bp": 214.4043731689453,
+      "mean_loss_bp": 186.2641143798828,
+      "payoff_ratio": 1.151077151298523,
+      "net_after_costs_bp": -23.150291562080383
+    },
+    {
+      "label": "Decile 2",
+      "n": 190475,
+      "mean_pred_bp": 28982.076171875,
+      "mean_actual_bp": 6.309110164642334,
+      "hit_rate": 0.48323927024543906,
+      "mean_win_bp": 183.88137817382812,
+      "mean_loss_bp": 159.84829711914062,
+      "payoff_ratio": 1.1503492593765259,
+      "net_after_costs_bp": -18.690889835357666
+    },
+    {
+      "label": "Decile 3",
+      "n": 190474,
+      "mean_pred_bp": 31797.35546875,
+      "mean_actual_bp": 7.112820625305176,
+      "hit_rate": 0.4882398647584447,
+      "mean_win_bp": 150.3249969482422,
+      "mean_loss_bp": 129.55459594726562,
+      "payoff_ratio": 1.160321593284607,
+      "net_after_costs_bp": -17.887179374694824
+    },
+    {
+      "label": "Decile 4",
+      "n": 190475,
+      "mean_pred_bp": 33214.77734375,
+      "mean_actual_bp": 6.218274116516113,
+      "hit_rate": 0.49529334558340987,
+      "mean_win_bp": 124.67596435546875,
+      "mean_loss_bp": 110.09532928466797,
+      "payoff_ratio": 1.1324365139007568,
+      "net_after_costs_bp": -18.781725883483887
+    },
+    {
+      "label": "Decile 5",
+      "n": 190475,
+      "mean_pred_bp": 34156.359375,
+      "mean_actual_bp": 7.1431965827941895,
+      "hit_rate": 0.5003228770179814,
+      "mean_win_bp": 113.47138977050781,
+      "mean_loss_bp": 99.37461853027344,
+      "payoff_ratio": 1.1418548822402954,
+      "net_after_costs_bp": -17.85680341720581
+    },
+    {
+      "label": "Decile 6",
+      "n": 190475,
+      "mean_pred_bp": 34929.5859375,
+      "mean_actual_bp": 7.051962375640869,
+      "hit_rate": 0.5038613991337446,
+      "mean_win_bp": 107.18894958496094,
+      "mean_loss_bp": 94.69884490966797,
+      "payoff_ratio": 1.1318929195404053,
+      "net_after_costs_bp": -17.94803762435913
+    },
+    {
+      "label": "Decile 7",
+      "n": 190474,
+      "mean_pred_bp": 35663.8515625,
+      "mean_actual_bp": 7.890340805053711,
+      "hit_rate": 0.5058643174396505,
+      "mean_win_bp": 104.98258209228516,
+      "mean_loss_bp": 91.54925537109375,
+      "payoff_ratio": 1.146733283996582,
+      "net_after_costs_bp": -17.10965919494629
+    },
+    {
+      "label": "Decile 8",
+      "n": 190475,
+      "mean_pred_bp": 36451.86328125,
+      "mean_actual_bp": 8.494089126586914,
+      "hit_rate": 0.5080246751542197,
+      "mean_win_bp": 103.08299255371094,
+      "mean_loss_bp": 89.21289825439453,
+      "payoff_ratio": 1.1554718017578125,
+      "net_after_costs_bp": -16.505910873413086
+    },
+    {
+      "label": "Decile 9",
+      "n": 190474,
+      "mean_pred_bp": 37444.8359375,
+      "mean_actual_bp": 8.383280754089355,
+      "hit_rate": 0.5069615800581707,
+      "mean_win_bp": 102.14234924316406,
+      "mean_loss_bp": 88.06006622314453,
+      "payoff_ratio": 1.1599167585372925,
+      "net_after_costs_bp": -16.616719245910645
+    },
+    {
+      "label": "Top 10%",
+      "n": 190476,
+      "mean_pred_bp": 39579.12890625,
+      "mean_actual_bp": 8.851570129394531,
+      "hit_rate": 0.504032004032004,
+      "mean_win_bp": 101.1748046875,
+      "mean_loss_bp": 85.01776123046875,
+      "payoff_ratio": 1.1900432109832764,
+      "net_after_costs_bp": -16.14842987060547
+    }
+  ],
+  "top_decile_mean_bp": 8.851570129394531,
+  "bottom_decile_mean_bp": 1.8497084379196167,
+  "long_short_spread_bp": 7.001861572265625,
+  "monotonicity_score": "6/9",
+  "verdict": "STRONG PASS \u2014 signal direction correct with statistical significance"
+}
