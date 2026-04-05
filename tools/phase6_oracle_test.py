@@ -130,7 +130,8 @@ def get_val_shards(shard_dir: str, val_split: float = 0.2):
     return val_shards
 
 
-def create_val_loader(val_shards, macro_window, coarse_graining_factor, batch_size):
+def create_val_loader(val_shards, macro_window, coarse_graining_factor, batch_size,
+                      num_workers=4):
     preprocess = dynamic_processor(macro_window, coarse_graining_factor)
     dataset = (
         wds.WebDataset(val_shards, resampled=False, handler=wds.warn_and_continue)
@@ -138,7 +139,8 @@ def create_val_loader(val_shards, macro_window, coarse_graining_factor, batch_si
         .map(preprocess, handler=wds.warn_and_continue)
         .batched(batch_size)
     )
-    return DataLoader(dataset, batch_size=None, num_workers=0)
+    return DataLoader(dataset, batch_size=None, num_workers=num_workers,
+                      prefetch_factor=2 if num_workers > 0 else None)
 
 
 # ============================================================

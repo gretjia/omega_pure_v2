@@ -1,0 +1,104 @@
+{
+  "step0_target_statistics": {
+    "skipped": true,
+    "note": "V1 results: Mean=6.93, Std=189.60, Skew=11.78, Kurt=2006.46, N=1904747"
+  },
+  "step1_phase6_retest": {
+    "n_samples": 1904747,
+    "pearson_ic": 0.014416711091007875,
+    "rank_ic": 0.00229589493312852,
+    "rank_ic_pval": 0.0015316148085453406,
+    "r_squared": 0.0002078415586815895,
+    "d9_mean_bp": 14.219145774841309,
+    "d0_mean_bp": 3.0620527267456055,
+    "d9_d0_spread_bp": 11.157093048095703,
+    "monotonicity_score": "7/9",
+    "pred_std_bp": 790.4225463867188,
+    "deciles": [
+      {
+        "decile": "D0",
+        "n": 190476,
+        "mean_actual_bp": 3.0620527267456055,
+        "hit_rate": 0.49185199185199185,
+        "payoff_ratio": 1.0894594434428604
+      },
+      {
+        "decile": "D1",
+        "n": 190474,
+        "mean_actual_bp": 5.164529800415039,
+        "hit_rate": 0.5024780284973277,
+        "payoff_ratio": 1.1035538182778162
+      },
+      {
+        "decile": "D2",
+        "n": 190475,
+        "mean_actual_bp": 5.427675724029541,
+        "hit_rate": 0.5009528809555059,
+        "payoff_ratio": 1.1102562455607519
+      },
+      {
+        "decile": "D3",
+        "n": 190474,
+        "mean_actual_bp": 5.994509696960449,
+        "hit_rate": 0.49786322542709244,
+        "payoff_ratio": 1.1289879751768437
+      },
+      {
+        "decile": "D4",
+        "n": 190476,
+        "mean_actual_bp": 6.446831226348877,
+        "hit_rate": 0.49785799785799784,
+        "payoff_ratio": 1.1306297045524296
+      },
+      {
+        "decile": "D5",
+        "n": 190473,
+        "mean_actual_bp": 6.964059829711914,
+        "hit_rate": 0.496794821313257,
+        "payoff_ratio": 1.1380249011907342
+      },
+      {
+        "decile": "D6",
+        "n": 190475,
+        "mean_actual_bp": 6.925317764282227,
+        "hit_rate": 0.4943063394146213,
+        "payoff_ratio": 1.1403695328438763
+      },
+      {
+        "decile": "D7",
+        "n": 190474,
+        "mean_actual_bp": 6.913414001464844,
+        "hit_rate": 0.49201990822894465,
+        "payoff_ratio": 1.142914721052826
+      },
+      {
+        "decile": "D8",
+        "n": 190477,
+        "mean_actual_bp": 8.18289566040039,
+        "hit_rate": 0.48885692235808,
+        "payoff_ratio": 1.1693582079305676
+      },
+      {
+        "decile": "D9",
+        "n": 190476,
+        "mean_actual_bp": 14.219145774841309,
+        "hit_rate": 0.5017955017955018,
+        "payoff_ratio": 1.1785243487360908
+      }
+    ],
+    "branch": "A",
+    "branch_reason": "Phase 6 signal dead/negligible (RankIC=0.0023, D9-D0=11.16 BP)"
+  },
+  "config": {
+    "shard_dir": "/gcs/omega-pure-data/wds_shards_v3_full",
+    "checkpoint": "/gcs/omega-pure-data/checkpoints/phase6_icloss/trial_29/best.pt",
+    "val_split": 0.2,
+    "batch_size": 512,
+    "macro_window": 160,
+    "phase6_window_size": [
+      32,
+      10
+    ],
+    "phase6_hidden_dim": 64
+  }
+}
