@@ -17,6 +17,7 @@ Last Updated: 2026-04-05 — **STATUS: ETL v5 Sort 在 linux1 运行中 (5/743, 
 - **新教训**: C-077 (伪常数传播), C-078 (三方审计元模式)
 - **Phase 14 协议已锁定**: Step 0 数据基线 → Step 1 Phase 6 复测(三分支门) → Step 2 宏观旁路 A/B → Step 3 HPO hd=[64,128]
 - **Phase 6 Checkpoint 已确认路径**: `gs://omega-pure-data/checkpoints/phase6_icloss/trial_29/best.pt` (需 gsutil ls 验证存在)
+- **Codex 外审完成**: GPT-5.4 独立验证 4/5 CONFIRMED, 1 DISCREPANCY(措辞修正), 5 处遗漏已补充
 
 ## Changes This Session
 - **ETL v5 性能重构** (未提交, `tools/omega_etl_v3_topo_forge.py`):

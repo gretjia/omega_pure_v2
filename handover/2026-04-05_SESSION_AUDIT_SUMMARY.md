@@ -118,13 +118,16 @@ SNR = Phase 12 D9-D0 Spread / Target Std = 4.51 / 189.60 = 2.4%
 ## 最终结论
 
 ### 已确认的事实
-1. Omega-TIB 24,581 参数（含 train.py 包装器中 post_proj_norm 的 128 参数）
+1. Omega-TIB 24,581 参数（core `OmegaMathematicalCompressor` = 24,453，wrapper `OmegaTIBWithMasking` 额外 +128 `post_proj_norm`）
 2. Phase 13 RankIC=+0.029, D9-D0=+7.00 BP（首次正向统计显著信号）
-3. Phase 3-8 窗口为 (4,4)，Phase 12+ 为 (32,10)——历史基准不可直接比较
+   - 完整数值: 1,904,748 样本, Pearson IC=+0.0101, D9=+8.85 BP, D0=+1.85 BP, D9 payoff ratio=1.19, 单调性 6/9
+   - Crucible: 64样本/2000步, IC 0.04→0.88, pred_std 衰减 1.3x（Phase 12 为 5x）
+   - 训练配置: AdamW, OneCycleLR, AMP off, T4 Spot, lr=3e-4, 15 epochs, 5000 steps/epoch, batch=256, mask_prob=0.0, lambda_s=0
+3. Phase 3-8 窗口为 (4,4)，Phase 11d 为 (32,4)/21,413参数，Phase 12+ 为 (32,10)——历史基准不可直接比较
 4. torch.compile 于 04-03 引入，Phase 6 训练于 03-29 完成——Phase 6 训练不受此 bug 影响
 5. "2.4% SNR"来自 Phase 12 失败模型的输出，非数据固有属性
 6. 审计文档 PHASE13_FULL_CHAIN_AUDIT.md 互换了 AttentionPooling(+16) 和 Pre-LN(+128) 的参数归属
-7. FRT (Financial Relativity Transform) 未被任何外部审计覆盖
+7. FRT (Financial Relativity Transform) 此前的 Codex/Gemini 外部审计未覆盖（本次审计底稿已首次覆盖）
 
 ### Phase 14 执行协议（最终版，绝对串行）
 1. **Step 0**：计算验证集 target 原生统计量（Mean, Std, Skew, Kurtosis），建立不依赖模型的数据基线
@@ -143,3 +146,13 @@ SNR = Phase 12 D9-D0 Spread / Target Std = 4.51 / 189.60 = 2.4%
 ### 新教训
 - **C-077**: 模型输出指标（D9-D0 Spread）被包装为数据固有属性（"SNR"），经 15+ 文件传播后获得物理常数地位。一次性计算 + 不追溯定义 + 反复引用 = 伪常数。度量数据属性必须独立于任何模型（Ω1 + Ω5）
 - **C-078**: 三方审计元模式——每一方都用自己偏爱的理论框架解释同一组数据（架构师偏爱设计愿景、审计师偏爱容量理论、仲裁者偏爱 MDL 教条）。只有不做因果推断的数据审核员免疫于此。"一个数字比十页理论更有价值"（Ω1 + Ω5）
+- **C-079**: codex exec 注入长 prompt（>2KB 内联命令行）导致进程卡死。写文件再 `$(cat file)` 注入（Ω4）
+
+### Codex 外审验证结果（GPT-5.4 独立审计）
+| 声明 | 判定 |
+|------|------|
+| 2.4% SNR = 4.51/189.60 来自 PHASE12_AUDIT_PROMPT.md | CONFIRMED |
+| post_proj_norm 在 train.py L:168 不在核心文件 | CONFIRMED |
+| 审计文档参数归属互换 (AttnPool/Pre-LN) | CONFIRMED |
+| Phase 6 03-29 完成, torch.compile 04-03 引入 | CONFIRMED |
+| FRT 未被外审覆盖 | DISCREPANCY（措辞：此前未覆盖，本次已覆盖）|
