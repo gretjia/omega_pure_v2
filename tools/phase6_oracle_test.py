@@ -401,6 +401,8 @@ def main():
     parser.add_argument("--window_size_s", type=int, default=10,
                         help="Phase 6 HPO hardcoded 10")
     parser.add_argument("--hidden_dim", type=int, default=64)
+    parser.add_argument("--skip_step0", action="store_true",
+                        help="Skip Step 0 target statistics (already computed)")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -414,10 +416,17 @@ def main():
         sys.exit(1)
 
     # --- Step 0 ---
-    step0_results = step0_target_statistics(
-        val_shards, args.macro_window, args.coarse_graining_factor,
-        args.batch_size
-    )
+    if args.skip_step0:
+        logger.info("Step 0 SKIPPED (--skip_step0). Using V1 results.")
+        step0_results = {
+            "skipped": True,
+            "note": "V1 results: Mean=6.93, Std=189.60, Skew=11.78, Kurt=2006.46, N=1904747"
+        }
+    else:
+        step0_results = step0_target_statistics(
+            val_shards, args.macro_window, args.coarse_graining_factor,
+            args.batch_size
+        )
 
     # --- Step 1 ---
     step1_results = step1_phase6_retest(
