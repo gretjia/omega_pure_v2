@@ -229,17 +229,22 @@ def step1_phase6_retest(checkpoint_path, val_shards, device,
 
     result = model.load_state_dict(state, strict=False)
 
-    # Phase 13 components will be missing — that's expected
+    # Phase 13 components will be missing — that's expected. Exact set check (Codex audit fix).
     expected_missing = {
         'model.tda_pre_ln.weight', 'model.tda_pre_ln.bias',
         'model.attention_pool.W_pool'
     }
     actual_missing = set(result.missing_keys)
-    unexpected_extra = actual_missing - expected_missing
-    if unexpected_extra:
-        logger.error(f"  UNEXPECTED missing keys: {unexpected_extra}")
+    if actual_missing != expected_missing:
+        extra = actual_missing - expected_missing
+        absent = expected_missing - actual_missing
+        logger.error(f"  Missing keys mismatch!")
+        if extra:
+            logger.error(f"  Unexpected missing: {extra}")
+        if absent:
+            logger.error(f"  Expected missing but found: {absent}")
         logger.error("  Checkpoint may be incompatible. Aborting.")
-        return {"error": f"unexpected missing keys: {unexpected_extra}"}
+        return {"error": f"missing keys mismatch: extra={extra}, absent={absent}"}
     if result.unexpected_keys:
         logger.warning(f"  Unexpected keys in checkpoint: {result.unexpected_keys}")
 
