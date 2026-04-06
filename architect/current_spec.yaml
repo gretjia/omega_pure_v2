@@ -192,6 +192,30 @@ hpo:
   # Phase 13 = Epoch 0, no historical anchor. Threshold set after first Post-Flight results.
 
 # ============================================================
+# Phase 15 Training Stabilization (2026-04-06, Codex+Gemini audited V2)
+# Four-way audit directive: grad accum + EMA + embargo + MLP baseline
+# ============================================================
+phase15:
+  gradient_accumulation: 16       # effective batch = 256 × 16 = 4096
+  steps_per_epoch: 4992           # = 312 × 16 (must be divisible by grad_accum, Gemini FAIL fix)
+  total_optimizer_steps: 4680     # = 312 × 15 epochs
+  ema:
+    enabled: true
+    start_epoch: 10               # last 5 epochs averaged
+    decay: 0.999                  # EMA decay rate (NOT plain SWA, Codex FAIL fix)
+    lr_after_start: 3e-5          # SWALR: constant low LR after EMA starts (Gemini recommendation)
+    # Implementation: get_ema_multi_avg_fn(0.999), NOT default AveragedModel
+    # No update_bn() needed — model has LayerNorm only (Codex FAIL fix)
+  embargo_shards: 2               # train/val boundary isolation (each side)
+  evaluation: "global Spearman Rank IC"  # v3 shards lack date field; per-date deferred to Phase 16
+  monitoring:
+    rpb_grad_norm: true           # Gemini: confirm Pre-LN fix is effective
+  mlp_baseline:
+    enabled: true                 # Phase 15 Step 2 attribution experiment
+    hidden_dims: [512, 128]       # ~5M params (intentionally larger than Omega-TIB)
+    preserves_srl_frt: true       # MLP measures FWT+bottleneck+pool incremental, not total OMEGA
+
+# ============================================================
 # 回测约束 (The Crucible)
 # ============================================================
 backtest:

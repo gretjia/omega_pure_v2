@@ -109,6 +109,37 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
+# Phase 15 Step 2: MLP Baseline (attribution experiment)
+# Same FRT+SRL input as Omega-TIB, but no topology/bottleneck.
+# ============================================================
+
+class MLPBaseline(nn.Module):
+    """MLP baseline: same 6-dim FRT+SRL manifold, no FWT/bottleneck/AttentionPool."""
+    def __init__(self, macro_window=160, spatial_depth=10, feature_dim=6,
+                 hidden_dims=(512, 128)):
+        super().__init__()
+        input_dim = macro_window * spatial_depth * feature_dim  # 160*10*6=9600
+        self.input_dim = input_dim
+        self.norm = nn.LayerNorm(input_dim)
+        layers = []
+        prev = input_dim
+        for h in hidden_dims:
+            layers.extend([nn.Linear(prev, h), nn.GELU()])
+            prev = h
+        layers.append(nn.Linear(prev, 1))
+        self.mlp = nn.Sequential(*layers)
+
+    def forward(self, manifold_6d):
+        """Input: [B, T, S, 6] (post-FRT+SRL manifold). Output: (pred [B,1], dummy_z)."""
+        B = manifold_6d.shape[0]
+        flat = manifold_6d.reshape(B, -1)
+        flat = self.norm(flat)
+        pred = self.mlp(flat)
+        dummy_z = torch.zeros(B, 1, 1, 1, device=pred.device)
+        return pred, dummy_z
+
+
+# ============================================================
 # VolumeBlockInputMasking (from architect/gdocs/id5)
 # ============================================================
 
@@ -319,7 +350,8 @@ def load_checkpoint(path, model, optimizer, scaler, device, scheduler=None):
 def train_one_epoch(model, loader, optimizer, scaler,
                     grad_clip, device, epoch, steps_per_epoch, global_step,
                     use_amp, overfit_batch=None, scheduler=None,
-                    start_step=0, ckpt_path=None, ckpt_every=0):
+                    start_step=0, ckpt_path=None, ckpt_every=0,
+                    grad_accum=1):
     model.train()
     running = {"total": 0.0, "s_t": 0.0, "count": 0}
     loader_iter = iter(loader) if overfit_batch is None else None
@@ -328,9 +360,12 @@ def train_one_epoch(model, loader, optimizer, scaler,
     if start_step > 0:
         logger.info(f"Epoch {epoch}: resuming from step {start_step}/{steps_per_epoch}")
 
+    # Phase 15: zero grad at start; only re-zero after optimizer step
+    optimizer.zero_grad(set_to_none=True)
+
     for step_i in range(start_step, steps_per_epoch):
         if overfit_batch is not None:
-            batch = overfit_batch  # Same batch every step (overfit test)
+            batch = overfit_batch
         else:
             try:
                 batch = next(loader_iter)
@@ -348,25 +383,18 @@ def train_one_epoch(model, loader, optimizer, scaler,
         c_friction = batch["c_friction"].to(device).unsqueeze(-1)
         target = batch["target"].to(device)
 
-        optimizer.zero_grad(set_to_none=True)
-
         try:
             if use_amp:
                 with torch.autocast(device_type="cuda", dtype=torch.float16):
                     prediction, z_core = model(manifold, c_friction)
-                # IC Loss MUST be FP32 — .float() inside compute_ic_loss handles upcast
                 total_loss, s_t = compute_ic_loss_wrapper(prediction, target, z_core)
-                scaler.scale(total_loss).backward()
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-                scaler.step(optimizer)
-                scaler.update()
+                scaled_loss = total_loss / grad_accum  # Phase 15: scale for accumulation
+                scaler.scale(scaled_loss).backward()
             else:
                 prediction, z_core = model(manifold, c_friction)
                 total_loss, s_t = compute_ic_loss_wrapper(prediction, target, z_core)
-                total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-                optimizer.step()
+                scaled_loss = total_loss / grad_accum
+                scaled_loss.backward()
         except torch.cuda.OutOfMemoryError:
             torch.cuda.empty_cache()
             logger.error("CUDA OOM — parameter space INFEASIBLE for this trial")
@@ -374,28 +402,37 @@ def train_one_epoch(model, loader, optimizer, scaler,
                 _hpt.report_hyperparameter_tuning_metric(
                     hyperparameter_metric_tag="best_val_rank_ic",
                     metric_value=-999.0, global_step=0)
-            sys.exit(0)  # Clean exit — prevents infinite restart on Spot VM
+            sys.exit(0)
 
-        if scheduler is not None:
-            scheduler.step()
-
-        running["total"] += total_loss.item()
+        running["total"] += total_loss.item()  # track unscaled loss
         running["s_t"] += s_t.item()
         running["count"] += 1
-        # Track prediction std (cross-sectional variance monitoring, INS-017)
         with torch.no_grad():
             pred_std = prediction.view(-1).std().item()
             running["pred_std"] = running.get("pred_std", 0.0) + pred_std
-        global_step += 1
 
-        _preemption_state["global_step"] = global_step
+        # Phase 15: optimizer step only after grad_accum microbatches
+        if (step_i + 1) % grad_accum == 0:
+            if use_amp:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            if scheduler is not None:
+                scheduler.step()
+            global_step += 1
+            _preemption_state["global_step"] = global_step
 
-        # Step-level checkpoint for Spot VM resilience (~every 3 min)
-        if ckpt_path and ckpt_every > 0 and global_step % ckpt_every == 0:
-            save_checkpoint(ckpt_path, model, optimizer, scaler,
-                            epoch, global_step,
-                            {"step_ckpt": True, "best_rank_ic": _preemption_state.get("best_rank_ic", float("-inf"))},
-                            scheduler=scheduler)
+            # Step-level checkpoint for Spot VM resilience
+            if ckpt_path and ckpt_every > 0 and global_step % ckpt_every == 0:
+                save_checkpoint(ckpt_path, model, optimizer, scaler,
+                                epoch, global_step,
+                                {"step_ckpt": True, "best_rank_ic": _preemption_state.get("best_rank_ic", float("-inf"))},
+                                scheduler=scheduler)
 
         if step_i % max(1, steps_per_epoch // 10) == 0:
             n = max(running["count"], 1)
@@ -550,7 +587,25 @@ def main():
     parser.add_argument("--macro_bypass", type=lambda x: str(x).lower() == 'true',
                         default=False,
                         help="Phase 14 Step 2: concat log1p(V_D)+log1p(σ_D) bypass into manifold (A/B test)")
+    # Phase 15: Training Stabilization (four-way audit directive)
+    parser.add_argument("--grad_accum", type=int, default=1,
+                        help="Gradient accumulation steps (Phase 15=16, effective batch=256*N)")
+    parser.add_argument("--ema_start_epoch", type=int, default=0,
+                        help="EMA start epoch (0=disabled, Phase 15=10)")
+    parser.add_argument("--ema_decay", type=float, default=0.999,
+                        help="EMA decay rate (Phase 15=0.999)")
+    parser.add_argument("--ema_lr", type=float, default=0.0,
+                        help="Constant LR after EMA starts (0=keep scheduler, Phase 15=3e-5)")
+    parser.add_argument("--embargo_shards", type=int, default=0,
+                        help="Drop N shards at train/val boundary each side (Phase 15=2)")
+    parser.add_argument("--model_type", type=str, default="omega", choices=["omega", "mlp"],
+                        help="Model type: omega (Omega-TIB) or mlp (MLP baseline, Phase 15 Step 2)")
     args = parser.parse_args()
+
+    # Phase 15: validate grad_accum divides steps_per_epoch
+    if args.grad_accum > 1 and args.steps_per_epoch % args.grad_accum != 0:
+        parser.error(f"steps_per_epoch ({args.steps_per_epoch}) must be divisible by "
+                     f"grad_accum ({args.grad_accum}). Try {args.steps_per_epoch // args.grad_accum * args.grad_accum}")
 
     # --- Single instance lock (CLAUDE.md rule #25) ---
     lock_fd = os.open("/tmp/omega_train.lock", os.O_CREAT | os.O_RDWR, 0o644)
@@ -598,10 +653,14 @@ def main():
     valid_shards = all_shards
     logger.info(f"Using {len(valid_shards)} shards (corrupt shards bypassed by handler)")
     n_train = int(len(valid_shards) * (1 - args.val_split))
-    train_shards = valid_shards[:n_train]
-    val_shards = valid_shards[n_train:]
-    logger.info(f"Shards: {len(valid_shards)} valid, {len(train_shards)} train, "
-                f"{len(val_shards)} val (temporal split, no look-ahead)")
+    # Phase 15: embargo gap — drop shards at boundary to prevent temporal leakage
+    emb = args.embargo_shards
+    train_shards = valid_shards[:n_train - emb]
+    val_shards = valid_shards[n_train + emb:]
+    if emb > 0:
+        logger.info(f"Embargo gap: {emb} shards/side dropped ({emb*2} total)")
+    logger.info(f"Shards: {len(valid_shards)} total, {len(train_shards)} train, "
+                f"{len(val_shards)} val (temporal split, embargo={emb})")
 
     # --- DataLoaders (with error handler for corrupt shards) ---
     _train_preprocess = dynamic_processor(args.macro_window, args.coarse_graining_factor)
@@ -622,12 +681,67 @@ def main():
     )
 
     # --- Model ---
-    model = OmegaTIBWithMasking(
-        hidden_dim=args.hidden_dim,
-        window_size=(args.window_size_t, args.window_size_s),
-        mask_prob=args.mask_prob,
-        macro_bypass=args.macro_bypass,
-    ).to(device)
+    if args.model_type == "mlp":
+        # Phase 15 Step 2: MLP baseline (attribution experiment)
+        # MLP receives the same 6-dim manifold as Omega-TIB
+        # FRT+SRL preprocessing still happens in OmegaTIBWithMasking wrapper
+        # We wrap MLP inside a thin adapter that does FRT+SRL then feeds MLP
+        _omega_wrapper = OmegaTIBWithMasking(
+            hidden_dim=args.hidden_dim,
+            window_size=(args.window_size_t, args.window_size_s),
+            mask_prob=0.0, macro_bypass=args.macro_bypass,
+        )
+        mlp_model = MLPBaseline(
+            macro_window=args.macro_window,
+            spatial_depth=args.window_size_s,
+            feature_dim=6,
+        )
+
+        class MLPWithFRT(nn.Module):
+            """Adapter: run FRT+SRL from Omega wrapper, then feed to MLP."""
+            def __init__(self, omega_wrapper, mlp):
+                super().__init__()
+                self.omega_wrapper = omega_wrapper
+                self.mlp = mlp
+                # Freeze omega_wrapper — we only use it for FRT+SRL, not training
+                for p in self.omega_wrapper.parameters():
+                    p.requires_grad = False
+
+            def forward(self, x_2d, c_friction):
+                with torch.no_grad():
+                    # Run FRT + SRL to get 6-dim manifold (reuse existing logic)
+                    B, T, S, C = x_2d.shape
+                    delta_p = x_2d[:, :, 0, 7]
+                    v_d = x_2d[:, :, 0, 8]
+                    sigma_d = x_2d[:, :, 0, 9]
+                    q = self.omega_wrapper.model.srl_inverter(
+                        delta_p.float(), sigma_d.float(), v_d.float(), c_friction.float())
+                    q = q.unsqueeze(-1).unsqueeze(-1).expand(B, T, S, 1)
+                    # FRT transform (same as OmegaTIBWithMasking.forward L:193-217)
+                    lob = x_2d[:, :, :, :5].float()
+                    bid_p, bid_v, ask_p, ask_v, close_p = (
+                        lob[..., 0], lob[..., 1], lob[..., 2], lob[..., 3], lob[..., 4])
+                    mid_p = ((bid_p + ask_p) / 2.0).clamp(min=1e-6)
+                    lob[..., 0] = (bid_p - mid_p) / mid_p * 10000.0
+                    lob[..., 2] = (ask_p - mid_p) / mid_p * 10000.0
+                    anchor = close_p[:, 0:1, ...].clamp(min=1e-6)
+                    lob[..., 4] = torch.log(close_p.clamp(min=1e-6) / anchor) * 100.0
+                    lob[..., 1] = torch.log1p(bid_v.clamp(min=0.0))
+                    lob[..., 3] = torch.log1p(ask_v.clamp(min=0.0))
+                    q = torch.clamp(q, min=-1e12, max=1e12)
+                    q = torch.sign(q) * torch.log1p(torch.abs(q))
+                    manifold_6d = torch.cat([lob.to(x_2d.dtype), q.to(x_2d.dtype)], dim=-1)
+                return self.mlp(manifold_6d)
+
+        model = MLPWithFRT(_omega_wrapper, mlp_model).to(device)
+        logger.info(f"Model: MLPBaseline (Phase 15 Step 2 attribution)")
+    else:
+        model = OmegaTIBWithMasking(
+            hidden_dim=args.hidden_dim,
+            window_size=(args.window_size_t, args.window_size_s),
+            mask_prob=args.mask_prob,
+            macro_bypass=args.macro_bypass,
+        ).to(device)
 
     # torch.compile: 10-50% speedup for tiny models by reducing Python overhead
     if device.type == "cuda" and hasattr(torch, "compile"):
@@ -638,20 +752,25 @@ def main():
             logger.warning(f"torch.compile failed, continuing without: {e}")
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info(f"Model: OmegaTIBWithMasking, {n_params:,} parameters")
+    logger.info(f"Model: {args.model_type}, {n_params:,} trainable parameters")
     logger.info(f"Config: hidden_dim={args.hidden_dim}, "
                 f"window=({args.window_size_t},{args.window_size_s}), "
                 f"macro_window={args.macro_window}, "
                 f"coarse_graining={args.coarse_graining_factor}, "
-                f"macro_bypass={args.macro_bypass}")
+                f"macro_bypass={args.macro_bypass}, "
+                f"grad_accum={args.grad_accum}")
 
     # --- Optimizer + Scaler + LR Scheduler ---
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-5)
     scaler = torch.cuda.amp.GradScaler() if use_amp else None
-    total_steps = args.epochs * args.steps_per_epoch
+    # Phase 15: total_steps = optimizer steps (accounting for gradient accumulation)
+    optimizer_steps_per_epoch = args.steps_per_epoch // max(args.grad_accum, 1)
+    total_optimizer_steps = args.epochs * optimizer_steps_per_epoch
+    logger.info(f"Optimizer steps: {optimizer_steps_per_epoch}/epoch × {args.epochs} = {total_optimizer_steps} total "
+                f"(grad_accum={args.grad_accum}, effective_batch={args.batch_size * args.grad_accum})")
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer, max_lr=args.lr, total_steps=total_steps,
-        pct_start=0.05, anneal_strategy='cos', div_factor=100,  # start lr/100, warmup 5%
+        optimizer, max_lr=args.lr, total_steps=total_optimizer_steps,
+        pct_start=0.05, anneal_strategy='cos', div_factor=100,
     ) if not args.overfit else None
 
     # --- Resume (auto-resume for Spot VM preemption recovery) ---
@@ -684,27 +803,65 @@ def main():
         overfit_batch = next(loader_iter)
         logger.info(f"OVERFIT MODE: repeating single batch of {overfit_batch['target'].shape[0]} samples")
 
+    # --- Phase 15: EMA setup ---
+    ema_model = None
+    if args.ema_start_epoch > 0:
+        from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
+        ema_model = AveragedModel(model, multi_avg_fn=get_ema_multi_avg_fn(args.ema_decay))
+        logger.info(f"EMA configured: start_epoch={args.ema_start_epoch}, "
+                    f"decay={args.ema_decay}, lr_after={args.ema_lr}")
+
     # --- Training ---
     logger.info(f"Starting training [Phase 13 IC Loss]: epochs={args.epochs}, "
                 f"steps/epoch={args.steps_per_epoch}, batch={args.batch_size}, "
                 f"lr={args.lr}, lambda_s={args.lambda_s} (fixed=0, INS-069), "
-                f"mask_prob={args.mask_prob}")
+                f"mask_prob={args.mask_prob}, grad_accum={args.grad_accum}")
 
     best_rank_ic = _resumed_metrics.get("best_rank_ic", float("-inf"))
 
     for epoch in range(start_epoch, args.epochs):
         t0 = time.time()
 
+        # Phase 15: EMA LR switch — at ema_start_epoch, switch to constant low LR
+        if ema_model is not None and epoch == args.ema_start_epoch and scheduler is not None:
+            if args.ema_lr > 0:
+                for pg in optimizer.param_groups:
+                    pg['lr'] = args.ema_lr
+                scheduler = None  # Stop OneCycleLR, use constant LR
+                logger.info(f"EMA epoch {epoch}: switched to constant LR={args.ema_lr}, OneCycleLR stopped")
+            else:
+                logger.info(f"EMA epoch {epoch}: started (keeping current scheduler)")
+
         # Compute start_step for mid-epoch resume (0 if starting fresh)
-        start_step = global_step - (epoch * args.steps_per_epoch) if global_step > epoch * args.steps_per_epoch else 0
+        start_step = global_step - (epoch * (args.steps_per_epoch // max(args.grad_accum, 1))) \
+            if global_step > epoch * (args.steps_per_epoch // max(args.grad_accum, 1)) else 0
+        # Convert optimizer-step start_step back to microbatch start_step
+        start_step_micro = start_step * args.grad_accum if args.grad_accum > 1 else start_step
 
         train_metrics, global_step = train_one_epoch(
             model, train_loader, optimizer, scaler,
             args.grad_clip, device, epoch, args.steps_per_epoch, global_step,
             use_amp, overfit_batch=overfit_batch, scheduler=scheduler,
-            start_step=start_step, ckpt_path=ckpt_path,
+            start_step=start_step_micro, ckpt_path=ckpt_path,
             ckpt_every=args.ckpt_every_n_steps,
+            grad_accum=args.grad_accum,
         )
+
+        # Phase 15: RPB gradient monitoring (read BEFORE validate clears context)
+        # Must read after train_one_epoch (which does backward) but before validate (no_grad)
+        rpb_grad_str = ""
+        for name, param in model.named_parameters():
+            if 'relative_position_bias_table' in name:
+                if param.grad is not None:
+                    rpb_grad_str = f" RPB_grad={param.grad.norm().item():.4f}"
+                else:
+                    rpb_grad_str = " RPB_grad=None"
+                break
+
+        # Phase 15: EMA update after each epoch
+        if ema_model is not None and epoch >= args.ema_start_epoch:
+            ema_model.update_parameters(model)
+            logger.info(f"EMA updated (epoch {epoch})")
 
         val_metrics = validate(model, val_loader, device,
                                max_steps=args.max_val_steps,
@@ -721,6 +878,7 @@ def main():
             f"D9D0={val_metrics['d9_d0_spread']:.2f}BP "
             f"Std_yhat={val_metrics['pred_std_bp']:.2f}BP "
             f"({val_metrics['n_samples']} samples)"
+            f"{rpb_grad_str}"
         )
 
         # Save checkpoint every epoch (including scheduler for Spot VM resume)
@@ -763,7 +921,50 @@ def main():
                 )
                 break
 
+    # --- Phase 15: Save EMA checkpoint at end of training ---
+    if ema_model is not None:
+        ema_path = os.path.join(args.output_dir, "ema.pt")
+        # Strip AveragedModel wrapper keys
+        ema_raw = ema_model.state_dict()
+        ema_clean = {}
+        for k, v in ema_raw.items():
+            if k == "n_averaged":
+                continue
+            # Remove "module." prefix from AveragedModel
+            clean_k = k.replace("module.", "", 1) if k.startswith("module.") else k
+            # Also strip torch.compile _orig_mod. prefix
+            clean_k = clean_k.replace("_orig_mod.", "")
+            ema_clean[clean_k] = v
+        torch.save({
+            "model_state_dict": ema_clean,
+            "epoch": args.epochs,
+            "global_step": global_step,
+            "metrics": {"best_rank_ic": best_rank_ic, "ema": True,
+                        "ema_decay": args.ema_decay, "ema_epochs": args.epochs - args.ema_start_epoch},
+        }, ema_path)
+        logger.info(f"EMA checkpoint saved: {ema_path} "
+                    f"(averaged {args.epochs - args.ema_start_epoch} epochs, decay={args.ema_decay})")
+
+        # Evaluate EMA model on val set
+        logger.info("Evaluating EMA model on validation set...")
+        ema_val = validate(ema_model.module, val_loader, device,
+                           max_steps=args.max_val_steps,
+                           sentinel_error=args.sentinel_error,
+                           sentinel_warn=args.sentinel_warn)
+        logger.info(f"EMA Val: RankIC={ema_val['rank_ic']:.6f} "
+                    f"D9D0={ema_val['d9_d0_spread']:.2f}BP "
+                    f"Std={ema_val['pred_std_bp']:.2f}BP")
+
     logger.info(f"Training complete. Best Rank IC: {best_rank_ic:.6f}")
+
+    # --- Phase 15: RPB gradient monitoring summary ---
+    rpb_param = None
+    for name, param in model.named_parameters():
+        if 'relative_position_bias_table' in name:
+            rpb_param = param
+            break
+    if rpb_param is not None and rpb_param.grad is not None:
+        logger.info(f"Final RPB grad_norm: {rpb_param.grad.norm().item():.6f}")
 
 
 if __name__ == "__main__":
