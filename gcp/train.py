@@ -159,9 +159,12 @@ class OmegaTIBWithMasking(nn.Module):
     at the spec-mandated insertion point: after input_proj, before tda_layer.
     """
     def __init__(self, hidden_dim=64, window_size=(32, 10),
-                 min_mask_bars=10, max_mask_bars=30, mask_prob=0.5, keep_last=5):
+                 min_mask_bars=10, max_mask_bars=30, mask_prob=0.5, keep_last=5,
+                 macro_bypass=False):
         super().__init__()
-        self.model = OmegaMathematicalCompressor(hidden_dim, window_size)
+        self.macro_bypass = macro_bypass
+        self.model = OmegaMathematicalCompressor(hidden_dim, window_size,
+                                                  macro_bypass=macro_bypass)
         self.masking = VolumeBlockInputMasking(min_mask_bars, max_mask_bars,
                                                mask_prob, keep_last)
         # LayerNorm after input_proj to stabilize training with unnormalized raw features
@@ -213,7 +216,18 @@ class OmegaTIBWithMasking(nn.Module):
         # symlog for q_metaorder: handles negative values + compresses dynamic range
         q_metaorder = torch.sign(q_metaorder) * torch.log1p(torch.abs(q_metaorder))
 
-        native_manifold = torch.cat([lob_features, q_metaorder], dim=-1)
+        if self.macro_bypass:
+            # Step 2 macro bypass: V_D + σ_D direct path (bypasses SRL masking)
+            # log1p compression (same as bid_v/ask_v treatment, power-law safe)
+            v_d_bypass = torch.log1p(v_d_macro.clamp(min=0.0))        # [B, T]
+            sigma_d_bypass = torch.log1p(sigma_d_macro.clamp(min=0.0))  # [B, T]
+            # Expand to [B, T, S, 1] — broadcast across spatial depth
+            v_d_bypass = v_d_bypass.unsqueeze(-1).unsqueeze(-1).expand(B, T, S, 1).to(x_2d.dtype)
+            sigma_d_bypass = sigma_d_bypass.unsqueeze(-1).unsqueeze(-1).expand(B, T, S, 1).to(x_2d.dtype)
+            native_manifold = torch.cat([lob_features, q_metaorder,
+                                         v_d_bypass, sigma_d_bypass], dim=-1)  # [B,T,S,8]
+        else:
+            native_manifold = torch.cat([lob_features, q_metaorder], dim=-1)  # [B,T,S,6]
         x = self.model.input_proj(native_manifold)
         x = self.post_proj_norm(x)
 
@@ -533,6 +547,9 @@ def main():
                         help="DEPRECATED: replaced by Variance Straitjacket (INS-040). Kept for YAML compat.")
     parser.add_argument("--no_amp", action="store_true", default=False,
                         help="Disable AMP, use pure FP32/TF32 (Gemini: AMP negative-optimizes tiny models)")
+    parser.add_argument("--macro_bypass", type=lambda x: str(x).lower() == 'true',
+                        default=False,
+                        help="Phase 14 Step 2: concat log1p(V_D)+log1p(σ_D) bypass into manifold (A/B test)")
     args = parser.parse_args()
 
     # --- Single instance lock (CLAUDE.md rule #25) ---
@@ -609,6 +626,7 @@ def main():
         hidden_dim=args.hidden_dim,
         window_size=(args.window_size_t, args.window_size_s),
         mask_prob=args.mask_prob,
+        macro_bypass=args.macro_bypass,
     ).to(device)
 
     # torch.compile: 10-50% speedup for tiny models by reducing Python overhead
@@ -624,7 +642,8 @@ def main():
     logger.info(f"Config: hidden_dim={args.hidden_dim}, "
                 f"window=({args.window_size_t},{args.window_size_s}), "
                 f"macro_window={args.macro_window}, "
-                f"coarse_graining={args.coarse_graining_factor}")
+                f"coarse_graining={args.coarse_graining_factor}, "
+                f"macro_bypass={args.macro_bypass}")
 
     # --- Optimizer + Scaler + LR Scheduler ---
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-5)

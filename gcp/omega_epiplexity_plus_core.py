@@ -150,12 +150,16 @@ class OmegaMathematicalCompressor(nn.Module):
     Input: x_2d [B, T, S, 10] + c_friction [B, 1]
     Output: (prediction [B, 1], z_core [B, T, S, hidden//4])
     """
-    def __init__(self, hidden_dim: int = 64, window_size: tuple = (32, 10)):
+    def __init__(self, hidden_dim: int = 64, window_size: tuple = (32, 10),
+                 macro_bypass: bool = False):
         super().__init__()
         self.srl_inverter = AxiomaticSRLInverter()
+        self.macro_bypass = macro_bypass
 
-        # LOB features (ch 0-4) + q_metaorder (1) = 6 input dims
-        self.input_proj = nn.Linear(6, hidden_dim)
+        # LOB features (ch 0-4) + q_metaorder (1) = 6 base dims
+        # + macro_bypass: V_D (1) + σ_D (1) = 8 dims
+        input_dim = 8 if macro_bypass else 6
+        self.input_proj = nn.Linear(input_dim, hidden_dim)
         self.tda_layer = FiniteWindowTopologicalAttention(hidden_dim, window_size)
         self.tda_pre_ln = nn.LayerNorm(hidden_dim)  # Phase 13 B.2: Pre-LN for residual
 

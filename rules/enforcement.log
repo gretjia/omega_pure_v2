@@ -82,3 +82,6 @@
 2026-04-04T11:29:34+00:00 | R-010 | warn | /home/zephryj/projects/omega_pure_v2/train.py
 2026-04-04T11:33:33+00:00 | R-010 | warn | /home/zephryj/projects/omega_pure_v2/train.py
 2026-04-04T11:34:16+00:00 | R-013 | warn | /home/zephryj/projects/omega_pure_v2/train.py
+2026-04-04T17:29:39+00:00 | R-001 | block | /home/zephryj/projects/omega_pure_v2/gcp/phase13_train_config.yaml
+2026-04-05T19:21:00+00:00 | R-016 | warn | /home/zephryj/projects/omega_pure_v2/train.py
+2026-04-05T19:24:39+00:00 | R-016 | warn | /home/zephryj/projects/omega_pure_v2/train.py

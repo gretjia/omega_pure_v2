@@ -16,7 +16,7 @@ Performance design (Bitter Lessons compliance):
   - fcntl single-instance lock (#6)
   - Bounded memory: ~344MB/worker × 12 workers = 4.1GB / 61GB = 6.7%
   - Batch column extraction: 350M .as_py() → ~44 to_numpy() per batch
-  - PyArrow-level symbol filtering: 100K rows → ~8K rows per worker
+  - PyArrow Dataset Scanner: row group pushdown on sorted data skips ~87% I/O
 """
 
 import os
@@ -30,6 +30,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
+import pyarrow.dataset as ds
 import webdataset as wds
 from collections import deque
 from multiprocessing import Process, Queue
@@ -63,6 +64,9 @@ _LOB_COLUMNS = []
 for _lvl in range(1, SPATIAL_DEPTH + 1):
     _LOB_COLUMNS.extend([f'bid_p{_lvl}', f'bid_v{_lvl}', f'ask_p{_lvl}', f'ask_v{_lvl}'])
 
+# Column pruning: only read the 44 columns we actually use (out of ~49)
+REQUIRED_COLUMNS = ['symbol', 'date', 'price', 'vol_tick'] + _LOB_COLUMNS
+
 
 class OmegaVolumeClockStateMachine:
     """
@@ -84,10 +88,10 @@ class OmegaVolumeClockStateMachine:
         self.macro_v_d = 5000000.0
         self.macro_sigma_d = 0.50
 
-        # Volume bar accumulation
+        # Volume bar accumulation (scalar accumulators — no list growth/GC pressure)
         self.cum_vol = 0.0
-        self.bar_ticks_prices = []
-        self.bar_ticks_vols = []
+        self.bar_vwap_num = 0.0   # running sum(price * vol)
+        self.bar_vwap_den = 0.0   # running sum(vol)
         self.bar_last_tick = None
         self.bar_first_price = 0.0
 
@@ -119,8 +123,8 @@ class OmegaVolumeClockStateMachine:
         """Fast tick push using pre-extracted columnar values.
         Returns (spatial_bar, vwap) if a volume bar completes, else (None, None).
         """
-        self.bar_ticks_prices.append(price)
-        self.bar_ticks_vols.append(vol_tick)
+        self.bar_vwap_num += price * vol_tick
+        self.bar_vwap_den += vol_tick
         self.bar_last_tick = bid_ask_snapshot
         if not self.bar_first_price:
             self.bar_first_price = price
@@ -133,23 +137,21 @@ class OmegaVolumeClockStateMachine:
                 self.daily_low = price
 
         if self.cum_vol >= self.vol_threshold:
-            vwap_den = sum(self.bar_ticks_vols)
-            if vwap_den <= 0:
+            if self.bar_vwap_den <= 0:
                 # Phantom bar from carryover with zero-vol ticks — drain and skip
                 self.cum_vol -= self.vol_threshold
-                self.bar_ticks_prices = []
-                self.bar_ticks_vols = []
+                self.bar_vwap_num = 0.0
+                self.bar_vwap_den = 0.0
                 self.bar_first_price = 0.0
                 return None, None
 
             spatial_bar = self._collapse_fast(price)
-            vwap_num = sum(p * v for p, v in zip(self.bar_ticks_prices, self.bar_ticks_vols))
-            bar_vwap = vwap_num / vwap_den
+            bar_vwap = self.bar_vwap_num / self.bar_vwap_den
 
             # Cap carryover to prevent cascading phantom bars
             self.cum_vol = min(self.cum_vol - self.vol_threshold, self.vol_threshold)
-            self.bar_ticks_prices = []
-            self.bar_ticks_vols = []
+            self.bar_vwap_num = 0.0
+            self.bar_vwap_den = 0.0
             self.bar_first_price = 0.0
             return spatial_bar, bar_vwap
 
@@ -283,7 +285,7 @@ def _save_checkpoint(output_dir, file_idx, sample_idx, total_ticks, global_state
         'sample_idx': sample_idx,
         'total_ticks': total_ticks,
         'global_states': global_states,
-        'version': 1,
+        'version': 2,
     }
     with open(tmp_path, 'wb') as f:
         pickle.dump(data, f, protocol=4)
@@ -340,24 +342,31 @@ def _merge_shards(output_dir, num_workers):
 
 def _worker_etl(worker_id, target_symbols, all_files, shard_dir,
                 c_registry, c_default, batch_size, result_queue=None,
-                resume=False, checkpoint_interval=50):
+                resume=False, checkpoint_interval=50,
+                wait_for_files=False):
     """
-    Single worker ETL process with batch column extraction.
+    Single worker ETL process with Dataset Scanner + row group pushdown.
     Processes all files for a subset of symbols (or all symbols if target_symbols is None).
 
-    Batch optimization: replaces 350M .as_py() calls with ~44 to_numpy() calls per batch.
-    PyArrow-level symbol filtering reduces effective rows from 100K to ~8K per worker.
+    On sorted parquet: Scanner skips ~87% of row groups via min/max statistics.
+    On unsorted parquet: Scanner still applies batch-level filter (same as before).
+
+    wait_for_files: if True, wait for files to appear (pipeline mode with sort).
     """
     os.makedirs(shard_dir, exist_ok=True)
     abs_dir = os.path.abspath(shard_dir).replace("\\", "/")
     pattern = f"file:///{abs_dir}/omega_shard_%05d.tar"
 
-    # Pre-compute PyArrow filter array for symbol-level filtering
-    target_pa = pa.array(sorted(target_symbols)) if target_symbols else None
+    # Build Scanner filter expression for symbol-level pushdown
+    target_symbols_list = sorted(target_symbols) if target_symbols else None
+    scanner_filter = (pc.field('symbol').isin(target_symbols_list)
+                      if target_symbols_list else None)
+    # Whether batch is pre-filtered (skip redundant per-tick checks)
+    batch_pre_filtered = target_symbols_list is not None
 
     global_states = {}  # symbol → {sm, curr_date, daily_vol}
     sample_idx = 0
-    total_ticks = 0
+    total_ticks = 0       # rows seen post-pushdown (for throughput metric)
     resume_file_idx = 0
     start_shard = 0
     start_time = time.time()
@@ -370,11 +379,19 @@ def _worker_etl(worker_id, target_symbols, all_files, shard_dir,
             sample_idx = ckpt['sample_idx']
             total_ticks = ckpt['total_ticks']
             global_states = ckpt['global_states']
-            # Migrate v3 checkpoints: add date_buffer if missing
+            # Migrate old checkpoints: add date_buffer / vwap scalars if missing
             for sym, ctx in global_states.items():
                 sm = ctx['sm']
                 if not hasattr(sm, 'date_buffer'):
                     sm.date_buffer = [None] * len(sm.bar_buffer)
+                # Migrate v4→v5: list accumulators → scalar accumulators
+                if hasattr(sm, 'bar_ticks_prices'):
+                    sm.bar_vwap_num = sum(
+                        p * v for p, v in zip(sm.bar_ticks_prices, sm.bar_ticks_vols)
+                    )
+                    sm.bar_vwap_den = sum(sm.bar_ticks_vols)
+                    del sm.bar_ticks_prices
+                    del sm.bar_ticks_vols
             # Delete potentially incomplete last shard
             max_shard = _scan_max_shard(shard_dir)
             if max_shard >= 0:
@@ -391,39 +408,42 @@ def _worker_etl(worker_id, target_symbols, all_files, shard_dir,
 
     sink = wds.ShardWriter(pattern, maxcount=SHARD_MAX_COUNT, start_shard=start_shard)
 
+    # Pre-build scanner kwargs (constant across all files)
+    scanner_kwargs = {'columns': REQUIRED_COLUMNS, 'batch_size': batch_size}
+    if scanner_filter is not None:
+        scanner_kwargs['filter'] = scanner_filter
+
     for file_idx, fpath in enumerate(all_files):
         if file_idx < resume_file_idx:
             continue
 
+        # ========== PIPELINE MODE: wait for sort to produce this file ==========
+        if wait_for_files and not os.path.exists(fpath):
+            logging.info(f"[Worker {worker_id}] Waiting for {os.path.basename(fpath)}...")
+            while not os.path.exists(fpath):
+                time.sleep(10)
+            logging.info(f"[Worker {worker_id}] {os.path.basename(fpath)} ready, resuming")
+
         file_start = time.time()
-        parquet_file = pq.ParquetFile(fpath)
 
-        for batch in parquet_file.iter_batches(batch_size=batch_size):
-            n_rows_raw = batch.num_rows
+        # ========== DATASET SCANNER WITH ROW GROUP PUSHDOWN ==========
+        # On sorted parquet: Scanner skips ~87% of row groups via min/max statistics.
+        # On unsorted parquet: Scanner still applies batch-level filter.
+        file_ds = ds.dataset(fpath, format="parquet")
+        scanner = file_ds.scanner(**scanner_kwargs)
 
-            # ========== PYARROW-LEVEL SYMBOL FILTER ==========
-            # Filter entire batch at C level before any numpy conversion.
-            # For 12 workers: 100K rows → ~8K rows (420/5000 symbols ≈ 8%)
-            if target_pa is not None:
-                sym_filter = pc.is_in(batch.column('symbol'), value_set=target_pa)
-                batch = batch.filter(sym_filter)
-
+        for batch in scanner.to_batches():
             n_rows = batch.num_rows
             if n_rows == 0:
-                total_ticks += n_rows_raw
                 continue
 
             # ========== BATCH COLUMN EXTRACTION ==========
-            # Replaces 4 × n_rows .as_py() calls with 2 to_pandas() + 2 to_numpy()
-            sym_arr = batch.column('symbol').to_pandas().values     # object array
-            price_arr = _safe_col_to_numpy(batch.column('price'))   # float64
-            vol_arr = _safe_col_to_numpy(batch.column('vol_tick'))  # float64
-            date_arr = batch.column('date').to_pandas().values      # object array
+            sym_arr = batch.column('symbol').to_pylist()          # list of str
+            price_arr = _safe_col_to_numpy(batch.column('price'))  # float64
+            vol_arr = _safe_col_to_numpy(batch.column('vol_tick')) # float64
+            date_arr = batch.column('date').to_pylist()            # list of date values
 
             # ========== LOB BATCH PRE-BUILD ==========
-            # Replaces up to 40 × n_triggered_rows .as_py() calls with
-            # 40 to_numpy() calls (4 cols × 10 levels), amortized over entire batch.
-            # For filtered batch (~8K rows): 8K × 10 × 4 × 4B = 1.3MB
             lob_data = np.zeros((n_rows, SPATIAL_DEPTH, 4), dtype=np.float32)
             for level_idx in range(SPATIAL_DEPTH):
                 level = level_idx + 1
@@ -438,12 +458,12 @@ def _worker_etl(worker_id, target_symbols, all_files, shard_dir,
 
             # ========== TICK PROCESSING LOOP ==========
             for idx in range(n_rows):
-                raw_sym = sym_arr[idx]
-                # Guard against null/NaN symbols: to_pandas() converts nulls to NaN (float)
-                if raw_sym is None or (isinstance(raw_sym, float) and np.isnan(raw_sym)):
+                symbol = sym_arr[idx]
+                # Guard against null symbols
+                if not symbol:
                     continue
-                symbol = str(raw_sym)
-                if not symbol or not _is_a_share(symbol):
+                # Skip _is_a_share() when Scanner already filtered by target_symbols
+                if not batch_pre_filtered and not _is_a_share(symbol):
                     continue
 
                 price = float(price_arr[idx])
@@ -489,7 +509,7 @@ def _worker_etl(worker_id, target_symbols, all_files, shard_dir,
                         })
                         sample_idx += 1
 
-            total_ticks += n_rows_raw
+            total_ticks += n_rows
 
         # Progress logging
         file_elapsed = time.time() - file_start
@@ -549,7 +569,8 @@ def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
                         symbols: list = None, c_registry_path: str = None,
                         batch_size: int = 100000, file_list_path: str = None,
                         workers: int = 1, resume: bool = False,
-                        checkpoint_interval: int = 50):
+                        checkpoint_interval: int = 50,
+                        wait_for_files: bool = False):
     """
     Single-pass streaming ETL with bounded per-symbol buffers.
     Cross-file state continuity. Batch column extraction.
@@ -566,6 +587,7 @@ def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
         workers: Number of parallel workers (1 = single-core, N = symbol-level parallel).
         resume: If True, resume from last checkpoint.
         checkpoint_interval: Save checkpoint every N files (0 to disable).
+        wait_for_files: If True, wait for input files to appear (pipeline with sort).
     """
     lock_fd = _acquire_single_instance_lock()
     os.makedirs(output_tar_dir, exist_ok=True)
@@ -594,7 +616,8 @@ def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
         # Batch-optimized but no parallelism. Writes directly to output_tar_dir.
         _worker_etl(0, target_symbols, all_files, output_tar_dir,
                      c_registry, c_default, batch_size,
-                     resume=resume, checkpoint_interval=checkpoint_interval)
+                     resume=resume, checkpoint_interval=checkpoint_interval,
+                     wait_for_files=wait_for_files)
     else:
         # ========== MULTI-WORKER MODE ==========
         # 1. Discover all symbols
@@ -625,7 +648,7 @@ def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
                 target=_worker_etl,
                 args=(w, set(groups[w]), all_files, worker_dir,
                       c_registry, c_default, batch_size, result_queue,
-                      resume, checkpoint_interval),
+                      resume, checkpoint_interval, wait_for_files),
                 name=f"etl-worker-{w}"
             )
             p.start()
@@ -657,6 +680,9 @@ def topo_forge_pipeline(raw_parquet_dir: str, output_tar_dir: str,
 
 
 if __name__ == "__main__":
+    from multiprocessing import freeze_support
+    freeze_support()  # Required for Windows spawn start method
+
     import argparse
     parser = argparse.ArgumentParser(description="Omega-TIB V3 Topo-Forge ETL (Multi-Core)")
     parser.add_argument("--base_dir", type=str, required=True,
@@ -677,8 +703,11 @@ if __name__ == "__main__":
                         help="Resume from last checkpoint (OOM recovery)")
     parser.add_argument("--checkpoint_interval", type=int, default=50,
                         help="Save checkpoint every N files (0 to disable, default 50)")
+    parser.add_argument("--wait_for_files", action="store_true",
+                        help="Wait for input files to appear (pipeline mode with sort)")
     args = parser.parse_args()
 
     topo_forge_pipeline(args.base_dir, args.output_dir, args.symbols,
                         args.c_registry, args.batch_size, args.file_list,
-                        args.workers, args.resume, args.checkpoint_interval)
+                        args.workers, args.resume, args.checkpoint_interval,
+                        args.wait_for_files)

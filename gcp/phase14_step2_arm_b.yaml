@@ -1,0 +1,44 @@
+workerPoolSpecs:
+- machineSpec:
+    machineType: n1-standard-8
+    acceleratorType: NVIDIA_TESLA_T4
+    acceleratorCount: 1
+  replicaCount: 1
+  diskSpec:
+    bootDiskType: pd-standard
+    bootDiskSizeGb: 100
+  containerSpec:
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase14-vstep2
+    command:
+    - bash
+    - -c
+    - |
+      set -e
+      echo "=== Phase 14 Step 2 — Arm B: Macro Bypass ==="
+      echo "Treatment arm: +log1p(V_D) +log1p(sigma_D) into manifold"
+      echo "Purpose: Test direct macro feature access vs SRL-only"
+
+      PYTHONUNBUFFERED=1 python3 /app/train.py \
+        --shard_dir=gs://omega-pure-data/wds_shards_v3_full \
+        --output_dir=/gcs/omega-pure-data/checkpoints/phase14_step2_arm_b \
+        --hidden_dim=64 \
+        --window_size_t=32 \
+        --window_size_s=10 \
+        --lr=3e-4 \
+        --lambda_s=0 \
+        --batch_size=256 \
+        --coarse_graining_factor=1 \
+        --epochs=5 \
+        --steps_per_epoch=5000 \
+        --num_workers=6 \
+        --ckpt_every_n_steps=500 \
+        --no_amp \
+        --grad_clip=1.0 \
+        --mask_prob=0.0 \
+        --macro_bypass=True \
+        --seed=42
+
+      echo "=== Arm B Complete ==="
+      echo "Checkpoints: gs://omega-pure-data/checkpoints/phase14_step2_arm_b/"
+scheduling:
+  strategy: ON_DEMAND

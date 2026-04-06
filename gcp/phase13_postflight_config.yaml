@@ -1,0 +1,37 @@
+# Phase 13 Post-Flight — Global decile analysis (v3 shards, no date field)
+# Uses backtest_5a.py: loads best.pt, runs val inference, outputs decile table + hit rates
+# Key question: Is D9 hit_rate > D0 hit_rate? (Phase 12 was inverted: 49% vs 51.4%)
+workerPoolSpecs:
+- machineSpec:
+    machineType: n1-standard-8
+    acceleratorType: NVIDIA_TESLA_T4
+    acceleratorCount: 1
+  replicaCount: 1
+  diskSpec:
+    bootDiskType: pd-standard
+    bootDiskSizeGb: 100
+  containerSpec:
+    imageUri: us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:phase13-v2
+    command:
+    - bash
+    - -c
+    - |
+      set -e
+      echo "=== Phase 13 Post-Flight: Global Decile Analysis ==="
+      echo "Checkpoint: best.pt (E9, Rank IC=0.0292)"
+      echo "Data: v3 val shards (pipe mode, no staging)"
+      echo "Key test: D9 hit_rate vs D0 hit_rate"
+
+      echo "=== Running backtest_5a.py ==="
+      PYTHONUNBUFFERED=1 python3 /app/backtest_5a.py \
+        --checkpoint /gcs/omega-pure-data/checkpoints/phase13_v1/best.pt \
+        --shard_dir gs://omega-pure-data/wds_shards_v3_full \
+        --output_dir /gcs/omega-pure-data/postflight/phase13_v1 \
+        --hidden_dim 64 \
+        --window_size_t 32 \
+        --batch_size 512 \
+        --costs_bp 25
+
+      echo "=== Post-Flight Complete ==="
+scheduling:
+  strategy: ON_DEMAND

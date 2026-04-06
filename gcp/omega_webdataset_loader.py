@@ -12,6 +12,7 @@ Loader outputs dict with:
 """
 
 import io
+import json
 
 import webdataset as wds
 import torch
@@ -29,6 +30,8 @@ def fast_npy_decoder(sample):
     for key, value in sample.items():
         if key.endswith(".npy"):
             result[key] = np.load(io.BytesIO(value))
+        elif key.endswith(".json"):
+            result[key] = json.loads(value)
         else:
             result[key] = value
     return result
@@ -62,10 +65,15 @@ def dynamic_processor(macro_window, coarse_graining_factor):
         target_val = float(sample.get("target.npy", np.array([0.0]))[0])
         target = torch.tensor(target_val, dtype=torch.float32)
 
+        # Extract date from meta.json (ETL v4+)
+        meta = sample.get("meta.json", {})
+        date_str = meta.get("date", "") if isinstance(meta, dict) else ""
+
         return {
             "manifold_2d": tensor,      # [T, S, 10]
             "c_friction": c_friction,    # scalar
             "target": target,            # scalar
+            "date": date_str,            # string (YYYY-MM-DD), empty for v3 shards
         }
 
     return process
