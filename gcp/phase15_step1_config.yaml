@@ -1,34 +1,58 @@
 # Phase 15 Step 1: Training Stabilization
 # Changes vs Phase 13: grad_accum=16, EMA, embargo_shards=2
 # Plan: architect/directives/2026-04-06_phase15_pipeline_stabilization.md V2
+# Gemini Vertex AI audit: staging I/O + SPOT + pd-ssd 700GB
+#
+# C-028/C-041 known contradiction — local ssd NOT available on Vertex AI:
+# - C-028: pd-ssd throughput low (0.48 MB/s/GB) → should use local ssd
+# - C-041: Vertex AI containers cannot mount local ssd (permission denied)
+# - Resolution: pd-ssd 700GB is the ONLY option on Vertex AI
+#   700GB pd-ssd = 336 MB/s, staging 556GB ≈ 28min (one-time)
+#   vs pipe mode: 15 epoch × 556GB = 8.34TB network I/O
 workerPoolSpecs:
   - machineSpec:
       machineType: n1-standard-8
       acceleratorType: NVIDIA_TESLA_T4
       acceleratorCount: 1
+    diskSpec:
+      bootDiskType: pd-ssd
+      bootDiskSizeGb: 700
     replicaCount: 1
     containerSpec:
       imageUri: gcr.io/gen-lang-client-0250995579/omega-tib:phase15-v1
-      args:
-        - --shard_dir=gs://omega-pure-data/wds_shards_v3_full
-        - --output_dir=/gcs/omega-pure-data/checkpoints/phase15_step1
-        - --epochs=15
-        - --steps_per_epoch=4992
-        - --batch_size=256
-        - --lr=3e-4
-        - --hidden_dim=64
-        - --window_size_t=32
-        - --window_size_s=10
-        - --lambda_s=0
-        - --mask_prob=0.0
-        - --no_amp
-        - --seed=42
-        - --grad_accum=16
-        - --ema_start_epoch=10
-        - --ema_decay=0.999
-        - --ema_lr=3e-5
-        - --embargo_shards=2
-        - --ckpt_every_n_steps=500
-        - --model_type=omega
+      command:
+        - "/bin/bash"
+        - "-c"
+        - |
+          set -e
+          echo "=== Phase 15 Step 1: Staging data from GCS ==="
+          STAGING_DIR=/mnt/disks/ssd0/data
+          mkdir -p $STAGING_DIR
+          echo "Downloading shards to pd-ssd (C-041: no local ssd on Vertex AI)..."
+          gcloud storage cp -m "gs://omega-pure-data/wds_shards_v3_full/omega_shard_*.tar" $STAGING_DIR/
+          SHARD_COUNT=$(ls $STAGING_DIR/omega_shard_*.tar | wc -l)
+          echo "Staging complete: $SHARD_COUNT shards"
+          echo "=== Starting training ==="
+          python3 train.py \
+            --shard_dir=$STAGING_DIR \
+            --output_dir=/gcs/omega-pure-data/checkpoints/phase15_step1 \
+            --epochs=15 \
+            --steps_per_epoch=4992 \
+            --batch_size=256 \
+            --lr=3e-4 \
+            --hidden_dim=64 \
+            --window_size_t=32 \
+            --window_size_s=10 \
+            --lambda_s=0 \
+            --mask_prob=0.0 \
+            --no_amp \
+            --seed=42 \
+            --grad_accum=16 \
+            --ema_start_epoch=10 \
+            --ema_decay=0.999 \
+            --ema_lr=3e-5 \
+            --embargo_shards=2 \
+            --ckpt_every_n_steps=500 \
+            --model_type=omega
 scheduling:
-  strategy: ON_DEMAND
+  strategy: SPOT

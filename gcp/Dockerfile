@@ -7,6 +7,9 @@
 # Build: gcloud builds submit --tag us-central1-docker.pkg.dev/gen-lang-client-0250995579/omega-training/omega-tib:v4 gcp/
 FROM us-docker.pkg.dev/vertex-ai/training/pytorch-gpu.2-2.py310:latest
 
+# Gemini audit: ensure logs flush immediately for Cloud Logging
+ENV PYTHONUNBUFFERED=1
+
 # Pre-install dependencies (eliminates ~3 min pip install on every Spot restart)
 RUN pip install --no-cache-dir webdataset cloudml-hypertune scipy
 
