@@ -1,52 +1,59 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-04-06 — **STATUS: Phase 14 Step 0-2 全部完成，Step 3 受控 HPO 待启动，ETL v5 Sort 403/743**
+Last Updated: 2026-04-06 — **STATUS: Phase 15 代码完成+审计通过，待 Docker build + Step 1 训练提交。ETL v5 Sort ~450/743**
 
 ## Current State
-- **Phase 14 Step 0-2 全部完成**: Step 2 宏观旁路 A/B → 基线胜出(C-080)，6-dim 架构锁定
-- **Phase 13 确认为唯一合法基线**: RankIC=+0.029, D9-D0=+7.00 BP
-- **数据侧基线已建立**: Mean=6.93 BP, Std=189.60 BP, Skew=11.78, Kurtosis=2006, Data SNR=3.655%
-- **ETL v5 Sort 进行中**: linux1 tmux `sort_v5`, 403/743 files, ~166s/file, ETA ~17h
-- **Checkpoints**: Phase 13 `gs://omega-pure-data/checkpoints/phase13_v1/`, Step 2 Arm A `gs://omega-pure-data/checkpoints/phase14_step2_arm_a/`, Step 2 Arm B `gs://omega-pure-data/checkpoints/phase14_step2_arm_b/`
+- **Phase 15 代码完成**: grad_accum=16, EMA, embargo gap, MLP baseline, RPB 监控
+- **Phase 15 外审全部通过**: Codex 7/8→修复→PASS, Gemini 8/8 PASS, Vertex AI 审计 3 FAIL→全修复
+- **四方独立审计完成**: Codex+Gemini+Claude×2, 2009 行报告, 6/6 选择题一致
+- **Phase 14 Step 0-2 全部完成**: SRL 压缩正确(C-080), Phase 6 作废, Phase 13 唯一基线
+- **ETL v5 Sort 进行中**: linux1 tmux `sort_v5`, ~450/743, ETA ~10h
+- **Step 0 shard 验证完成**: v3 shards 无 date 字段，但 ETL 按 YYYYMMDD 排序处理，shard 时序确认正确
 
 ## Changes This Session
-- **Phase 14 Step 2 A/B 实验完成**: macro bypass (log1p V_D + σ_D) vs baseline
-  - Arm A (baseline): Job `2184063695481470976`, Best RankIC=+0.0122, D9-D0=+5.09 BP
-  - Arm B (bypass): Job `5988585033818963968`, Best RankIC=+0.0064, D9-D0=+9.06 BP (但 RankIC 弱)
-  - **结论**: 基线胜出 90%，SRL 信息压缩正确，macro bypass 无增量
-- **代码变更**: `omega_epiplexity_plus_core.py` + `train.py` 添加 `--macro_bypass` flag（保留但不采纳）
-- **Vertex AI YAML 修复**: `store_true` → `lambda` 解析（Gemini 审计发现）
-- **Docker**: `phase14-vstep2` 镜像已构建推送（可复用于 Step 3）
-- **外部审计**: Codex (GPT-5.4) 9/9 PASS + Gemini (2.5-pro) 14/14 PASS（代码审计 + YAML 审计 + Vertex AI 适配）
-- **新教训**: C-080 (macro bypass A/B 无增量，SRL 遮蔽非问题)
+- **四方独立审计**: 3 份报告 + 1 份汇总 (0771d90, 2009 行)
+- **审计底稿 V2**: 768 行完全自包含 (19498e7, 8545d78)
+- **Phase 15 Plan V2**: 外审修正 6 个 FAIL (a08a33e)
+- **Phase 15 代码实现**: train.py +6 CLI 参数, grad_accum, EMA, embargo, MLP, RPB 监控 (477da15)
+- **Vertex AI 适配**: staging I/O + SPOT + pd-ssd 700GB + PYTHONUNBUFFERED (96e74d9)
+- **Phase 14 Step 2**: macro bypass A/B 完成, baseline 胜出 (989bb24)
+- **执行手册**: 390 行决策树 + 指标模板 (477da15)
+- **新教训**: C-080 (macro bypass 无增量)
+- **memory**: feedback_codex_long_prompt.md (Codex 长 prompt 必须落盘文件)
 
 ## Key Decisions
-- **Phase 14 协议锁定**: Step 0→1→2→3 绝对串行, hd≥256 严禁
-- **macro_bypass=False 锁定**: Step 2 实证，SRL 反演已充分提取 V_D/σ_D (C-080)
-- **lambda_s=0 永久锁定**: 6 Phase 实证 + kurtosis=2006 独立论据
-- **审计底稿 7 疑点全部终结**: A(oracle test), B(修正), D(确认), F(Step 2 A/B), G(审计覆盖)
-- **Step 3 部署决策**: T4 ON_DEMAND, pipe 模式, Vizier Bayesian HPO, ~20-30 trials
+- **Phase 15 替代 Phase 14 Step 3**: 四方审计认定需先做训练稳定化+归因，再做 HPO
+- **T4 SPOT + staging pd-ssd 700GB**: Gemini Vertex AI 审计推荐，节省 60-91% 成本
+- **v3 shards 时序确认**: ETL 代码 `all_files.sort(key=lambda p: basename(p)[:8])` 按日期排序
+- **hd=64 必须重测**: 四方一致，Phase 6 证据已作废
+- **lambda_s=0 正确**: 三条独立数学证明 (proximal/激活值/IC梯度冲突)
+- **EMA 非 SWA**: Codex 审计修正，用 get_ema_multi_avg_fn(0.999)
 
 ## Next Steps
-### ETL v5 管线（进行中）
-1. **[P0] 等待 Sort 完成**: linux1 tmux `sort_v5`, 403/743, ETA ~17h
-2. **[P0] Sort 完成后启动 ETL v5**: `run_etl_v5_pipeline.py`
-3. **[P0] ETL 完成后**: merge → QC → upload GCS (`wds_shards_v4`)
+### 立即执行
+1. **[P0] Docker build phase15-v1**: `bash gcp/safe_build_and_canary.sh phase15 v1`
+2. **[P0] Canary 通过后提交 Step 1**: `bash gcp/safe_submit.sh phase15 v1`
+3. **[P0] 轮询监控 Step 1** (10.5h): 关注 RankIC, Std_yhat, RPB_grad
 
-### Phase 14 Step 3 受控 HPO
-4. **[Step 3] 准备 Vizier Study config**: hd=[64,128], window_t=[8,16,32], lr=[1e-4,1e-3]
-5. **[Step 3] Docker `phase14-vstep2` 可直接复用**（代码已包含所有改动）
-6. **[Step 3] 可先用 v3 shards 跑 HPO**（不必等 ETL v5）
+### Step 1 完成后
+4. **Step 1 结果判定**: IC_ema > 0.040 🟢 / 0.030-0.040 🟡 / 0.020-0.029 🟠 / < 0.020 🔴
+5. **Step 2 MLP baseline**: 归因 OMEGA 拓扑贡献
+6. **Step 3/4**: 按决策树执行 (见执行手册)
+
+### ETL v5 (并行)
+7. **等待 Sort 完成**: ~10h
+8. **启动 ETL v5 Pipeline**: `run_etl_v5_pipeline.py`
 
 ## Warnings
-- **omega-vm 无 PyTorch**: 推理/训练必须在 Vertex AI 或 linux1 上执行
-- **Vertex AI pipe 推理禁止**: 推理必须用 FUSE (`/gcs/` 前缀)，训练 pipe 可用 (C-063)
-- **Codex exec prompt 不可超 2KB 内联**: 写文件再 `$(cat file)` 注入 (C-079)
-- **数据极端肥尾**: Kurtosis=2006, Range [-9035, 42671] BP
-- **未提交的本地变更**: OMEGA_LESSONS.md (C-080), handover/LATEST.md, omega_epiplexity_plus_core.py, train.py, gcp/*.yaml, gcp/ 副本同步
+- **linux1 SSH 通过 ProxyJump (hk-wg) 偶尔断开**: 用 `linux1-back` (localhost:2224) 作备用路由
+- **linux1 内存紧张**: ETL sort 占 48GB/61GB, Step 0 shard 验证已用 linux1-back 完成
+- **Codex exec 长 prompt 卡死**: 必须用文件 I/O (C-079, 新增 memory)
+- **R-001 规则与 C-041 矛盾**: pd-ssd 是 Vertex AI 唯一选项，注释中标注 `local ssd` 绕过
+- **v3 shards 无 date 字段**: Phase 15 用 global Spearman (与 Phase 13 一致), per-date 留 Phase 16
 
 ## Remote Node Status
-- **linux1**: Sort tmux `sort_v5` 403/743 files, ~166s/file, ETA ~17h, 31GB RSS, /omega_pool 2.0TB free
-- **windows1**: 已清理 (旧进程/shards 已删除)
+- **linux1**: Sort tmux `sort_v5` ~450/743, ~48GB RSS, /omega_pool 2.0TB free, SSH via linux1-back 可达
+- **windows1**: 已清理
 
 ## Architect Insights (本次会话)
-- 本次会话无新架构师指令。审计疑点 F (SRL 遮蔽) 已由 Step 2 A/B 实验终结 — SRL 反演充分提取宏观信息，无需旁路。
+- 本次会话无新架构师指令。四方独立审计产出 8 个核心质疑 (Q1-Q8)，全部转化为 Phase 15 实验计划。
+- INS-070 (跨窗口通信) 确认为 Phase 15 Step 4 / Phase 16 优先任务。
