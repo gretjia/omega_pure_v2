@@ -1,8 +1,8 @@
-# OMEGA-TIB 外部审计底稿 — ���包含版
+# OMEGA-TIB 外部审计底稿 — 全包含版
 **编制日期**: 2026-04-06
-**编制��**: Claude Opus 4.6 (5-Agent研究) + Codex GPT-5.4 (数据复核)
+**编制者**: Claude Opus 4.6 (5-Agent研究) + Codex GPT-5.4 (数据复核)
 **审计对象**: Omega-TIB 模型 (24,581 参数)，Phase 3 至 Phase 13 全生命周期
-**本文件性质**: 完全自包含——审计��不需要打开任何其他文件或执行 git 命令
+**本文件性质**: 完全自包含——审计师不需要打开任何其他文件或执行 git 命令
 
 ---
 
@@ -10,7 +10,7 @@
 
 ```python
 # 前代名称: SpatioTemporal2DMAE
-# 本项目第���个 commit，从前代��目继承
+# 本项目第一个 commit，从前代项目继承
 
 import torch
 import torch.nn as nn
@@ -19,9 +19,9 @@ import math
 
 class AxiomaticSRLInverter(nn.Module):
     """物理反演层: Q_hidden = sign(ΔP) × (|ΔP| / (c × σ_D))^2 × V_D"""
-    def __init__(self, c_constant: float = 0.842):   # ← ��世版 c 是全局硬编码常数
+    def __init__(self, c_constant: float = 0.842):   # ← 创世版 c 是全局硬编码常数
         super().__init__()
-        self.c = c_constant                          # TSE 文献全局平��值
+        self.c = c_constant                          # TSE 文献全局平均值
         self.power_constant = 2.0                    # 1/δ = 1/0.5 = 2.0，永恒物理常数
 
     def forward(self, delta_p, sigma_d, v_d):        # ← 创世版接收 3 个独立张量
@@ -40,16 +40,16 @@ class FiniteWindowTopologicalAttention(nn.Module):
         self.qkv = nn.Linear(dim, dim * 3, bias=False)
         self.proj = nn.Linear(dim, dim)
         self.scale = (dim // num_heads) ** -0.5
-        # ← 创世版：无 RPB (相对位置偏��)。17分钟后的 commit 8105a08 才添��
+        # ← 创世版：无 RPB (相对位置偏置)。17分钟后的 commit 8105a08 才添加
 
     def forward(self, x_nd):
         B, T, S, D = x_nd.shape
         # 窗口分割 → 窗口内 QKV 注意力 → 还原
-        # (省略窗口分割/padding/还原代码，与当前版相��但无 RPB 加法)
+        # (省略窗口分割/padding/还原代码，与当前版相同但无 RPB 加法)
         ...
 
 class OmegaMathematicalCompressor(nn.Module):
-    """压缩器主体���SRL → FWT → Bottleneck → 全局均值池�� → 预测"""
+    """压缩器主体: SRL → FWT → Bottleneck → 全局均值池化 → 预测"""
     def __init__(self, raw_feature_dim, hidden_dim, window_size=(4, 4)):
         super().__init__()
         self.srl_inverter = AxiomaticSRLInverter()
@@ -185,7 +185,7 @@ class FiniteWindowTopologicalAttention(nn.Module):
 
 
 class AttentionPooling(nn.Module):                    # ← Phase 13 新增 (commit 481870b)
-    """Phase 13 B.1: 可学���注意力池化，替代全局均值池化"""
+    """Phase 13 B.1: 可学习注意力池化，替代全局均值池化"""
     def __init__(self, dim: int):
         super().__init__()
         self.W_pool = nn.Parameter(torch.empty(dim))
@@ -232,7 +232,7 @@ class OmegaMathematicalCompressor(nn.Module):
         v_d_macro = x_2d[:, :, 0, 8]                  # Ch8: 20日ADV
         sigma_d_macro = x_2d[:, :, 0, 9]              # Ch9: 20日ATR
 
-        # 1. 物理层 (���可学习, fp32)
+        # 1. 物理层 (不可学习, fp32)
         with torch.no_grad(), torch.autocast(device_type="cuda", enabled=False):
             q_metaorder = self.srl_inverter(
                 delta_p.float(), sigma_d_macro.float(),
@@ -271,21 +271,21 @@ def compute_ic_loss(prediction, target, ic_epsilon=1e-8):
     return -ic
 ```
 
-### 2.2 训练时特征工���：FRT (Financial Relativity Transform)
+### 2.2 训练时特征工程：FRT (Financial Relativity Transform)
 
-这段代码在 `train.py` L:188-217 的 `OmegaTIBWithMasking.forward()` 中执行，**不��� core 文件中**。ETL 输出的原�� LOB 值在此被转换��才进入模型：
+这段代码在 `train.py` L:188-217 的 `OmegaTIBWithMasking.forward()` 中执行，**不在 core 文件中**。ETL 输出的原始 LOB 值在此被转换后才进入模型：
 
 ```python
-# === FRT: 在 GPU 上实时执��，不��� ETL 中 ===
+# === FRT: 在 GPU 上实时执行，不在 ETL 中 ===
 lob = x_2d[:, :, :, :5].float()  # fp32 精度
 bid_p, bid_v, ask_p, ask_v, close_p = lob[..., 0], lob[..., 1], lob[..., 2], lob[..., 3], lob[..., 4]
 
-# (1) 微观结��: Bid/Ask 价格 → ��对中间价的 BP 偏差
+# (1) 微观结构: Bid/Ask 价格 → 相对中间价的 BP 偏差
 mid_p = ((bid_p + ask_p) / 2.0).clamp(min=1e-6)
 lob[..., 0] = (bid_p - mid_p) / mid_p * 10000.0   # Bid spread ~[-10, -0.5] BP
 lob[..., 2] = (ask_p - mid_p) / mid_p * 10000.0   # Ask spread ~[+0.5, +10] BP
 
-# (2) 宏��趋势: Close → 从 t=0 的累计对数收益率 (百分比)
+# (2) 宏观趋势: Close → 从 t=0 的累计对数收益率 (百分比)
 anchor = close_p[:, 0:1, ...].clamp(min=1e-6)
 lob[..., 4] = torch.log(close_p.clamp(min=1e-6) / anchor) * 100.0
 
@@ -305,17 +305,17 @@ native_manifold = torch.cat([lob_features, q_metaorder], dim=-1)  # [B,T,S,6]
 # train.py L:86-100 — IC Loss wrapper
 def compute_ic_loss_wrapper(pred, target, z_core, ic_epsilon=1e-8):
     ic_loss = compute_ic_loss(pred, target, ic_epsilon=ic_epsilon)  # = -Pearson(pred, target)
-    # s_t 仅监控，不��与 loss (lambda_s=0, INS-069)
+    # s_t 仅监控，不参与 loss (lambda_s=0, INS-069)
     with torch.no_grad():
         z_core_safe = torch.clamp(z_core.float(), min=-20.0, max=20.0)
         s_t = torch.norm(z_core_safe, p=1, dim=-1).mean()
     return ic_loss, s_t
 ```
 
-### 2.4 训练循环关键���径 (Phase 13)
+### 2.4 训练循环关键路径 (Phase 13)
 
 ```python
-# train.py L:351-369 — 核心��向+反向 (no_amp 模式, Phase 13 实际使用)
+# train.py L:351-369 — 核心前向+反向 (no_amp 模式, Phase 13 实际使用)
 optimizer.zero_grad(set_to_none=True)
 prediction, z_core = model(manifold, c_friction)      # OmegaTIBWithMasking.forward()
 total_loss, s_t = compute_ic_loss_wrapper(prediction, target, z_core)
@@ -330,7 +330,7 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=1e-5)
 scheduler = OneCycleLR(optimizer, max_lr=3e-4, total_steps=75000,
                        pct_start=0.05, anneal_strategy='cos', div_factor=100)
 
-# train.py L:598-604 — 训练/验证���割
+# train.py L:598-604 — 训练/验证分割
 all_shards = sorted(glob.glob("omega_shard_*.tar"))   # 字母排序
 n_train = int(len(all_shards) * 0.8)                  # 前 80%
 train_shards = all_shards[:n_train]                    # ~1594 shards
@@ -346,11 +346,11 @@ if val_rank_ic > best_rank_ic:                         # Spearman Rank IC 最大
 
 ## 三、参数计数 (逐层精确计算)
 
-| 组件 | 计算 | ��数�� | 占比 |
+| 组件 | 计算 | 参数量 | 占比 |
 |------|------|--------|------|
 | input_proj | 6×64 + 64(bias) | 448 | 1.8% |
 | post_proj_norm (在wrapper中) | 64×2 (γ+β) | 128 | 0.5% |
-| **FWT qkv** | **64��192 (no bias)** | **12,288** | **50.0%** |
+| **FWT qkv** | **64×192 (no bias)** | **12,288** | **50.0%** |
 | FWT proj | 64×64 + 64(bias) | 4,160 | 16.9% |
 | **RPB 表** | **(2×32-1)×(2×10-1)×4 = 63×19×4** | **4,788** | **19.5%** |
 | tda_pre_ln | 64×2 | 128 | 0.5% |
@@ -366,25 +366,25 @@ RPB 表大小验证: (2×32-1)=63, (2×10-1)=19, 63×19=1197 行 × 4 头 = 4,78
 
 ---
 
-## 四、创世→当前 架构��异对照
+## 四、创世→当前 架构差异对照
 
 | 组件 | 创世版 (f7ccde9) | 当前版 (fd3b041) | 变更 Phase |
 |------|----------------|-----------------|-----------|
-| SRL c | 全���硬编码 0.842 | per-stock c_friction 输入 | Phase 0.5 |
+| SRL c | 全局硬编码 0.842 | per-stock c_friction 输入 | Phase 0.5 |
 | FWT 窗口 | (4, 4) | (32, 10) | Phase 6 HPO + 65e34d7 |
 | FWT RPB | 无 | Swin-style 相对位置偏置 | 8105a08 (+17min) |
 | 池化 | `torch.mean(dim=[1,2])` | `AttentionPooling(W_pool)` | Phase 13 B |
 | Pre-LN | 无 | `x + tda(LayerNorm(x))` | Phase 13 B |
 | post_proj_norm | 无 | `LayerNorm(hd)` 在 wrapper 中 | Phase 12+ |
 | 损失 | MSE + λ_s=1e-3 × L1 | IC Loss, λ_s=0 | Phase 13 A |
-| FRT | 无 (原始特���直入) | BP偏差/logReturn/log1p | Phase 12+ |
+| FRT | 无 (原始特征直入) | BP偏差/logReturn/log1p | Phase 12+ |
 | `.squeeze()` | 用于输出 | 全部替换为 `.view(-1)` | C-050 |
 | 模型层数 | **1 层注意力** | **仍然 1 层注意力** | **从未变过** |
 | hidden_dim | 未锁定 | 64 (Phase 6 HPO 选出) | Phase 6 |
 
 ---
 
-## 五、训练���参数 (Phase 13 精确配置)
+## 五、训练超参数 (Phase 13 精确配置)
 
 | 参数 | 值 | 代码位置 |
 |------|-----|---------|
@@ -401,12 +401,12 @@ RPB 表大小验证: (2×32-1)=63, (2×10-1)=19, 63×19=1197 行 × 4 头 = 4,78
 | epochs | 15 | steps/epoch = 5000 |
 | total_steps | 75,000 | 15 × 5000 |
 | grad_clip | 1.0 | train.py L:509 |
-| lambda_s | **0** (L1 禁��) | INS-069 |
+| lambda_s | **0** (L1 禁用) | INS-069 |
 | mask_prob | **0.0** (masking 禁用) | Phase 13 config |
 | AMP | **关闭** (--no_amp) | Phase 13 config |
 | dropout | **不存在** | 模型中无任何 dropout 层 |
 | seed | 42 | train.py L:524 |
-| 硬��� | T4 GPU, Spot | Vertex AI |
+| 硬件 | T4 GPU, Spot | Vertex AI |
 | loss precision | FP32 | compute_ic_loss 内强制 .float() |
 
 ---
@@ -414,8 +414,8 @@ RPB 表大小验证: (2×32-1)=63, (2×10-1)=19, 63×19=1197 行 × 4 头 = 4,78
 ## 六、数据管线
 
 ### 6.1 原始数据
-- **来源**: A 股 L1 ���笔 + 10 ��� LOB
-- **格式**: Parquet, 每文件含 symbol/date/price/vol_tick + 40 �� LOB
+- **来源**: A 股 L1 逐笔 + 10 档 LOB
+- **格式**: Parquet, 每文件含 symbol/date/price/vol_tick + 40 列 LOB
 - **总量**: 2.2 TB, 743 文件
 - **时间**: 20230103 - 20260130 (约 551 交易日)
 - **标的**: 沪深全 A 股 (000/001/002/003/300/301/600/601/603/605/688/689)
@@ -435,7 +435,7 @@ RPB 表大小验证: (2×32-1)=63, (2×10-1)=19, 63×19=1197 行 × 4 头 = 4,78
 ```
 target_bp = (VWAP[N+1+20] - VWAP[N+1]) / VWAP[N+1] × 10000
 ```
-- N+1 延迟: 信号在 bar N 产生���bar N+1 才能执行
+- N+1 延迟: 信号在 bar N 产生，bar N+1 才能执行
 - 20 bars ≈ 0.4 交易日
 
 ### 6.4 Target 分布 (Phase 14 Step 0 实测, 1,904,747 验证集样本)
@@ -449,7 +449,7 @@ target_bp = (VWAP[N+1+20] - VWAP[N+1]) / VWAP[N+1] × 10000
 | Data SNR | 6.93/189.60 = 3.655% |
 
 ### 6.5 c_friction 摩擦系数
-- **标定方法**: OLS ��截距���归 Y=c_i×X, X=√(Q/V_D), Y=ΔP/σ_D
+- **标定方法**: OLS 无截距回归 Y=c_i×X, X=√(Q/V_D), Y=ΔP/σ_D
 - **c_default**: 0.842 (TSE 文献回退值)
 - **__GLOBAL_A_SHARE_C__**: 存于 `a_share_c_registry.json`
 - **注意**: registry 文件在 linux1 节点上，omega-vm 上不存在。ETL 运行时找不到文件会 fallback 到 c_default=0.842
@@ -460,13 +460,13 @@ target_bp = (VWAP[N+1+20] - VWAP[N+1]) / VWAP[N+1] × 10000
 | 总 shards | 1,992 |
 | 总样本 | ~9.96M |
 | 总大小 | ~556 GB |
-| 训��� shards | ~1594 (前80%) |
+| 训练 shards | ~1594 (前80%) |
 | 验证 shards | ~398 (后20%) |
 | 验证样本 | 1,904,747 (精确) |
 
 ---
 
-## 七、全 Phase 结果�����册
+## 七、全 Phase 结果注册册
 
 | Phase | 日期 | Loss | hd | Window | Params | Rank IC | D9-D0 (BP) | pred_std (BP) | 判定 |
 |-------|------|------|-----|--------|--------|---------|-----------|-------------|------|
@@ -484,7 +484,7 @@ target_bp = (VWAP[N+1+20] - VWAP[N+1]) / VWAP[N+1] × 10000
 | **13** | **04-04** | **IC Loss** | **64** | **(32,10)** | **24.6K** | **+0.029** | **+7.00** | varied | **✅ PASS** |
 | 14 S1 | 04-05 | Phase 6 复测 | 64 | (32,10) | 19.7K | +0.0023 | +11.16 | 790 | Phase 6 死 |
 
-### Phase 13 详细十分位表 (1,904,748 ���本)
+### Phase 13 详细十分位表 (1,904,748 样本)
 
 | 十分位 | 样本数 | mean_pred | mean_target (BP) | hit_rate | payoff_ratio |
 |--------|--------|-----------|-----------------|----------|-------------|
@@ -509,7 +509,7 @@ target_bp = (VWAP[N+1+20] - VWAP[N+1]) / VWAP[N+1] × 10000
 
 ---
 
-## 八、决��溯源
+## 八、决策溯源
 
 ### 8.1 hd=64 的决策 (INS-019, 2026-03-29)
 
@@ -522,18 +522,18 @@ target_bp = (VWAP[N+1+20] - VWAP[N+1]) / VWAP[N+1] × 10000
 
 ### 8.2 单层注意力 — 从未被讨论
 
-**事实**: 整个 74 �� INS + 23 个 directive 中���**层数从未出现在 HPO 搜索空���或讨论中**。原始 directive (2026-03-18) 说 "TDA 维度永远锁定 2D (不需要搜索)"——指的是 2D vs 1D，被执��为"层数也不搜索"。
+**事实**: 整个 74 个 INS + 23 个 directive 中，**层数从未出现在 HPO 搜索空间或讨论中**。原始 directive (2026-03-18) 说 "TDA 维度永远锁定 2D (不需要搜索)"——指的是 2D vs 1D，被执行为"层数也不搜索"。
 
-### 8.3 跨窗口通信 — 讨论过���推迟
+### 8.3 跨窗口通信 — 讨论过但推迟
 
 **INS-070** (2026-04-04, `Shatter Window Isolation`):
 > "当前 5 个隔离的 32-bar 窗口将模型感受野限制在 0.64 天内。必须实现跨窗注意力或滑动窗口重叠。"
 
-**架构师裁决**: ���迟到 Phase 14。理由: "Phase 13 已同时动了 Loss+Target+拓扑，再加跨窗口 → 归因灾难"。
+**架构师裁决**: 推迟到 Phase 14。理由: "Phase 13 已同时动了 Loss+Target+拓扑，再加跨窗口 → 归因灾难"。
 
 ### 8.4 lambda_s=0 锁定
 
-**证据**: Phase 3 (λ=1e-3): MDL 杀信号 → Phase 6 (λ=1e-7): 近零 → Phase 11c (λ=1e-3): 脑死亡 → Phase 11d (λ=1e-4 vs 1e-5): 无差异 → Phase 12 (λ=1e-4): L1 从 2.09→1.16 同时 D9-D0 从 4.48→1.28 → **Phase 13 (λ=0): 首次��功**
+**证据**: Phase 3 (λ=1e-3): MDL 杀信号 → Phase 6 (λ=1e-7): 近零 → Phase 11c (λ=1e-3): 脑死亡 → Phase 11d (λ=1e-4 vs 1e-5): 无差异 → Phase 12 (λ=1e-4): L1 从 2.09→1.16 同时 D9-D0 从 4.48→1.28 → **Phase 13 (λ=0): 首次成功**
 
 ---
 
@@ -546,17 +546,17 @@ target_bp = (VWAP[N+1+20] - VWAP[N+1]) / VWAP[N+1] × 10000
 - 代码演化链 16 次 commit 完整
 - 74 个 INS 文档全部存在
 
-### 9.2 修���项 ⚠️
+### 9.2 修正项 ⚠️
 1. Commit hash `f578614` 应为 `f57861a` (末位)
 2. 原数据包称"跨窗口通信从未被讨论过" → 不准确。INS-070 已讨论，被有意推迟
 
-### 9.3 本地不可获取��数据
+### 9.3 本地不可获取的数据
 
 | 缺失项 | 位置 | 重要性 |
 |--------|------|--------|
 | Phase 13 epoch-by-epoch 训练曲线 | GCS 训练日志 | 高 |
 | c_friction registry 完整统计 | linux1 节点 | 高 |
-| Phase 6 ��部 70 trial HPO 结果 | GCP Vizier | 中 |
+| Phase 6 全部 70 trial HPO 结果 | GCP Vizier | 中 |
 | Shard 命名是否严格按时间排序 | 需检查 linux1 数据 | 中 |
 | Train/val 边界 embargo gap | 需分析 shard 时间覆盖 | 中 |
 
