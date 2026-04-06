@@ -1,4 +1,4 @@
-# Phase 15 Step 1: Training Stabilization
+# Phase 15 Step 2: MLP Baseline (attribution)
 # Changes vs Phase 13: grad_accum=16, EMA, embargo_shards=2
 # Plan: architect/directives/2026-04-06_phase15_pipeline_stabilization.md V2
 # Gemini Vertex AI audit: staging I/O + SPOT + pd-ssd 700GB
@@ -35,7 +35,7 @@ workerPoolSpecs:
           echo "=== Starting training ==="
           python3 train.py \
             --shard_dir=$STAGING_DIR \
-            --output_dir=/gcs/omega-pure-data/checkpoints/phase15_step1 \
+            --output_dir=/gcs/omega-pure-data/checkpoints/phase15_step2_mlp \
             --epochs=15 \
             --steps_per_epoch=4992 \
             --batch_size=256 \
@@ -53,6 +53,6 @@ workerPoolSpecs:
             --ema_lr=3e-5 \
             --embargo_shards=2 \
             --ckpt_every_n_steps=500 \
-            --model_type=omega
+            --model_type=mlp
 scheduling:
   strategy: SPOT
