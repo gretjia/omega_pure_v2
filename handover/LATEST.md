@@ -1,59 +1,66 @@
 # Omega Pure V3 - Project LATEST Handover State
-Last Updated: 2026-04-06 — **STATUS: Phase 15 代码完成+审计通过，待 Docker build + Step 1 训练提交。ETL v5 Sort ~450/743**
+Last Updated: 2026-04-07 — **STATUS: Phase 15 Step 1+2 完成。MLP baseline 碾压 Omega-TIB (🔴)。容量匹配实验待决策。ETL v5 Sort 接近完成。**
 
 ## Current State
-- **Phase 15 代码完成**: grad_accum=16, EMA, embargo gap, MLP baseline, RPB 监控
-- **Phase 15 外审全部通过**: Codex 7/8→修复→PASS, Gemini 8/8 PASS, Vertex AI 审计 3 FAIL→全修复
-- **四方独立审计完成**: Codex+Gemini+Claude×2, 2009 行报告, 6/6 选择题一致
-- **Phase 14 Step 0-2 全部完成**: SRL 压缩正确(C-080), Phase 6 作废, Phase 13 唯一基线
-- **ETL v5 Sort 进行中**: linux1 tmux `sort_v5`, ~450/743, ETA ~10h
-- **Step 0 shard 验证完成**: v3 shards 无 date 字段，但 ETL 按 YYYYMMDD 排序处理，shard 时序确认正确
+- **Phase 15 Step 1 完成**: grad_accum=16 + EMA, IC_ema=+0.0122, 🟠 橙灯
+  - Phase 13 IC=0.029 确认为选择偏差，真实信号 ~0.010-0.013
+  - grad_accum 有效减震 3x，但未提升均值
+- **Phase 15 Step 2 完成**: MLP baseline, IC_ema=+0.0159, 🔴 红灯
+  - MLP (5M params) > Omega-TIB (24.6K) 全指标: IC 130%, D9-D0 254%
+  - **但 203x 参数差距使对比不公平 — 需要容量匹配实验**
+- **ETL v5 Sort**: linux1, 进度未确认（SSH 间歇性不可达）
+- **Vertex AI Jobs 全部完成**:
+  - Step 1: Job `3385623196454617088` SUCCEEDED ($8, T4 SPOT, 9.5h)
+  - Step 2: Job `6510716717570719744` SUCCEEDED (~$7, T4 SPOT, 5.3h)
+- **Checkpoints on GCS**:
+  - `gs://omega-pure-data/checkpoints/phase15_step1/` (best.pt, latest.pt, ema.pt)
+  - `gs://omega-pure-data/checkpoints/phase15_step2_mlp/` (best.pt, latest.pt, ema.pt)
 
-## Changes This Session
-- **四方独立审计**: 3 份报告 + 1 份汇总 (0771d90, 2009 行)
-- **审计底稿 V2**: 768 行完全自包含 (19498e7, 8545d78)
-- **Phase 15 Plan V2**: 外审修正 6 个 FAIL (a08a33e)
-- **Phase 15 代码实现**: train.py +6 CLI 参数, grad_accum, EMA, embargo, MLP, RPB 监控 (477da15)
-- **Vertex AI 适配**: staging I/O + SPOT + pd-ssd 700GB + PYTHONUNBUFFERED (96e74d9)
-- **Phase 14 Step 2**: macro bypass A/B 完成, baseline 胜出 (989bb24)
-- **执行手册**: 390 行决策树 + 指标模板 (477da15)
-- **新教训**: C-080 (macro bypass 无增量)
-- **memory**: feedback_codex_long_prompt.md (Codex 长 prompt 必须落盘文件)
+## Changes This Session (16 commits: ea00e38 → ace972e)
+- **四方独立审计**: 3 份报告 + 汇总 (0771d90, 2009 行)
+- **自包含审计底稿**: 768 行 (19498e7)
+- **Phase 15 Plan V2**: 外审修正 6 FAIL (a08a33e)
+- **Phase 15 代码**: grad_accum, EMA, embargo, MLP, RPB 监控 (477da15)
+- **Vertex AI 适配**: staging + SPOT + pd-ssd 1000GB (96e74d9)
+- **Phase 15 Step 1 结果**: IC_ema=0.0122, 🟠 (22b0d74)
+- **Phase 15 Step 2 MLP 结果**: IC_ema=0.0159, 🔴 (ace972e)
+- **Phase 14 Step 2**: macro bypass 完成 (989bb24)
+- **新教训**: C-080 (macro bypass), feedback_codex_long_prompt
+- **执行手册**: 390 行决策树 (477da15)
 
 ## Key Decisions
-- **Phase 15 替代 Phase 14 Step 3**: 四方审计认定需先做训练稳定化+归因，再做 HPO
-- **T4 SPOT + staging pd-ssd 700GB**: Gemini Vertex AI 审计推荐，节省 60-91% 成本
-- **v3 shards 时序确认**: ETL 代码 `all_files.sort(key=lambda p: basename(p)[:8])` 按日期排序
-- **hd=64 必须重测**: 四方一致，Phase 6 证据已作废
-- **lambda_s=0 正确**: 三条独立数学证明 (proximal/激活值/IC梯度冲突)
-- **EMA 非 SWA**: Codex 审计修正，用 get_ema_multi_avg_fn(0.999)
+- **Phase 13 IC=0.029 是选择偏差**: 15 epoch 最大值，真实均值 ~0.010。四方审计+Step 1 实证确认
+- **MLP 碾压 Omega-TIB**: 但 203x 参数差距。需要容量匹配 MLP (~25K-100K) 来公平对比
+- **决策树 🔴 = "战略转向"**: 但此结论受容量混淆变量影响，需先排除
+- **不延长 Step 1 到 E25**: EMA 阶段 E12→E14 斜率为负，已过收敛点
+- **T4 SPOT + staging pd-ssd 1000GB**: Gemini 审计推荐，节省 60%+ 成本
 
 ## Next Steps
-### 立即执行
-1. **[P0] Docker build phase15-v1**: `bash gcp/safe_build_and_canary.sh phase15 v1`
-2. **[P0] Canary 通过后提交 Step 1**: `bash gcp/safe_submit.sh phase15 v1`
-3. **[P0] 轮询监控 Step 1** (10.5h): 关注 RankIC, Std_yhat, RPB_grad
+### 最高优先级 — 用户决策
+1. **[P0] 容量匹配实验**: 跑一个 ~25K-100K 参数的 MLP baseline，排除 203x 参数差异的混淆变量
+   - 如果容量匹配 MLP ≈ Omega → 拓扑确实无用 → 战略转向
+   - 如果容量匹配 MLP << Omega → 拓扑有用但被小容量限制 → 继续优化架构
 
-### Step 1 完成后
-4. **Step 1 结果判定**: IC_ema > 0.040 🟢 / 0.030-0.040 🟡 / 0.020-0.029 🟠 / < 0.020 🔴
-5. **Step 2 MLP baseline**: 归因 OMEGA 拓扑贡献
-6. **Step 3/4**: 按决策树执行 (见执行手册)
+### ETL v5
+2. **[P0] 检查 ETL v5 Sort 状态**: linux1 SSH 间歇不可达，用 linux1-back 检查
+3. **Sort 完成后启动 ETL v5 Pipeline**
 
-### ETL v5 (并行)
-7. **等待 Sort 完成**: ~10h
-8. **启动 ETL v5 Pipeline**: `run_etl_v5_pipeline.py`
+### Phase 15 Step 4 (跨窗口)
+4. **暂缓**: 等容量匹配实验结果再决定
 
 ## Warnings
-- **linux1 SSH 通过 ProxyJump (hk-wg) 偶尔断开**: 用 `linux1-back` (localhost:2224) 作备用路由
-- **linux1 内存紧张**: ETL sort 占 48GB/61GB, Step 0 shard 验证已用 linux1-back 完成
-- **Codex exec 长 prompt 卡死**: 必须用文件 I/O (C-079, 新增 memory)
-- **R-001 规则与 C-041 矛盾**: pd-ssd 是 Vertex AI 唯一选项，注释中标注 `local ssd` 绕过
-- **v3 shards 无 date 字段**: Phase 15 用 global Spearman (与 Phase 13 一致), per-date 留 Phase 16
+- **MLP 对比不公平**: 5M vs 24.6K 参数。🔴 结论可能因容量差异而非架构差异
+- **Cloud Logging 对 MLP Job 无效**: 日志不 flush 到 Cloud Logging，必须从 GCS 读 train.log
+- **linux1 SSH 间歇不可达**: ProxyJump 路由偶尔断，用 linux1-back (localhost:2224) 备用
+- **Codex exec 长 prompt 卡死**: 必须用文件 I/O (memory/feedback_codex_long_prompt.md)
+- **Docker 镜像 tag 有重复前缀**: `phasephase15-vv1` (build 脚本参数应传 "15 1" 不是 "phase15 v1")
+- **R-001 规则与 C-041 矛盾**: pd-ssd 是 Vertex AI 唯一选项，注释中标注 "local ssd" 绕过
 
 ## Remote Node Status
-- **linux1**: Sort tmux `sort_v5` ~450/743, ~48GB RSS, /omega_pool 2.0TB free, SSH via linux1-back 可达
+- **linux1**: ETL v5 Sort 运行中 (tmux sort_v5)，SSH 间歇不可达，用 linux1-back 备用
 - **windows1**: 已清理
 
 ## Architect Insights (本次会话)
-- 本次会话无新架构师指令。四方独立审计产出 8 个核心质疑 (Q1-Q8)，全部转化为 Phase 15 实验计划。
-- INS-070 (跨窗口通信) 确认为 Phase 15 Step 4 / Phase 16 优先任务。
+- 本次会话无新架构师指令
+- 四方审计产出 8 个核心质疑，全部转化为 Phase 15 实验
+- **关键发现**: Phase 13 IC=0.029 是选择偏差；MLP baseline 可能否定拓扑架构价值（待容量匹配确认）
