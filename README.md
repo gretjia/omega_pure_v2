@@ -51,11 +51,11 @@ Input [B, 160, 10, 10] + c_friction [B, 1]
 | **Phase 13 全链审计** | [`handover/PHASE13_FULL_CHAIN_AUDIT.md`](handover/PHASE13_FULL_CHAIN_AUDIT.md) | Phase 12→13 完整决策链 + 13 个证据附录 + GO/NO-GO 清单 |
 | **Phase 12 架构师审计简报** | [`handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md`](handover/PHASE12_ARCHITECT_AUDIT_BRIEF.md) | 11 轮外部审计 + post-flight + overfit test + 6 个架构师裁决问题 |
 | **Handover 状态** | [`handover/LATEST.md`](handover/LATEST.md) | 当前状态 + machine-readable YAML |
-| **经验库** | [`OMEGA_LESSONS.md`](OMEGA_LESSONS.md) | 71 条教训 (C-001~C-071) + 6 条元公理 (Ω1-Ω6) |
+| **经验库** | [`OMEGA_LESSONS.md`](OMEGA_LESSONS.md) | 80 条教训 (C-001~C-080) + 6 条元公理 (Ω1-Ω6) |
 | **事件 Trace Vault** | [`incidents/INDEX.yaml`](incidents/INDEX.yaml) | 事件索引 + 完整 trace |
 | **架构师指令时间线** | [`architect/INDEX.md`](architect/INDEX.md) | 架构师指令时间线 (2026-03-18 ~ 04-04) |
 | **架构规范** | [`architect/current_spec.yaml`](architect/current_spec.yaml) | 张量形状 / 物理常数 / 训练参数 / HPO 搜索空间 |
-| **Insight Cards** | [`architect/insights/INDEX.md`](architect/insights/INDEX.md) | 洞察卡 (INS-001 ~ INS-070) |
+| **Insight Cards** | [`architect/insights/INDEX.md`](architect/insights/INDEX.md) | 洞察卡 (INS-001 ~ INS-074) |
 | **执法规则** | [`rules/active/`](rules/active/) | YAML 规则（rule-engine.sh 自动执法） |
 
 ---
@@ -64,9 +64,12 @@ Input [B, 160, 10, 10] + c_friction [B, 1]
 
 ```
 gs://omega-pure-data/wds_shards_v3_full/          # 1992 shards, 556GB, 9.96M samples
-gs://omega-pure-data/checkpoints/phase12_unbounded_v1/  # Phase 12: best.pt (E0) + latest.pt (E19)
-gs://omega-pure-data/postflight/                   # Phase 12 val predictions parquet
-# Phase 13 Docker: us-central1-docker.pkg.dev/.../omega-tib:phase13-v2 (IC Loss + AttentionPooling)
+gs://omega-pure-data/checkpoints/phase13_v1/      # Phase 13: best.pt (E9, RankIC=0.029)
+gs://omega-pure-data/checkpoints/phase15_step1/   # Phase 15 Step 1: best.pt + ema.pt (IC_ema=0.0122)
+gs://omega-pure-data/checkpoints/phase15_step2_mlp/ # Phase 15 Step 2 MLP: best.pt + ema.pt (IC_ema=0.0159)
+gs://omega-pure-data/checkpoints/phase14_step2_arm_a/ # Phase 14 Step 2: SRL baseline
+gs://omega-pure-data/checkpoints/phase14_step2_arm_b/ # Phase 14 Step 2: macro bypass
+gs://omega-pure-data/postflight/                   # Phase 12-13 val predictions parquet
 ```
 
 ---
@@ -84,14 +87,17 @@ gs://omega-pure-data/postflight/                   # Phase 12 val predictions pa
 | 11a-c | Failed | Various | — | NaN / Beta 走私 / 方差坍缩 |
 | 11d | Done | Pointwise Huber | D9-D0=6.84 | 方差恢复但 IC 下降 |
 | **12** | Done | Unbounded MSE | D9-D0=4.51 | 方差恢复 ✓ 但排序失败 (Rank IC=-0.02, 28σ 显著) |
-| **13** | **Crucible PASS** | **IC Loss (Pearson)** | **IC=0.88 overfit** | **Pending 正式训练 (T4 Spot)** |
+| **13** | **PASS** | **IC Loss (Pearson)** | **RankIC=+0.029** | 首次统计显著正向信号 (Phase 15 证实真实均值 ~0.010) |
+| 14 S0-2 | Done | — | — | 数据基线 + Phase 6 作废 + SRL 压缩验证 (C-080) |
+| **15 S1** | **Done** | IC Loss + grad_accum=16 | **IC_ema=+0.0122** | 🟠 Phase 13 IC=0.029 确认为选择偏差。grad_accum 减震 3x |
+| **15 S2** | **Done** | IC Loss (MLP baseline) | **IC_ema=+0.0159** | 🔴 MLP (5M) 碾压 Omega-TIB (24.6K)。**但 203x 容量混淆** |
 
-**Phase 12→13 诊断链** (详见 [`handover/PHASE13_FULL_CHAIN_AUDIT.md`](handover/PHASE13_FULL_CHAIN_AUDIT.md)):
-1. Leaky Blinding 100x 梯度压缩 → 波动率预测 (Gemini 数学证明) → **INS-065 删除**
-2. MSE 在 SNR=2.4% 下退化为条件均值 → **INS-066 换 IC Loss**
-3. Global Mean Pooling 摧毁时空结构 (RPB grad 60,000x 弱) → **INS-068 AttentionPooling + Pre-LN**
-4. L1 正则化在低 SNR 下杀信号 → **INS-069 lambda_s=0**
-5. 窗口隔离 0.64 天感受野 → **INS-070 Phase 14 计划**
+**Phase 15 关键发现** (详见 [`reports/phase15/phase15_summary.md`](reports/phase15/phase15_summary.md)):
+1. Phase 13 IC=0.029 是选择偏差 (15 epoch 最大值，真实均值 ~0.010)
+2. grad_accum=16 有效减震 3x，但不提升均值 → 训练噪声非主瓶颈
+3. MLP (无拓扑) IC=0.016 > Omega-TIB (有拓扑) IC=0.012 → **拓扑架构可能无增量**
+4. 但 MLP 参数 203x 于 Omega → **容量混淆变量未排除**
+5. **待决策**: 容量匹配 MLP 实验 → 决定是否重设计 Omega Kernel
 
 ---
 
@@ -99,7 +105,7 @@ gs://omega-pure-data/postflight/                   # Phase 12 val predictions pa
 
 | Script | Purpose |
 |--------|---------|
-| `train.py` | Training loop (Phase 13: IC Loss + AttentionPooling + Pre-LN Residual) |
+| `train.py` | Training loop (Phase 15: +grad_accum +EMA +embargo +MLPBaseline +RPB monitor) |
 | `omega_epiplexity_plus_core.py` | Math core (SRL + FWT + MDL + Loss functions) |
 | `omega_webdataset_loader.py` | WebDataset streaming loader |
 | `tools/omega_etl_v3_topo_forge.py` | ETL: Parquet → WebDataset shards |
@@ -131,5 +137,5 @@ Self-evolving engineering governance. See [`LIVING_HARNESS.md`](LIVING_HARNESS.m
 
 ---
 
-*Current status: 2026-04-04. Phase 13 Crucible PASS (IC Loss + AttentionPooling), pending full training.*
-*For AI Agents: Start at [`handover/LATEST.md`](handover/LATEST.md). Full audit at [`handover/PHASE13_FULL_CHAIN_AUDIT.md`](handover/PHASE13_FULL_CHAIN_AUDIT.md).*
+*Current status: 2026-04-07. Phase 15 Step 1+2 complete. MLP baseline challenges Omega topology (pending capacity-matched confirmation).*
+*For AI Agents: Start at [`handover/LATEST.md`](handover/LATEST.md). Audit workpapers at [`reports/audits_and_insights/2026-04-06_codex_audit_workpapers.md`](reports/audits_and_insights/2026-04-06_codex_audit_workpapers.md) (1072 lines, self-contained).*
