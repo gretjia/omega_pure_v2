@@ -151,6 +151,8 @@ inference:
 # [FINAL — Codex+Gemini audited 2026-04-04]
 # ============================================================
 hpo:
+  # ⚠️ SUPERSEDED: Phase 14 Step 3 HPO was replaced by Phase 15 controlled experiments.
+  # Phase 15 results (2026-04-07): MLP baseline > Omega-TIB. Capacity-matched experiment pending.
   engine: google_vizier              # Bayesian optimization
   infrastructure: "A100 Spot (a2-highgpu-1g), 70 trials exploit, 8 parallel"
   primary_metric: "Cross-Sectional Rank IC (Vizier MAXIMIZE, INS-067) [APPROXIMATION: global Spearman, pending per-date average when ETL adds date]"

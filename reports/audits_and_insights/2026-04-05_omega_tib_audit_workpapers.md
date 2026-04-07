@@ -1,3 +1,5 @@
+> **⚠️ SUPERSEDED** — 本文件已被 [2026-04-06_codex_audit_workpapers.md](2026-04-06_codex_audit_workpapers.md) 取代 (1072 行, 含 Phase 15 数据)。仅供历史参考。
+
 # OMEGA-TIB 外部审计底稿
 **编制日期**: 2026-04-05
 **编制者**: Claude Opus 4.6 (多Agent协作：Git考古 + 训练配置 + 模型产出 + Phase历史 + 数据审核)

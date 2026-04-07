@@ -4,7 +4,7 @@ title: 隐式压缩胜利 — hd=64 物理瓶颈 >> λ_s 显式惩罚
 category: architecture
 date: 2026-03-29
 axiom_impact: NONE
-status: active
+status: invalidated  # Phase 6 evidence invalidated by INS-072 (C-062 torch.compile bug). Phase 15 MLP > Omega further challenges hd=64 premise.
 source_directive: 2026-03-29_compression_is_intelligence_phase7_golive.md
 source_gdoc: null
 ---

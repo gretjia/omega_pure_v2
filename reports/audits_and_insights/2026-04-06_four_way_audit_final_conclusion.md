@@ -1,3 +1,5 @@
+> **⚠️ NOTE** — 本结论在 Phase 15 实验之前编写。Phase 15 结果见 [reports/phase15/phase15_summary.md](../../reports/phase15/phase15_summary.md)。
+
 # Omega-TIB 四方独立审计最终结论
 **日期**: 2026-04-06
 **审计方**: Codex GPT-5.4 | Gemini 2.5 Pro | Claude Opus 4.6 (独立) | Claude DeepThink

@@ -1,3 +1,5 @@
+> **⚠️ HISTORICAL** — Based on Phase 6 T29 checkpoint. INS-072 invalidated Phase 6 baselines (C-062). Phase 15 confirmed IC=0.029 as selection bias (true mean ~0.010).
+
 # Phase 7 Comprehensive Report — T29 Flagship Backtest
 
 **Date**: 2026-03-30

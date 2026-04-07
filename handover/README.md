@@ -33,25 +33,26 @@ Step 3: 本文件              → 按任务导航到具体文档
 | File | Content |
 |------|---------|
 | [`architect/current_spec.yaml`](../architect/current_spec.yaml) | 张量形状 [B,160,10,10] / 物理常数 / 训练参数 / HPO 搜索空间 |
-| [`architect/INDEX.md`](../architect/INDEX.md) | 37 条架构师指令时间线 (2026-03-18 ~ 04-02) |
-| [`architect/insights/INDEX.md`](../architect/insights/INDEX.md) | 64 张 Insight 卡 (INS-001 ~ INS-064) |
+| [`architect/INDEX.md`](../architect/INDEX.md) | 35 条架构师指令时间线 (2026-03-18 ~ 04-06, 含 Phase 15) |
+| [`architect/insights/INDEX.md`](../architect/insights/INDEX.md) | 74 张 Insight 卡 (INS-001 ~ INS-074) |
 | [`architect/chain_of_custody.yaml`](../architect/chain_of_custody.yaml) | Directive → Deploy 全链追踪 |
 
 ### Audit Reports（已有审计结果）
 
 | Report | Location | Summary |
 |--------|----------|---------|
-| **Phase 13 全链审计** | [`PHASE13_FULL_CHAIN_AUDIT.md`](./PHASE13_FULL_CHAIN_AUDIT.md) | Phase 12→13 完整决策链 + 13 个证据附录 (A-M) + GO/NO-GO 清单 |
-| **Phase 12 架构师审计简报** | [`PHASE12_ARCHITECT_AUDIT_BRIEF.md`](./PHASE12_ARCHITECT_AUDIT_BRIEF.md) | 11 轮外部审计 + overfit test + gradient check + 6 个裁决问题 |
-| **Phase 11 数据汇总** | [`../reports/phase11_complete_data_summary.md`](../reports/phase11_complete_data_summary.md) | 11a-d 全阶段数据 |
-| **Phase 11 工程分析** | [`../reports/phase11_engineer_analysis_for_architect.md`](../reports/phase11_engineer_analysis_for_architect.md) | 工程视角诊断 |
-| **Gemini Bitter Lessons** | [`../reports/audits_and_insights/`](../reports/audits_and_insights/) | 外部数学审计历史 |
+| **⭐ 审计底稿 V2 (最新)** | [`../reports/audits_and_insights/2026-04-06_codex_audit_workpapers.md`](../reports/audits_and_insights/2026-04-06_codex_audit_workpapers.md) | **1072 行自包含, Phase 3-15 全部数据 + Omega Kernel 解剖 + 9 个未分离变量** |
+| **三方独立审计汇总** | [`../reports/audits_and_insights/2026-04-06_three_way_audit_synthesis.md`](../reports/audits_and_insights/2026-04-06_three_way_audit_synthesis.md) | Codex+Gemini+Claude 三方共识 + 歧见 |
+| **Phase 15 结果** | [`../reports/phase15/phase15_summary.md`](../reports/phase15/phase15_summary.md) | MLP IC=0.016 > Omega IC=0.012 (🔴 但 203x 容量混淆) |
+| Phase 13 全链审计 | [`PHASE13_FULL_CHAIN_AUDIT.md`](./PHASE13_FULL_CHAIN_AUDIT.md) | Phase 12→13 决策链 (⚠️ Phase 15 结果可能更新部分结论) |
+| Phase 12 架构师简报 | [`PHASE12_ARCHITECT_AUDIT_BRIEF.md`](./PHASE12_ARCHITECT_AUDIT_BRIEF.md) | 11 轮外审 |
+| 全部审计索引 | [`../reports/audits_and_insights/INDEX.md`](../reports/audits_and_insights/INDEX.md) | 20+ 份审计报告完整目录 |
 
 ### Experience & Governance
 
 | File | Content |
 |------|---------|
-| [`../OMEGA_LESSONS.md`](../OMEGA_LESSONS.md) | 71 条教训 (C-001~C-071) + 6 元公理 (Ω1-Ω6) + 操作手册 |
+| [`../OMEGA_LESSONS.md`](../OMEGA_LESSONS.md) | 80 条教训 (C-001~C-080) + 6 元公理 (Ω1-Ω6) + 操作手册 |
 | [`../incidents/INDEX.yaml`](../incidents/INDEX.yaml) | 事件索引 (machine-readable) + 完整 trace |
 | [`../rules/active/`](../rules/active/) | YAML 执法规则 (含 R-018 Docker dep/tag sync) |
 | [`../LIVING_HARNESS.md`](../LIVING_HARNESS.md) | Meta-Harness V3 架构说明 |
@@ -78,20 +79,15 @@ Step 3: 本文件              → 按任务导航到具体文档
 
 ```
 gs://omega-pure-data/wds_shards_v3_full/               # 1992 shards, 556GB, 9.96M samples
-gs://omega-pure-data/checkpoints/phase12_unbounded_v1/  # best.pt (E0) + latest.pt (E19)
-gs://omega-pure-data/postflight/                        # Phase 12 val predictions (E0 + E19)
+gs://omega-pure-data/checkpoints/phase13_v1/           # Phase 13: best.pt (E9, RankIC=0.029)
+gs://omega-pure-data/checkpoints/phase15_step1/        # Phase 15 Omega: best.pt + ema.pt (IC_ema=0.0122)
+gs://omega-pure-data/checkpoints/phase15_step2_mlp/    # Phase 15 MLP: best.pt + ema.pt (IC_ema=0.0159)
+gs://omega-pure-data/checkpoints/phase14_step2_arm_a/  # Phase 14: SRL baseline
+gs://omega-pure-data/checkpoints/phase14_step2_arm_b/  # Phase 14: macro bypass
+gs://omega-pure-data/postflight/                        # Phase 12-13 val predictions
 ```
 
-## Model Checkpoint Info
-
-**Phase 12 Checkpoints:**
-
-| Checkpoint | Epoch | D9-D0 | pred_std | z_sparsity | Parquet |
-|-----------|-------|-------|----------|------------|---------|
-| best.pt | E0 | 4.51 BP | 26.61 BP | 5.4% | `phase12_val_predictions.parquet` |
-| latest.pt | E19 | 1.29 BP | 18.57 BP | 18.5% | `phase12_latest_val_predictions.parquet` |
-
-**Phase 13 Docker Image:** `omega-tib:phase13-v2` (IC Loss + AttentionPooling + Pre-LN Residual, Crucible PASS)
+**Latest Docker Image:** `omega-tib:phasephase15-vv1` (Phase 15: +grad_accum +EMA +embargo +MLP)
 
 ---
 
@@ -158,4 +154,4 @@ python3 omega_axioms.py --verbose
 
 ---
 
-*Last updated: 2026-04-04. Phase 13 Crucible PASS, pending full training (T4 Spot). See [`PHASE13_FULL_CHAIN_AUDIT.md`](./PHASE13_FULL_CHAIN_AUDIT.md).*
+*Last updated: 2026-04-07. Phase 15 Step 1+2 complete. MLP baseline > Omega-TIB (203x capacity confound pending). See [`LATEST.md`](./LATEST.md).*

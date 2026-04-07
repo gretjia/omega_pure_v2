@@ -34,8 +34,8 @@
 
 | 文件 | 内容 |
 |------|------|
-| [../phase11_complete_data_summary.md](../phase11_complete_data_summary.md) | Phase 11 全阶段数据汇总 (11c + 11d A/B + post-flight) |
-| [../phase11d_training_complete.md](../phase11d_training_complete.md) | Phase 11d 训练记录 (Config A/B epoch tables + checkpoints) |
+| [../phase11/phase11_complete_data_summary.md](../phase11/phase11_complete_data_summary.md) | Phase 11 全阶段数据汇总 (11c + 11d A/B + post-flight) |
+| [../phase11/phase11d_training_complete.md](../phase11/phase11d_training_complete.md) | Phase 11d 训练记录 (Config A/B epoch tables + checkpoints) |
 
 ## Omega-TIB 模型审计底稿
 

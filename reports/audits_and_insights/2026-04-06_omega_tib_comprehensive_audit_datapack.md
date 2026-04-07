@@ -1,3 +1,5 @@
+> **⚠️ SUPERSEDED** — 本文件已被 [2026-04-06_codex_audit_workpapers.md](2026-04-06_codex_audit_workpapers.md) 取代。仅供历史参考。
+
 # Omega-TIB Comprehensive Audit Data Pack
 **Purpose**: 为外部审计（Codex + Gemini + 领域专家）准备的原始数据包
 **Date**: 2026-04-06
